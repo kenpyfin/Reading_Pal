@@ -14,6 +14,17 @@ The system follows a microservice-oriented approach, primarily consisting of:
 *   **LLM Services:** External or internal services providing LLM capabilities (summarization, Q&A, etc.).
 *   **Database:** A MongoDB instance used for storing user data, notes, and book metadata.
 
+```mermaid                                                                                                                     
+graph LR                                                                                                                       
+    User(User) --> Frontend(React Frontend);                                                                                   
+    Frontend --> Backend(Python Backend API);                                                                                  
+    Backend --> Database(MongoDB);                                                                                             
+    Backend --> PDFService(PDF Processing Service);                                                                            
+    Backend --> LLMServices(LLM Services - Reading Assistance);                                                                
+    PDFService --> LLMServicesPDF(LLM Services - Markdown Reformatting);                                                       
+    PDFService --> Storage(File Storage: Markdown, Images); 
+
+```
 
 **3. Component Details**
 
