@@ -1,36 +1,21 @@
 version: '3.8'
 
 services:
-  pdf_service:
-    build:
-      context: ./pdf_service
-      dockerfile: Dockerfile # Assuming you might add one later, or build directly
-    ports:
-      - "8502:8502"
-    volumes:
-      # Mount local storage paths into the container
-      - /path/to/your/local/storage/pdfs:/app/storage/pdfs # Replace with actual local path
-      - /path/to/your/local/storage/output:/app/storage/output # Replace with actual local path
-      - /path/to/your/local/storage/images:/app/storage/images # Replace with actual local path
-    environment:
-      # Pass environment variables needed by pdf_service
-      PDF_STORAGE_PATH: /app/storage/pdfs
-      MARKDOWN_PATH: /app/storage/output
-      IMAGES_PATH: /app/storage/images
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY} # Use key from root .env
-    # Add other necessary environment variables for pdf_service if any
+  # The pdf_service runs independently outside of this docker-compose setup.
+  # Remove the pdf_service block entirely.
 
   backend:
     build: ./backend
     ports:
       - "${BACKEND_PORT}:${BACKEND_PORT}"
     volumes:
-      # Mount the images path so backend can serve them
+      # Mount the images path so backend can serve them.
+      # This path must match the IMAGES_PATH configured in the root .env
+      # and used by the standalone pdf_service.
       - /path/to/your/local/storage/images:/app/storage/images # Replace with actual local path
     environment:
       # Pass environment variables needed by backend
-      # Update MONGO_URI to connect to host machine's MongoDB
-      MONGO_URI: mongodb://host.docker.internal:27017/ # Use host.docker.internal for host access from Docker Desktop/Linux
+      MONGO_URI: mongodb://host.docker.internal:27017/
       DATABASE_NAME: ${DATABASE_NAME}
       LLM_SERVICE: ${LLM_SERVICE}
       LLM_MODEL: ${LLM_MODEL}
@@ -38,23 +23,23 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
-      PDF_CLIENT_URL: http://pdf_service:8502 # Use service name for internal communication
+      # PDF_CLIENT_URL now uses the value from the root .env, pointing to the standalone service
+      PDF_CLIENT_URL: ${PDF_CLIENT_URL}
       IMAGES_PATH: /app/storage/images # Path within the backend container
       BACKEND_PORT: ${BACKEND_PORT}
-    depends_on:
-      # Remove mongodb dependency
-      - pdf_service # Backend depends on PDF service being available
+    # Remove pdf_service dependency. Backend does not depend on frontend.
+    # depends_on:
+    #   - pdf_service
 
   frontend:
     build: ./frontend
     ports:
       - "${FRONTEND_PORT}:${FRONTEND_PORT}"
     environment:
-      # Pass environment variables needed by frontend (e.g., backend API URL)
       REACT_APP_BACKEND_URL: http://localhost:${BACKEND_PORT} # Use localhost for browser access
     depends_on:
       - backend
 
-# Remove this block:
+# Remove the mongo_data volumes block as MongoDB is external
 # volumes:
 #   mongo_data:
