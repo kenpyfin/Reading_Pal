@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+python-dotenv
+requests # For calling PDF service
+motor # For MongoDB async driver
+# Add specific LLM client libraries based on which ones you implement
+# anthropic
+# ollama
+# google-generativeai
+# Add any other necessary libraries
