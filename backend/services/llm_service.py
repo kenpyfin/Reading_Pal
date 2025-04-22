@@ -1,6 +1,7 @@
 import os
 from dotenv import load_dotenv
 import logging
+from typing import Optional # Import Optional
 # TODO: Import client libraries for different LLM providers (Anthropic, DeepSeek, Gemini, Ollama)
 import ollama # Import ollama client
 
