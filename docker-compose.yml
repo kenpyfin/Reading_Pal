@@ -39,7 +39,3 @@ services:
       REACT_APP_BACKEND_URL: http://localhost:${BACKEND_PORT} # Use localhost for browser access
     depends_on:
       - backend
-
-# Remove the mongo_data volumes block as MongoDB is external
-# volumes:
-#   mongo_data:
