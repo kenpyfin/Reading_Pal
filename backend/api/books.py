@@ -3,6 +3,7 @@ import logging
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, status
 from typing import List
 from bson import ObjectId
+from fastapi.concurrency import run_in_threadpool # Import run_in_threadpool
 
 from ..services.pdf_client import process_pdf_with_service
 from ..db.mongodb import save_book, get_book # Import the implemented DB functions
@@ -23,10 +24,11 @@ async def upload_pdf(
     logger.info(f"Received upload request for file: {file.filename}")
     try:
         # 1. Send file to PDF processing service
-        processed_data = await process_pdf_with_service(file, title)
+        # Use run_in_threadpool to call the synchronous function
+        processed_data = await run_in_threadpool(process_pdf_with_service, file, title)
 
         if not processed_data or not processed_data.get("success"):
-             # process_pdf_with_service should raise HTTPException
+             # process_pdf_with_service should raise HTTPException, but this is a fallback check
              raise HTTPException(status_code=500, detail=processed_data.get("message", "PDF processing failed"))
 
         # 2. Prepare data for database
@@ -49,12 +51,14 @@ async def upload_pdf(
 
         # Convert server-side paths to public URLs for the response
         # This assumes the static route is mounted at /images
+        # The path stored in DB is the absolute path from the PDF service
+        # We need to get the basename to construct the URL served by the backend
         saved_book["image_urls"] = [f"/images/{os.path.basename(path)}" for path in saved_book.get("image_paths", [])]
 
         return Book(**saved_book)
 
     except HTTPException as e:
-        # Re-raise HTTPExceptions raised by process_pdf_with_service
+        # Re-raise HTTPExceptions raised by process_pdf_with_service or other parts
         raise e
     except Exception as e:
         logger.error(f"Error during PDF upload and processing: {e}")
@@ -75,6 +79,8 @@ async def get_book_by_id(book_id: str):
     if book_data:
         # Convert server-side paths to public URLs
         # This assumes the static route is mounted at /images
+        # The path stored in DB is the absolute path from the PDF service
+        # We need to get the basename to construct the URL served by the backend
         book_data["image_urls"] = [f"/images/{os.path.basename(path)}" for path in book_data.get("image_paths", [])]
         return Book(**book_data)
     else:
