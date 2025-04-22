@@ -1,147 +1,132 @@
-import React, { useState, useEffect } from 'react';
-// TODO: Import API functions for notes
-// Assuming backend/api/notes.py and backend/db/mongodb.py have been updated for notes
+import React, { useState, useEffect, useRef } from 'react';
+import './NotePane.css'; // Assuming you'll add some basic CSS
 
-function NotePane({ bookId, bookContent, onScrollSync }) { // Receive bookContent
+// Remove LLM related state and handlers for Phase 3 completion
+// import { useState, useEffect } from 'react'; // Keep useState, useEffect
+// import { useState, useEffect, useRef } from 'react'; // Keep useRef
+
+function NotePane({ bookId, onNotePaneScroll }) { // Removed bookContent, onScrollSync
   const [notes, setNotes] = useState([]);
   const [newNoteContent, setNewNoteContent] = useState('');
-  const [llmQuestion, setLlmQuestion] = useState(''); // State for LLM question input
-  const [llmAskResponse, setLlmAskResponse] = useState(''); // State for LLM 'ask' response
-  const [llmSummarizeResponse, setLlmSummarizeResponse] = useState(''); // State for LLM 'summarize' response
-  const [llmLoading, setLlmLoading] = useState(false); // State for LLM loading
-  const [llmError, setLlmError] = useState(null); // State for LLM error
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const notePaneRef = useRef(null); // Ref for the scrollable div
 
+  // Fetch notes when bookId changes
   useEffect(() => {
-    // TODO: Fetch notes for bookId on mount
-    // fetchNotes(bookId).then(setNotes);
-  }, [bookId]);
+    const fetchNotes = async () => {
+      if (!bookId) return;
+      setLoading(true);
+      setError(null);
+      try {
+        const response = await fetch(`/notes/${bookId}`); // Use relative path
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(`HTTP error! status: ${response.status} - ${errorData.detail || response.statusText}`);
+        }
+        const data = await response.json();
+        // Sort notes by creation date if not already sorted by backend
+        const sortedNotes = data.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+        setNotes(sortedNotes);
+      } catch (err) {
+        console.error('Failed to fetch notes:', err);
+        setError(`Failed to load notes: ${err.message || 'Unknown error'}`);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchNotes();
+  }, [bookId]); // Dependency array includes bookId
 
   const handleSaveNote = async () => {
     if (!newNoteContent.trim()) return;
-    // TODO: Call API to save new note
-    // const savedNote = await saveNote({ bookId, content: newNoteContent, ...positionInfo });
-    // setNotes([...notes, savedNote]);
-    setNewNoteContent('');
-  };
 
-  const handleAskLLM = async () => {
-    if (!llmQuestion.trim()) {
-      setLlmError("Please enter a question.");
-      return;
-    }
-    if (!bookContent) {
-        setLlmError("Book content not available to ask questions about.");
-        return;
-    }
-
-    setLlmLoading(true);
-    setLlmError(null);
-    setLlmAskResponse(''); // Clear previous ask response
+    const noteData = {
+      book_id: bookId,
+      content: newNoteContent.trim(),
+      // TODO: Add position info (e.g., scroll percentage, section ID) later
+    };
 
     try {
-      // Call backend API for LLM question
-      const response = await fetch('/llm/ask', { // Use relative path
+      const response = await fetch('/notes', { // Use relative path for POST
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          book_id: bookId,
-          text: llmQuestion, // The question itself
-          // For 'ask', the backend fetches the full book content as context
-          // We don't need to send the full content from the frontend here.
-          // context: bookContent // Potentially send a chunk if needed, but backend fetches full
-        }),
+        body: JSON.stringify(noteData),
       });
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.detail || 'LLM ask request failed');
+        throw new Error(errorData.detail || 'Failed to save note');
       }
 
-      const data = await response.json();
-      setLlmAskResponse(data.response);
+      const savedNote = await response.json();
+      console.log('Note saved:', savedNote);
+      // Add the new note to the state and sort
+      setNotes(prevNotes => [...prevNotes, savedNote].sort((a, b) => new Date(a.created_at) - new Date(b.created_at)));
+      setNewNoteContent(''); // Clear the input field
 
     } catch (err) {
-      console.error('LLM ask request failed:', err);
-      setLlmError(`LLM ask request failed: ${err.message || 'Unknown error'}`);
-    } finally {
-      setLlmLoading(false);
+      console.error('Failed to save note:', err);
+      setError(`Failed to save note: ${err.message || 'Unknown error'}`);
     }
   };
 
-  const handleSummarizeBook = async () => {
-    if (!bookContent) {
-        setLlmError("Book content not available to summarize.");
-        return;
-    }
-
-    setLlmLoading(true);
-    setLlmError(null);
-    setLlmSummarizeResponse(''); // Clear previous summarize response
-
-    try {
-      // Call backend API for LLM summarization (of the whole book for now)
-      const response = await fetch('/llm/summarize', { // Use relative path
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          book_id: bookId,
-          text: bookContent, // Sending the full content to summarize
-          // context is optional for summarize, backend might ignore it or use it
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || 'LLM summarize request failed');
-      }
-
-      const data = await response.json();
-      setLlmSummarizeResponse(data.response);
-
-    } catch (err) {
-      console.error('LLM summarize request failed:', err);
-      setLlmError(`LLM summarize request failed: ${err.message || 'Unknown error'}`);
-    } finally {
-      setLlmLoading(false);
+  // Handle scroll event for synchronization
+  const handleScroll = () => {
+    if (notePaneRef.current && onNotePaneScroll) {
+      onNotePaneScroll(notePaneRef.current);
     }
   };
 
+  if (loading) {
+    return <div className="note-pane">Loading notes...</div>;
+  }
 
-  // TODO: Implement scroll tracking for synchronization
-  // const handleScroll = (e) => {
-  //   onScrollSync(e.target.scrollTop);
-  // };
+  if (error) {
+    return <div className="note-pane" style={{ color: 'red' }}>Error loading notes: {error}</div>;
+  }
 
   return (
-    <div className="note-pane">
-      <h2>Notes & Insights</h2>
-      {/* TODO: Display existing notes */}
+    <div className="note-pane" ref={notePaneRef} onScroll={handleScroll}>
+      <h2>Notes</h2>
+
+      {/* Display existing notes */}
       <div className="notes-list">
-        {notes.map(note => (
-          <div key={note.id} className="note-item">
-            <p>{note.content}</p>
-            {/* TODO: Add edit/delete buttons */}
-          </div>
-        ))}
+        {notes.length === 0 ? (
+          <p>No notes yet. Add one below!</p>
+        ) : (
+          notes.map(note => (
+            <div key={note.id} className="note-item">
+              <p>{note.content}</p>
+              {/* Optional: Display timestamp, edit/delete buttons */}
+              {/* <small>{new Date(note.created_at).toLocaleString()}</small> */}
+            </div>
+          ))
+        )}
       </div>
 
-      {/* TODO: Add area for new notes */}
-      <textarea
-        value={newNoteContent}
-        onChange={(e) => setNewNoteContent(e.target.value)}
-        placeholder="Write a new note..."
-      />
-      <button onClick={handleSaveNote}>Save Note</button>
+      {/* Input for new note */}
+      <div className="new-note-form">
+        <h3>Add New Note</h3>
+        <textarea
+          value={newNoteContent}
+          onChange={(e) => setNewNoteContent(e.target.value)}
+          placeholder="Write your note here..."
+          rows="4"
+          style={{ width: '100%', marginBottom: '10px' }}
+        />
+        <button onClick={handleSaveNote} disabled={!newNoteContent.trim()}>
+          Save Note
+        </button>
+      </div>
 
-      {/* Add area for LLM interactions */}
+      {/* LLM Interaction section - Commented out for Phase 3 completion */}
+      {/*
       <div className="llm-interaction">
         <h3>LLM Reading Assistance</h3>
-
-        {/* Summarize Button (summarizes whole book for now) */}
         <button onClick={handleSummarizeBook} disabled={llmLoading || !bookContent} style={{ marginBottom: '15px' }}>
              {llmLoading ? 'Summarizing...' : 'Summarize Book'}
         </button>
@@ -151,9 +136,6 @@ function NotePane({ bookId, bookContent, onScrollSync }) { // Receive bookConten
                 <p>{llmSummarizeResponse}</p>
             </div>
         )}
-
-
-        {/* Ask Question Area */}
         <h4 style={{ marginTop: '20px' }}>Ask a Question</h4>
         <textarea
             value={llmQuestion}
@@ -173,6 +155,7 @@ function NotePane({ bookId, bookContent, onScrollSync }) { // Receive bookConten
             </div>
         )}
       </div>
+      */}
     </div>
   );
 }
