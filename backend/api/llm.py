@@ -3,9 +3,10 @@ import logging
 from fastapi import APIRouter, HTTPException, Body, status
 from pydantic import BaseModel
 from typing import Optional
-from fastapi.concurrency import run_in_threadpool # Import run_in_threadpool
+from fastapi.concurrency import run_in_threadpool # Keep import for read_markdown_content
 
-from ..services.llm_service import llm_service, LLM_SERVICE # Import the LLM service instance and config
+# Update import to get the async wrapper functions
+from ..services.llm_service import ask_question, summarize_text # Import the async wrapper functions
 from ..db.mongodb import get_book # Import function to get book data
 
 logger = logging.getLogger(__name__)
@@ -19,7 +20,7 @@ class LLMRequest(BaseModel):
 class LLMResponse(BaseModel):
     response: str
 
-# Helper function to read markdown content from file
+# Helper function to read markdown content from file (keep this as it uses run_in_threadpool)
 async def read_markdown_content(markdown_file_path: str) -> str:
     """Reads markdown content from a file path using a threadpool."""
     if markdown_file_path and os.path.exists(markdown_file_path):
@@ -46,38 +47,40 @@ async def ask_llm(request: LLMRequest):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found")
 
     # 2. Read the full markdown content from the file
+    # Use the full markdown content as context for the 'ask' task
     markdown_content = await read_markdown_content(book_data.get("markdown_file_path"))
 
-    # Use the full markdown content as context for the 'ask' task
-    context_text = markdown_content
+    if not markdown_content:
+         # It's possible the markdown file wasn't saved correctly or path is wrong
+         logger.error(f"Markdown content not found for book ID: {request.book_id} at path: {book_data.get('markdown_file_path')}")
+         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Book content not available for asking questions.")
 
-    # 3. Send request to LLM service
+
+    # 3. Send request to LLM service using the async wrapper
     try:
-        # Determine if the configured LLM client is synchronous (like Ollama)
-        # If it is, run the async process_text method in a threadpool.
-        # If it's already async (Anthropic, DeepSeek, Gemini), await directly.
-        # A simple check based on the configured service name:
-        if LLM_SERVICE == "ollama":
-             # Ollama client is synchronous, run in threadpool
-             llm_response = await run_in_threadpool(
-                 llm_service.process_text, # Pass the async function
-                 "ask",
-                 request.text, # The question
-                 context_text # The book content as context
-             )
-        else:
-             # Assume other clients are async and can be awaited directly
-             llm_response = await llm_service.process_text(
-                 "ask",
-                 request.text, # The question
-                 context_text # The book content as context
-             )
+        # Simply await the async wrapper function
+        llm_response = await ask_question(
+            request.text, # The question
+            markdown_content # The book content as context
+        )
+
+        # The LLM service functions now return error messages as strings
+        # Check if the response indicates an error from the service itself
+        if llm_response.startswith("LLM service") or llm_response.startswith("Error generating response"):
+             logger.error(f"LLM service returned an error for 'ask': {llm_response}")
+             # Return error in response body so frontend can display it
+             # Consider returning a 500 status if it's a critical LLM error,
+             # but returning 200 with the error message allows frontend to handle gracefully.
+             # Let's return 200 with the error message for now.
+             return LLMResponse(response=llm_response)
+
 
         return LLMResponse(response=llm_response)
 
     except Exception as e:
-        logger.error(f"Error processing LLM 'ask' request: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error from LLM service: {e}")
+        logger.error(f"Unexpected error processing LLM 'ask' request: {e}")
+        # Catch any unexpected errors during the process (e.g., DB error, file read error)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An unexpected error occurred: {e}")
 
 @router.post("/summarize", response_model=LLMResponse)
 async def summarize_llm(request: LLMRequest):
@@ -97,31 +100,26 @@ async def summarize_llm(request: LLMRequest):
     text_to_summarize = await read_markdown_content(book_data.get("markdown_file_path"))
 
     if not text_to_summarize:
+         logger.error(f"Markdown content not found for book ID: {request.book_id} at path: {book_data.get('markdown_file_path')}")
          raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Book content not available for summarization.")
 
 
-    # 3. Send request to LLM service
+    # 3. Send request to LLM service using the async wrapper
     try:
-        # Determine if the configured LLM client is synchronous (like Ollama)
-        # If it is, run the async process_text method in a threadpool.
-        # If it's already async (Anthropic, DeepSeek, Gemini), await directly.
-        if LLM_SERVICE == "ollama":
-             llm_response = await run_in_threadpool(
-                 llm_service.process_text,
-                 "summarize",
-                 text_to_summarize, # Pass the full content as the text to summarize
-                 None # No additional context needed for summarizing the whole text
-             )
-        else:
-             llm_response = await llm_service.process_text(
-                 "summarize",
-                 text_to_summarize, # Pass the full content as the text to summarize
-                 None # No additional context needed
-             )
+        # Simply await the async wrapper function
+        llm_response = await summarize_text(text_to_summarize)
+
+        # The LLM service functions now return error messages as strings
+        # Check if the response indicates an error from the service itself
+        if llm_response.startswith("LLM service") or llm_response.startswith("Error generating summary"):
+             logger.error(f"LLM service returned an error for 'summarize': {llm_response}")
+             # Return error in response body so frontend can display it
+             return LLMResponse(response=llm_response)
+
 
         return LLMResponse(response=llm_response)
 
     except Exception as e:
-        logger.error(f"Error processing LLM 'summarize' request: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error from LLM service: {e}")
-
+        logger.error(f"Unexpected error processing LLM 'summarize' request: {e}")
+        # Catch any unexpected errors during the process
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An unexpected error occurred: {e}")
