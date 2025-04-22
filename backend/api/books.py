@@ -26,7 +26,7 @@ async def upload_pdf(
         processed_data = await process_pdf_with_service(file, title)
 
         if not processed_data or not processed_data.get("success"):
-             # process_pdf_with_service should raise HTTPException, but this is a fallback
+             # process_pdf_with_service should raise HTTPException
              raise HTTPException(status_code=500, detail=processed_data.get("message", "PDF processing failed"))
 
         # 2. Prepare data for database

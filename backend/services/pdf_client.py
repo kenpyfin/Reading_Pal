@@ -52,5 +52,3 @@ async def process_pdf_with_service(file: UploadFile, title: str = None):
         logger.error(f"An unexpected error occurred during PDF processing request: {e}")
         # Catch any other unexpected errors
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred during processing: {e}")
-
-# TODO: Add other potential functions for interacting with the PDF service if needed

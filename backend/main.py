@@ -44,14 +44,15 @@ async def health_check():
     return {"status": "ok"}
 
 
-# TODO: Include routers for books, notes, llm
-# from .api import books, notes, llm
-# app.include_router(books.router, prefix="/books", tags=["books"])
-# app.include_router(notes.router, prefix="/notes", tags=["notes"])
-# app.include_router(llm.router, prefix="/llm", tags=["llm"])
+# Include routers for books, notes, llm
+from .api import books # Import the books router
+# from .api import notes, llm # Keep commented for future phases
+app.include_router(books.router, prefix="/books", tags=["books"])
+# app.include_router(notes.router, prefix="/notes", tags=["notes"]) # Keep commented for future phases
+# app.include_router(llm.router, prefix="/llm", tags=["llm"]) # Keep commented for future phases
 
-# Add database connection logic (e.g., connect on startup)
-from .db.mongodb import connect_to_mongo, close_mongo_connection, get_database
+# Add database connection logic (connect on startup/shutdown)
+from .db.mongodb import connect_to_mongo, close_mongo_connection
 
 @app.on_event("startup")
 async def startup_db_client():
