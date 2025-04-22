@@ -1,16 +1,22 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, forwardRef } from 'react'; // Import forwardRef
 import './NotePane.css'; // Assuming you'll add some basic CSS
 
-// Remove LLM related state and handlers for Phase 3 completion
-// import { useState, useEffect } from 'react'; // Keep useState, useEffect
-// import { useState, useEffect, useRef } from 'react'; // Keep useRef
-
-function NotePane({ bookId, onNotePaneScroll }) { // Removed bookContent, onScrollSync
+// Wrap the component with forwardRef
+const NotePane = forwardRef(({ bookId }, ref) => { // Removed onNotePaneScroll prop
   const [notes, setNotes] = useState([]);
   const [newNoteContent, setNewNoteContent] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const notePaneRef = useRef(null); // Ref for the scrollable div
+  // Remove the internal notePaneRef as it's now passed from parent
+  // const notePaneRef = useRef(null); // Ref for the scrollable div
+
+  // Add state variables for LLM interaction
+  const [llmLoading, setLlmLoading] = useState(false);
+  const [llmQuestion, setLlmQuestion] = useState('');
+  const [llmAskResponse, setLlmAskResponse] = useState(null);
+  const [llmSummarizeResponse, setLlmSummarizeResponse] = useState(null);
+  const [llmError, setLlmError] = useState(null);
+
 
   // Fetch notes when bookId changes
   useEffect(() => {
@@ -49,7 +55,7 @@ function NotePane({ bookId, onNotePaneScroll }) { // Removed bookContent, onScro
     };
 
     try {
-      const response = await fetch('/notes', { // Use relative path for POST
+      const response = await fetch('/notes/', { // Use relative path for POST
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -58,8 +64,8 @@ function NotePane({ bookId, onNotePaneScroll }) { // Removed bookContent, onScro
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || 'Failed to save note');
+         const errorData = await response.json();
+         throw new Error(errorData.detail || 'Failed to save note');
       }
 
       const savedNote = await response.json();
@@ -74,23 +80,95 @@ function NotePane({ bookId, onNotePaneScroll }) { // Removed bookContent, onScro
     }
   };
 
-  // Handle scroll event for synchronization
-  const handleScroll = () => {
-    if (notePaneRef.current && onNotePaneScroll) {
-      onNotePaneScroll(notePaneRef.current);
+  // Remove the internal handleScroll function
+  // const handleScroll = () => {
+  //   if (notePaneRef.current && onNotePaneScroll) {
+  //     onNotePaneScroll(notePaneRef.current);
+  //   }
+  // };
+
+  // Add handleSummarizeBook function
+  const handleSummarizeBook = async () => {
+    if (!bookId) return;
+    setLlmLoading(true);
+    setLlmAskResponse(null); // Clear previous ask response
+    setLlmSummarizeResponse(null); // Clear previous summarize response
+    setLlmError(null); // Clear previous error
+
+    try {
+      const response = await fetch('/llm/summarize', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ book_id: bookId }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+         // Backend might return error details in the response body even with a non-200 status
+         throw new Error(data.detail || data.response || `HTTP error! status: ${response.status}`);
+      }
+
+      setLlmSummarizeResponse(data.response);
+
+    } catch (err) {
+      console.error('Failed to summarize book:', err);
+      setLlmError(`Failed to summarize: ${err.message || 'Unknown error'}`);
+    } finally {
+      setLlmLoading(false);
     }
   };
 
+  // Add handleAskLLM function
+  const handleAskLLM = async () => {
+    if (!bookId || !llmQuestion.trim()) {
+        setLlmError("Please enter a question.");
+        return;
+    }
+    setLlmLoading(true);
+    setLlmAskResponse(null); // Clear previous ask response
+    setLlmSummarizeResponse(null); // Clear previous summarize response
+    setLlmError(null); // Clear previous error
+
+    try {
+      const response = await fetch('/llm/ask', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ book_id: bookId, text: llmQuestion.trim() }), // Send book_id and question as text
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+         // Backend might return error details in the response body even with a non-200 status
+         throw new Error(data.detail || data.response || `HTTP error! status: ${response.status}`);
+      }
+
+      setLlmAskResponse(data.response);
+
+    } catch (err) {
+      console.error('Failed to ask LLM:', err);
+      setLlmError(`Failed to get LLM response: ${err.message || 'Unknown error'}`);
+    } finally {
+      setLlmLoading(false);
+    }
+  };
+
+
   if (loading) {
-    return <div className="note-pane">Loading notes...</div>;
+    return <div className="note-pane" ref={ref}>Loading notes...</div>;
   }
 
   if (error) {
-    return <div className="note-pane" style={{ color: 'red' }}>Error loading notes: {error}</div>;
+    return <div className="note-pane" ref={ref} style={{ color: 'red' }}>Error loading notes: {error}</div>;
   }
 
   return (
-    <div className="note-pane" ref={notePaneRef} onScroll={handleScroll}>
+    <div className="note-pane" ref={ref}> {/* Attach the ref */}
       <h2>Notes</h2>
 
       {/* Display existing notes */}
@@ -123,11 +201,10 @@ function NotePane({ bookId, onNotePaneScroll }) { // Removed bookContent, onScro
         </button>
       </div>
 
-      {/* LLM Interaction section - Commented out for Phase 3 completion */}
-      {/*
+      {/* LLM Interaction section - Uncommented and implemented */}
       <div className="llm-interaction">
         <h3>LLM Reading Assistance</h3>
-        <button onClick={handleSummarizeBook} disabled={llmLoading || !bookContent} style={{ marginBottom: '15px' }}>
+        <button onClick={handleSummarizeBook} disabled={llmLoading || !bookId} style={{ marginBottom: '15px' }}>
              {llmLoading ? 'Summarizing...' : 'Summarize Book'}
         </button>
         {llmSummarizeResponse && (
@@ -144,7 +221,7 @@ function NotePane({ bookId, onNotePaneScroll }) { // Removed bookContent, onScro
             rows="3"
             style={{ width: '100%', marginBottom: '10px' }}
         />
-        <button onClick={handleAskLLM} disabled={llmLoading || !bookContent}>
+        <button onClick={handleAskLLM} disabled={llmLoading || !bookId || !llmQuestion.trim()}>
             {llmLoading ? 'Asking...' : 'Ask LLM'}
         </button>
         {llmError && <p style={{ color: 'red' }}>{llmError}</p>}
@@ -155,9 +232,8 @@ function NotePane({ bookId, onNotePaneScroll }) { // Removed bookContent, onScro
             </div>
         )}
       </div>
-      */}
     </div>
   );
-}
+});
 
 export default NotePane;
