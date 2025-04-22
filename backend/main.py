@@ -37,21 +37,29 @@ else:
 async def read_root():
     return {"message": "Reading Pal Backend API is running"}
 
+@app.get("/health")
+async def health_check():
+    """Basic health check endpoint."""
+    # TODO: Add more sophisticated checks, e.g., database connection status
+    return {"status": "ok"}
+
+
 # TODO: Include routers for books, notes, llm
 # from .api import books, notes, llm
 # app.include_router(books.router, prefix="/books", tags=["books"])
 # app.include_router(notes.router, prefix="/notes", tags=["notes"])
 # app.include_router(llm.router, prefix="/llm", tags=["llm"])
 
-# TODO: Add database connection logic (e.g., connect on startup)
-# from .db.mongodb import connect_to_mongo, close_mongo_connection
-# @app.on_event("startup")
-# async def startup_db_client():
-#     await connect_to_mongo()
+# Add database connection logic (e.g., connect on startup)
+from .db.mongodb import connect_to_mongo, close_mongo_connection, get_database
 
-# @app.on_event("shutdown")
-# async def shutdown_db_client():
-#     await close_mongo_connection()
+@app.on_event("startup")
+async def startup_db_client():
+    await connect_to_mongo()
+
+@app.on_event("shutdown")
+async def shutdown_db_client():
+    await close_mongo_connection()
 
 if __name__ == "__main__":
     import uvicorn
