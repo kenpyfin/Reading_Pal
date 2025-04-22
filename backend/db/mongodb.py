@@ -2,6 +2,7 @@ import os
 from motor.motor_asyncio import AsyncIOMotorClient
 from dotenv import load_dotenv
 import logging
+from bson import ObjectId # Import ObjectId
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -44,4 +45,19 @@ def get_database():
          # Or raise an exception: raise ConnectionError("Database not initialized")
     return db
 
-# TODO: Add functions for common DB operations (e.g., get_book, save_book, get_notes, save_note)
+async def save_book(book_data: dict):
+    """Saves book data to the database."""
+    database = get_database()
+    result = await database.books.insert_one(book_data)
+    logger.info(f"Saved book with ID: {result.inserted_id}")
+    return str(result.inserted_id)
+
+async def get_book(book_id: str):
+    """Retrieves book data by ID."""
+    database = get_database()
+    try:
+        # Use ObjectId to query by MongoDB's primary key
+        return await database.books.find_one({"_id": ObjectId(book_id)})
+    except Exception as e:
+        logger.error(f"Error retrieving book {book_id}: {e}")
+        return None # Handle invalid ObjectId format or other errors
