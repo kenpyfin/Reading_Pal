@@ -16,7 +16,8 @@ function BookView() {
         const response = await fetch(`/books/${bookId}`); // Use relative path
 
         if (!response.ok) {
-           throw new Error(`HTTP error! status: ${response.status}`);
+           const errorData = await response.json();
+           throw new Error(`HTTP error! status: ${response.status} - ${errorData.detail || response.statusText}`);
         }
         const data = await response.json();
         setBookData(data);
@@ -63,11 +64,13 @@ function BookView() {
       </div>
       <div style={{ flex: 1, overflowY: 'auto', padding: '20px', borderLeft: '1px solid #ccc' }}>
          {/* NotePane will be implemented in a later phase */}
-         {/* <NotePane
+         <NotePane
            bookId={bookId} // Pass bookId to NotePane
+           bookContent={bookData.markdown_content} // Pass book content to NotePane for LLM context
            // onScrollSync={handleScrollSync} // Pass scroll handler
-         /> */}
-         <div>Note Pane Placeholder</div>
+         />
+         {/* Remove placeholder div */}
+         {/* <div>Note Pane Placeholder</div> */}
       </div>
     </div>
   );
