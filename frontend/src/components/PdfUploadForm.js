@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-// TODO: Import API function for PDF upload
+import { useNavigate } from 'react-router-dom'; // Import useNavigate
 
 function PdfUploadForm() {
   const [selectedFile, setSelectedFile] = useState(null);
@@ -7,6 +7,7 @@ function PdfUploadForm() {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
+  const navigate = useNavigate(); // Get the navigate function
 
   const handleFileChange = (event) => {
     setSelectedFile(event.target.files[0]);
@@ -35,15 +36,21 @@ function PdfUploadForm() {
     }
 
     try {
-      // TODO: Call backend API for PDF upload
-      // const response = await uploadPdfApi(formData);
-      // console.log('Upload successful:', response);
-      // setSuccess("PDF uploaded and processing started!");
-      // TODO: Redirect to book view or show progress
+      // Call backend API for PDF upload
+      const response = await fetch('/books/upload', { // Use relative path, assuming backend is served from root or proxied
+        method: 'POST',
+        body: formData,
+      });
 
-      // Placeholder success
-      console.log('Placeholder upload logic');
-      setSuccess("PDF upload placeholder successful. Check console.");
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || 'Upload failed');
+      }
+
+      const bookData = await response.json();
+      console.log('Upload successful:', bookData);
+      setSuccess("PDF uploaded and processing complete!");
+      navigate(`/book/${bookData._id}`); // Navigate to the new book's page
 
     } catch (err) {
       console.error('Upload failed:', err);

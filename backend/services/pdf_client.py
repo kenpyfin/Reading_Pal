@@ -28,6 +28,9 @@ async def process_pdf_with_service(file: UploadFile, title: str = None):
 
     try:
         # Use requests.post for sending files
+        # Note: requests is synchronous. For a truly async FastAPI app,
+        # you might consider a library like aiohttp or running this in a background task.
+        # For now, we'll use requests for simplicity as per the plan.
         response = requests.post(url, files=files, data=data)
         response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
 

@@ -1,8 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom'; // Assuming react-router-dom for routing
 import BookPane from '../components/BookPane';
-import NotePane from '../components/NotePane';
-// TODO: Import API function to fetch book data
+import NotePane from '../components/NotePane'; // Keep import for future phase
 
 function BookView() {
   const { bookId } = useParams(); // Get bookId from URL
@@ -13,18 +12,14 @@ function BookView() {
   useEffect(() => {
     const fetchBook = async () => {
       try {
-        // TODO: Call backend API to fetch book data
-        // const data = await fetchBookApi(bookId);
-        // setBookData(data);
+        // Call backend API to fetch book data
+        const response = await fetch(`/books/${bookId}`); // Use relative path
 
-        // Placeholder data
-        const placeholderData = {
-          title: `Book ${bookId}`,
-          markdown_content: `# Title of Book ${bookId}\n\nThis is some **placeholder** markdown content.\n\nIt includes a list:\n\n- Item 1\n- Item 2\n\nAnd maybe an image placeholder:\n\n![Placeholder Image](/images/placeholder.png)\n\nMore text here.`,
-          images: [{ filename: 'placeholder.png', path: '/images/placeholder.png' }], // Example image path
-          file_path: `/path/to/markdown/${bookId}.md`
-        };
-        setBookData(placeholderData);
+        if (!response.ok) {
+           throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        const data = await response.json();
+        setBookData(data);
 
       } catch (err) {
         console.error('Failed to fetch book:', err);
@@ -61,16 +56,18 @@ function BookView() {
     <div className="book-view-container" style={{ display: 'flex', height: '100vh' }}>
       <div style={{ flex: 1, overflowY: 'auto', padding: '20px' }}>
          <BookPane
-           markdownContent={bookData.markdown_content}
-           images={bookData.images}
+           markdownContent={bookData.markdown_content} // Pass markdown content
+           imageUrls={bookData.image_urls} // Pass image URLs
            // onScroll={handleScrollSync} // Pass scroll handler
          />
       </div>
       <div style={{ flex: 1, overflowY: 'auto', padding: '20px', borderLeft: '1px solid #ccc' }}>
-         <NotePane
-           bookId={bookId}
+         {/* NotePane will be implemented in a later phase */}
+         {/* <NotePane
+           bookId={bookId} // Pass bookId to NotePane
            // onScrollSync={handleScrollSync} // Pass scroll handler
-         />
+         /> */}
+         <div>Note Pane Placeholder</div>
       </div>
     </div>
   );

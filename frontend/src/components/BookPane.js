@@ -1,20 +1,29 @@
 import React from 'react';
-// TODO: Import markdown rendering library (e.g., react-markdown)
+import ReactMarkdown from 'react-markdown'; // Import react-markdown
+import remarkGfm from 'remark-gfm'; // Import remark-gfm for GitHub Flavored Markdown
 
-function BookPane({ markdownContent, images }) {
-  // TODO: Implement markdown rendering
-  // TODO: Handle image URLs (e.g., prepend backend URL)
+function BookPane({ markdownContent, imageUrls }) {
   // TODO: Implement scroll tracking for synchronization
 
   return (
     <div className="book-pane">
       <h2>Book Content</h2>
-      {/* TODO: Render markdown */}
-      <div dangerouslySetInnerHTML={{ __html: markdownContent || "<p>No content loaded.</p>" }} />
-      {/* Note: dangerouslySetInnerHTML is used here as a simple placeholder.
-           A proper markdown renderer like react-markdown is recommended. */}
-      {/* TODO: Display images */}
-      {/* {images.map(img => <img key={img.filename} src={`/images/${img.filename}`} alt={img.filename} />)} */}
+      {markdownContent ? (
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]} // Enable GitHub Flavored Markdown
+          children={markdownContent}
+          components={{
+            // Custom renderer for images to ensure correct src paths
+            img: ({ node, ...props }) => {
+              // The backend provides URLs like /images/{filename}
+              // We can use them directly if the static route is set up
+              return <img {...props} style={{ maxWidth: '100%', height: 'auto' }} />;
+            },
+          }}
+        />
+      ) : (
+        <p>No content loaded.</p>
+      )}
     </div>
   );
 }
