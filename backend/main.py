@@ -32,6 +32,16 @@ if images_path and os.path.exists(images_path):
 else:
     logger.warning(f"IMAGES_PATH not set or directory not found: {images_path}. Static image serving disabled.")
 
+# Mount static files directory for markdown (optional, but good for debugging/direct access)
+# This path must match the MARKDOWN_PATH configured in .env and docker-compose
+markdown_path = os.getenv("MARKDOWN_PATH")
+if markdown_path and os.path.exists(markdown_path):
+     # Choose a different path than /markdown to avoid conflicts if needed
+     app.mount("/markdown_files", StaticFiles(directory=markdown_path), name="markdown_files")
+     logger.info(f"Serving static markdown files from {markdown_path} at /markdown_files")
+else:
+     logger.warning(f"MARKDOWN_PATH not set or directory not found: {markdown_path}. Static markdown serving disabled.")
+
 
 @app.get("/")
 async def read_root():
@@ -46,9 +56,10 @@ async def health_check():
 
 # Include routers for books, notes, llm
 from .api import books # Import the books router
-# from .api import notes, llm # Keep commented for future phases
+from .api import notes # Import the notes router
+# from .api import llm # Keep commented for future phases
 app.include_router(books.router, prefix="/books", tags=["books"])
-# app.include_router(notes.router, prefix="/notes", tags=["notes"]) # Keep commented for future phases
+app.include_router(notes.router, prefix="/notes", tags=["notes"]) # Uncomment this line
 # app.include_router(llm.router, prefix="/llm", tags=["llm"]) # Keep commented for future phases
 
 # Add database connection logic (connect on startup/shutdown)
