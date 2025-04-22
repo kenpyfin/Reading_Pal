@@ -15,19 +15,24 @@ services:
       # IMPORTANT: Replace the placeholder with the actual value from your .env file
       # e.g., /home/ken/big_storage/projects/reading_pal/pdf_service/storage/images:/app/storage/images
       - ${IMAGES_PATH}:/app/storage/images # Use the IMAGES_PATH variable from .env
+      # Add mount for markdown files so backend can read them.
+      # This path must match the MARKDOWN_PATH configured in the root .env
+      # and used by the standalone pdf_service.
+      - ${MARKDOWN_PATH}:/app/storage/markdown # Use the MARKDOWN_PATH variable from .env
     environment:
       # Pass environment variables needed by backend
       MONGO_URI: mongodb://host.docker.internal:27017/
       DATABASE_NAME: ${DATABASE_NAME}
       LLM_SERVICE: ${LLM_SERVICE}
       LLM_MODEL: ${LLM_MODEL}
-      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL} # Corrected typo if it existed
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       # PDF_CLIENT_URL now uses the value from the root .env, pointing to the standalone service
       PDF_CLIENT_URL: ${PDF_CLIENT_URL}
       IMAGES_PATH: /app/storage/images # Path within the backend container where images are mounted
+      MARKDOWN_PATH: /app/storage/markdown # Path within the backend container where markdown is mounted
       BACKEND_PORT: ${BACKEND_PORT}
     # Remove pdf_service dependency. Backend does not depend on frontend.
     # depends_on:
