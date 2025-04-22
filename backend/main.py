@@ -57,10 +57,10 @@ async def health_check():
 # Include routers for books, notes, llm
 from .api import books # Import the books router
 from .api import notes # Import the notes router
-# from .api import llm # Keep commented for future phases
+from .api import llm # Import the llm router
 app.include_router(books.router, prefix="/books", tags=["books"])
-app.include_router(notes.router, prefix="/notes", tags=["notes"]) # Uncomment this line
-# app.include_router(llm.router, prefix="/llm", tags=["llm"]) # Keep commented for future phases
+app.include_router(notes.router, prefix="/notes", tags=["notes"])
+app.include_router(llm.router, prefix="/llm", tags=["llm"]) # Uncommented this line
 
 # Add database connection logic (connect on startup/shutdown)
 from .db.mongodb import connect_to_mongo, close_mongo_connection
