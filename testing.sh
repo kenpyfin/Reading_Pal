@@ -67,7 +67,7 @@ echo "Dangling resources pruned."
 
 # --- Build Docker Images ---
 echo "Building backend and frontend Docker images..."
-docker-compose build backend frontend
+docker-compose build --no-cache backend frontend
 
 echo "Docker images built."
 
@@ -80,10 +80,6 @@ docker-compose up -d backend frontend
 echo "Services started. Check 'docker-compose ps' to confirm."
 docker-compose ps
 
-# --- Wait for Services (Optional but Recommended) ---
-# Wait for user input to allow time for services to initialize and external dependencies to be ready
-echo "Waiting for services to initialize and external dependencies (PDF Service, MongoDB) to be ready."
-read -p "Press Enter to continue with testing instructions..."
 
 # --- Test Instructions ---
 echo "--- Testing Instructions ---"
@@ -98,6 +94,11 @@ echo "8. Check the backend and PDF service logs for errors if something goes wro
 echo "   - Backend logs: docker-compose logs backend"
 echo "   - PDF Service logs: Check the logs for your separate PDF service instance."
 echo "   - Frontend logs: Check your browser's developer console."
+
+
+echo "Waiting for services to initialize and external dependencies (PDF Service, MongoDB) to be ready."
+read -p "Press Enter to continue with testing instructions..."
+
 
 echo "--- End of Setup ---"
 echo "The script will now stop and remove the services it started."
