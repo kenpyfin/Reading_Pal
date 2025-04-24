@@ -72,10 +72,10 @@ docker-compose build backend frontend
 echo "Docker images built."
 
 # --- Start Services ---
-echo "Starting MongoDB, Backend, and Frontend services..."
+echo "Starting Backend, and Frontend services..."
 # Start only the services needed for the core flow.
 # The PDF service is assumed to be running separately as per architecture.
-docker-compose up -d mongodb backend frontend
+docker-compose up -d backend frontend
 
 echo "Services started. Check 'docker-compose ps' to confirm."
 docker-compose ps
