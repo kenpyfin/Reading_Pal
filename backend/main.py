@@ -55,10 +55,10 @@ async def health_check():
 
 
 # Include routers for books, notes, llm
-# Corrected imports for running main.py directly
-from backend.api import books # Import the books router
-from backend.api import notes # Import the notes router
-from backend.api import llm # Import the llm router
+# Use absolute imports relative to the /app directory
+from api import books # Import the books router
+from api import notes # Import the notes router
+from api import llm # Import the llm router
 app.include_router(books.router, prefix="/books", tags=["books"])
 app.include_router(notes.router, prefix="/notes", tags=["notes"])
 app.include_router(llm.router, prefix="/llm", tags=["llm"]) # Uncommented this line
