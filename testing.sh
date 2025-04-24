@@ -81,8 +81,9 @@ echo "Services started. Check 'docker-compose ps' to confirm."
 docker-compose ps
 
 # --- Wait for Services (Optional but Recommended) ---
-# Simple wait - you might need more sophisticated health checks
-sleep 10 # Adjust sleep time based on your system and service startup speed
+# Wait for user input to allow time for services to initialize and external dependencies to be ready
+echo "Waiting for services to initialize and external dependencies (PDF Service, MongoDB) to be ready."
+read -p "Press Enter to continue with testing instructions..."
 
 # --- Test Instructions ---
 echo "--- Testing Instructions ---"
