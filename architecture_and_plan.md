@@ -13,6 +13,7 @@ The system follows a microservice-oriented approach, primarily consisting of:
 *   **PDF Service:** A separate Python service responsible for processing PDF files into Markdown and extracting images.
 *   **LLM Services:** External or internal services providing LLM capabilities (summarization, Q&A, etc.).
 *   **Database:** A MongoDB instance used for storing user data, notes, and book metadata.
+    *Note: The MongoDB instance is expected to be running externally to the Docker Compose setup (e.g., on the host machine or a separate server) and accessible to the Backend service.*
 
 ```mermaid
 graph LR
@@ -91,7 +92,7 @@ graph LR
     1.  User selects text in the book pane and clicks "Summarize" in the Frontend.
     2.  Frontend sends the selected text and book context (book ID, section) to Backend API (`POST /llm/summarize`).
     3.  Backend retrieves necessary context (surrounding text) from the stored Markdown in MongoDB.
-    4.  Backend calls the appropriate **Reading Assistance LLM Service** API with the prompt and context.
+    4.  Backend calls the appropriate **Reading Assistance** LLM Service API with the prompt and context.
     5.  LLM Service processes the request and returns a summary.
     6.  Backend receives the summary.
     7.  Backend can optionally save the interaction/summary as a special type of note in MongoDB.
