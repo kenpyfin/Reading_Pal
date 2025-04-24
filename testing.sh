@@ -75,14 +75,13 @@ echo "Docker images built."
 echo "Starting Backend, and Frontend services..."
 # Start only the services needed for the core flow.
 # The PDF service is assumed to be running separately as per architecture.
-docker-compose up -d mongodb backend frontend
+docker-compose up -d backend frontend
 
 echo "Services started. Check 'docker-compose ps' to confirm."
 docker-compose ps
 
 # --- Wait for Services (Optional but Recommended) ---
 # Simple wait - you might need more sophisticated health checks
-echo "Waiting briefly for services to initialize..."
 sleep 10 # Adjust sleep time based on your system and service startup speed
 
 # --- Test Instructions ---
@@ -97,7 +96,6 @@ echo "7. Test the 'Summarize Book' and 'Ask a Question' features in the Note Pan
 echo "8. Check the backend and PDF service logs for errors if something goes wrong."
 echo "   - Backend logs: docker-compose logs backend"
 echo "   - PDF Service logs: Check the logs for your separate PDF service instance."
-echo "   - MongoDB logs: docker-compose logs mongodb"
 echo "   - Frontend logs: Check your browser's developer console."
 
 echo "--- End of Setup ---"
