@@ -75,11 +75,14 @@ echo "Docker images built."
 echo "Starting Backend, and Frontend services..."
 # Start only the services needed for the core flow.
 # The PDF service is assumed to be running separately as per architecture.
-docker-compose up -d backend frontend
+docker-compose up -d backend frontend # Start services in detached mode
 
 echo "Services started. Check 'docker-compose ps' to confirm."
 docker-compose ps
 
+# --- Stream Logs ---
+echo "--- Streaming Docker Logs (Backend and Frontend) ---"
+docker-compose logs -f backend frontend & # Start streaming logs in the background
 
 # --- Test Instructions ---
 echo "--- Testing Instructions ---"
@@ -94,14 +97,10 @@ echo "8. Check the backend and PDF service logs for errors if something goes wro
 echo "   - Backend logs: docker-compose logs backend"
 echo "   - PDF Service logs: Check the logs for your separate PDF service instance."
 echo "   - Frontend logs: Check your browser's developer console."
+echo "   - Docker Compose logs are streaming below this message."
 
-
-echo "Waiting for services to initialize and external dependencies (PDF Service, MongoDB) to be ready."
-read -p "Press Enter to continue with testing instructions..."
-
-
-echo "--- End of Setup ---"
-echo "The script will now stop and remove the services it started."
+echo "" # Add a blank line for readability
+read -p "Press Enter when you are finished testing to stop services and clean up..."
 
 # The trap command will execute cleanup() upon script exit.
 # If the script reaches here successfully, it will exit normally,
