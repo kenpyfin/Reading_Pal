@@ -55,15 +55,16 @@ async def health_check():
 
 
 # Include routers for books, notes, llm
-from .api import books # Import the books router
-from .api import notes # Import the notes router
-from .api import llm # Import the llm router
+# Corrected imports for running main.py directly
+from backend.api import books # Import the books router
+from backend.api import notes # Import the notes router
+from backend.api import llm # Import the llm router
 app.include_router(books.router, prefix="/books", tags=["books"])
 app.include_router(notes.router, prefix="/notes", tags=["notes"])
 app.include_router(llm.router, prefix="/llm", tags=["llm"]) # Uncommented this line
 
 # Add database connection logic (connect on startup/shutdown)
-from .db.mongodb import connect_to_mongo, close_mongo_connection
+from backend.db.mongodb import connect_to_mongo, close_mongo_connection
 
 @app.on_event("startup")
 async def startup_db_client():
