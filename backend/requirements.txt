@@ -8,3 +8,6 @@ motor # For MongoDB async driver
 ollama # Added ollama client
 # google-generativeai
 # Add any other necessary libraries
+python-multipart
+anthropic
+google
