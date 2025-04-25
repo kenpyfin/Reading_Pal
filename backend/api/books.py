@@ -5,11 +5,12 @@ from typing import List
 from bson import ObjectId
 from fastapi.concurrency import run_in_threadpool # Import run_in_threadpool
 
-from ..services.pdf_client import process_pdf_with_service
-from ..db.mongodb import save_book, get_book # Import the implemented DB functions
+# Change relative imports to absolute imports
+from services.pdf_client import process_pdf_with_service
+from db.mongodb import save_book, get_book # Import the implemented DB functions
 # Assuming backend/models/book.py exists with the Book model
 # We will need to update this model to store markdown_file_path instead of markdown_content
-from ..models.book import Book
+from models.book import Book
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
