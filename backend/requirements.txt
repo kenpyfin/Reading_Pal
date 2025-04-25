@@ -5,7 +5,6 @@ httpx # For async HTTP requests, e.g., to PDF service
 requests # For synchronous HTTP requests, e.g., potentially DeepSeek API
 motor # MongoDB async driver
 pydantic # For data validation and serialization
-bson # For ObjectId and other BSON types
 anthropic # Anthropic LLM client
 ollama # Ollama LLM client
 google-generativeai # Google Gemini LLM client
