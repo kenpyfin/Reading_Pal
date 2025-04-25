@@ -1,16 +1,16 @@
 import os
-import logging
+import logging # Keep one logging import
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, status
 from typing import List
 from bson import ObjectId
 from fastapi.concurrency import run_in_threadpool # Import run_in_threadpool
 
 # Change relative imports to absolute imports
-from services.pdf_client import process_pdf_with_service
-from db.mongodb import save_book, get_book # Import the implemented DB functions
+from backend.services.pdf_client import process_pdf_with_service
+from backend.db.mongodb import save_book, get_book # Import the implemented DB functions
 # Assuming backend/models/book.py exists with the Book model
 # We will need to update this model to store markdown_file_path instead of markdown_content
-from models.book import Book
+from backend.models.book import Book
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
