@@ -4,9 +4,9 @@ from typing import List
 from bson import ObjectId # Import ObjectId
 from datetime import datetime # Import datetime
 
-# Import new DB functions and Note models
-from ..db.mongodb import save_note, get_notes_by_book_id, update_note, get_note_by_id
-from ..models.note import Note, NoteCreate, NoteUpdate
+# Change relative imports to absolute imports
+from db.mongodb import save_note, get_notes_by_book_id, update_note, get_note_by_id
+from models.note import Note, NoteCreate, NoteUpdate
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

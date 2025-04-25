@@ -5,9 +5,9 @@ from pydantic import BaseModel
 from typing import Optional
 from fastapi.concurrency import run_in_threadpool # Keep import for read_markdown_content
 
-# Update import to get the async wrapper functions
-from ..services.llm_service import ask_question, summarize_text # Import the async wrapper functions
-from ..db.mongodb import get_book # Import function to get book data
+# Change relative imports to absolute imports
+from services.llm_service import ask_question, summarize_text # Import the async wrapper functions
+from db.mongodb import get_book # Import function to get book data
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
