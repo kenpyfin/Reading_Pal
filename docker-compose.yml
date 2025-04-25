@@ -44,5 +44,6 @@ services:
       - "${FRONTEND_PORT}:80"
     environment:
       REACT_APP_BACKEND_URL: http://localhost:${BACKEND_PORT} # Use localhost for browser access
+      BACKEND_PORT: ${BACKEND_PORT} # Make BACKEND_PORT available for envsubst in nginx.conf
     depends_on:
       - backend
