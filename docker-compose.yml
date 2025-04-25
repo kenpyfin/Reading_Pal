@@ -41,7 +41,7 @@ services:
   frontend:
     build: ./frontend
     ports:
-      - "${FRONTEND_PORT}:${FRONTEND_PORT}"
+      - "${FRONTEND_PORT}:80"
     environment:
       REACT_APP_BACKEND_URL: http://localhost:${BACKEND_PORT} # Use localhost for browser access
     depends_on:
