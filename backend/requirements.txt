@@ -1,13 +1,12 @@
 fastapi
 uvicorn[standard]
 python-dotenv
-requests # For calling PDF service
-motor # For MongoDB async driver
-# Add specific LLM client libraries based on which ones you implement
-# anthropic
-ollama # Added ollama client
-# google-generativeai
-# Add any other necessary libraries
-python-multipart
-anthropic
-google
+httpx # For async HTTP requests, e.g., to PDF service
+requests # For synchronous HTTP requests, e.g., potentially DeepSeek API
+motor # MongoDB async driver
+pydantic # For data validation and serialization
+bson # For ObjectId and other BSON types
+anthropic # Anthropic LLM client
+ollama # Ollama LLM client
+google-generativeai # Google Gemini LLM client
+python-multipart # For handling file uploads in FastAPI
