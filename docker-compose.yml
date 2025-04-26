@@ -24,8 +24,8 @@ services:
       - ${MARKDOWN_PATH}:/app/storage/markdown # Use the MARKDOWN_PATH variable from .env
     environment:
       # Pass environment variables needed by backend
-      # Change MONGO_URI to use localhost when network_mode is host
-      MONGO_URI: mongodb://localhost:27017/
+      # MONGO_URI is read from the .env file.
+      MONGO_URI: ${MONGO_URI} # Read MONGO_URI from the .env file
       DATABASE_NAME: ${DATABASE_NAME}
       LLM_SERVICE: ${LLM_SERVICE}
       LLM_MODEL: ${LLM_MODEL}
