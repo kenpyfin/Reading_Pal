@@ -37,14 +37,24 @@ function PdfUploadForm() {
 
     try {
       // Call backend API for PDF upload
-      const response = await fetch('/books/upload', { // Use relative path, assuming backend is served from root or proxied
+      // CHANGE: Use /api/books/upload to match Nginx proxy configuration
+      const response = await fetch('/api/books/upload', {
         method: 'POST',
         body: formData,
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || 'Upload failed');
+        // Attempt to parse error response if it's JSON, otherwise use generic message
+        let errorDetail = 'Upload failed';
+        try {
+            const errorData = await response.json();
+            errorDetail = errorData.detail || JSON.stringify(errorData);
+        } catch (parseError) {
+            // If parsing fails, the response body might not be JSON (e.g., HTML error page)
+            errorDetail = `Upload failed: Received non-JSON response (Status: ${response.status})`;
+            console.error("Failed to parse error response as JSON:", parseError);
+        }
+        throw new Error(errorDetail);
       }
 
       const bookData = await response.json();
