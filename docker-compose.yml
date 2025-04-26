@@ -23,7 +23,7 @@ services:
       # and used by the standalone pdf_service.
       - ${MARKDOWN_PATH}:/app/storage/markdown # Use the MARKDOWN_PATH variable from .env
     environment:
-      MONGO_URI: ${MONGO_URI} 
+      MONGO_URI: ${MONGO_URI}
       DATABASE_NAME: ${DATABASE_NAME}
       LLM_SERVICE: ${LLM_SERVICE}
       LLM_MODEL: ${LLM_MODEL}
@@ -69,3 +69,6 @@ services:
       BACKEND_PORT: ${BACKEND_PORT}
     depends_on:
       - backend
+    # Add this section to make host.docker.internal resolvable
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
