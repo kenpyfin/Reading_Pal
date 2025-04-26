@@ -23,9 +23,7 @@ services:
       # and used by the standalone pdf_service.
       - ${MARKDOWN_PATH}:/app/storage/markdown # Use the MARKDOWN_PATH variable from .env
     environment:
-      # Pass environment variables needed by backend
-      # MONGO_URI is read from the .env file.
-      MONGO_URI: ${MONGO_URI} # Read MONGO_URI from the .env file
+      MONGO_URI: ${MONGO_URI} 
       DATABASE_NAME: ${DATABASE_NAME}
       LLM_SERVICE: ${LLM_SERVICE}
       LLM_MODEL: ${LLM_MODEL}
