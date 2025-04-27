@@ -25,7 +25,7 @@ const NotePane = forwardRef(({ bookId }, ref) => { // Removed onNotePaneScroll p
       setLoading(true);
       setError(null);
       try {
-        const response = await fetch(`/notes/${bookId}`); // Use relative path
+        const response = await fetch(`/api/notes/${bookId}`); // Use relative path with /api prefix
         if (!response.ok) {
           const errorData = await response.json();
           throw new Error(`HTTP error! status: ${response.status} - ${errorData.detail || response.statusText}`);
@@ -55,7 +55,8 @@ const NotePane = forwardRef(({ bookId }, ref) => { // Removed onNotePaneScroll p
     };
 
     try {
-      const response = await fetch('/notes/', { // Use relative path for POST
+      // CHANGE: Add /api prefix to the POST notes endpoint
+      const response = await fetch('/api/notes/', { // Use relative path for POST with /api prefix
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -96,7 +97,7 @@ const NotePane = forwardRef(({ bookId }, ref) => { // Removed onNotePaneScroll p
     setLlmError(null); // Clear previous error
 
     try {
-      const response = await fetch('/llm/summarize', {
+      const response = await fetch('/api/llm/summarize', { // Use relative path with /api prefix
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -133,7 +134,7 @@ const NotePane = forwardRef(({ bookId }, ref) => { // Removed onNotePaneScroll p
     setLlmError(null); // Clear previous error
 
     try {
-      const response = await fetch('/llm/ask', {
+      const response = await fetch('/api/llm/ask', { // Use relative path with /api prefix
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
