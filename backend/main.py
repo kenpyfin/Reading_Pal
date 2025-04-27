@@ -59,9 +59,9 @@ async def health_check():
 from backend.api import books # Import the books router
 from backend.api import notes # Import the notes router
 from backend.api import llm # Import the llm router
-app.include_router(books.router, prefix="/books", tags=["books"])
-app.include_router(notes.router, prefix="/notes", tags=["notes"])
-app.include_router(llm.router, prefix="/llm", tags=["llm"]) # Uncommented this line
+app.include_router(books.router, prefix="/api/books", tags=["books"]) # Add /api prefix here
+app.include_router(notes.router, prefix="/api/notes", tags=["notes"]) # Add /api prefix here
+app.include_router(llm.router, prefix="/api/llm", tags=["llm"]) # Add /api prefix here
 
 # Add database connection logic (connect on startup/shutdown)
 from backend.db.mongodb import connect_to_mongo, close_mongo_connection
