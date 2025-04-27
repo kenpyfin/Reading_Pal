@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 import logging
+import uvicorn # Import uvicorn
 
 # Load environment variables
 load_dotenv()
@@ -22,6 +23,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Get environment variables
+BACKEND_PORT = int(os.getenv("BACKEND_PORT", 8000)) # Read BACKEND_PORT, default to 8000 if not set
+
+# Add print statements to debug the port value
+print(f"DEBUG: Raw BACKEND_PORT env var: {os.getenv('BACKEND_PORT')}")
+print(f"DEBUG: Parsed BACKEND_PORT for Uvicorn: {BACKEND_PORT}")
+
 
 # Mount static files directory for images
 # This path must match the IMAGES_PATH configured in .env and docker-compose
@@ -75,6 +84,4 @@ async def shutdown_db_client():
     await close_mongo_connection()
 
 if __name__ == "__main__":
-    import uvicorn
-    port = int(os.getenv("BACKEND_PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host="0.0.0.0", port=BACKEND_PORT) # Use the BACKEND_PORT variable
