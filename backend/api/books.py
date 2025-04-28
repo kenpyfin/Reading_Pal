@@ -72,7 +72,6 @@ async def upload_pdf(
             "_id": str(saved_book_doc["_id"]), # Convert ObjectId to string
             "title": saved_book_doc.get("title"),
             "original_filename": saved_book_doc.get("original_filename"),
-            "markdown_content": markdown_content, # Include the read content
             "markdown_file_path": saved_book_doc.get("markdown_file_path"), # Optionally include path
             "image_paths": saved_book_doc.get("image_paths", []),
             # Convert server-side image paths to public URLs for the response
