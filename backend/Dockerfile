@@ -21,4 +21,5 @@ RUN pip install --no-cache-dir -r /app/backend/requirements.txt
 # Run main.py when the container launches
 # Run uvicorn using the module path 'backend.main:app'
 # Use the BACKEND_PORT environment variable for the port
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "${BACKEND_PORT}"]
+# Change this line to use the shell form (single string) for environment variable expansion
+CMD uvicorn backend.main:app --host 0.0.0.0 --port ${BACKEND_PORT}
