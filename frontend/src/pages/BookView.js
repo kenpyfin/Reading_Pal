@@ -13,7 +13,8 @@ function BookView() {
     const fetchBook = async () => {
       try {
         // Call backend API to fetch book data
-        const response = await fetch(`/books/${bookId}`); // Use relative path
+        // Added /api prefix based on backend routing
+        const response = await fetch(`/api/books/${bookId}`); // Use relative path with /api
 
         if (!response.ok) {
            const errorData = await response.json();
