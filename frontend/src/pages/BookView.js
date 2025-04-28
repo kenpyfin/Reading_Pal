@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react'; // Import useRef
 import { useParams } from 'react-router-dom'; // Assuming react-router-dom for routing
 import BookPane from '../components/BookPane';
 import NotePane from '../components/NotePane'; // Keep import for future phase
@@ -8,6 +8,10 @@ function BookView() {
   const [bookData, setBookData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+
+  // Refs for scroll synchronization
+  const bookPaneRef = useRef(null);
+  const notePaneRef = useRef(null);
 
   useEffect(() => {
     const fetchBook = async () => {
@@ -38,9 +42,33 @@ function BookView() {
   }, [bookId]);
 
   // TODO: Implement scroll synchronization logic between panes
-  // const handleScrollSync = (scrollTop) => {
-  //   // Adjust scroll position of the other pane
-  // };
+  // This is a placeholder function. Actual implementation needs to map
+  // scroll positions between the two panes, which might have different heights
+  // and content structures.
+  const handleScrollSync = (scrollingPaneRef, targetPaneRef) => {
+      if (!scrollingPaneRef.current || !targetPaneRef.current) return;
+
+      // Basic percentage-based sync (might not be accurate for all content)
+      const scrollingElement = scrollingPaneRef.current;
+      const targetElement = targetPaneRef.current;
+
+      const scrollPercentage = scrollingElement.scrollTop / (scrollingElement.scrollHeight - scrollingElement.clientHeight);
+
+      // Prevent infinite loop by checking if the target is already close to the desired position
+      const targetScrollTop = scrollPercentage * (targetElement.scrollHeight - targetElement.clientHeight);
+      if (Math.abs(targetElement.scrollTop - targetScrollTop) > 5) { // Use a small threshold
+           targetElement.scrollTop = targetScrollTop;
+      }
+  };
+
+  const handleBookPaneScroll = () => {
+      handleScrollSync(bookPaneRef, notePaneRef);
+  };
+
+  const handleNotePaneScroll = () => {
+      handleScrollSync(notePaneRef, bookPaneRef);
+  };
+
 
   if (loading) {
     return <div>Loading book...</div>;
@@ -56,22 +84,29 @@ function BookView() {
 
   return (
     <div className="book-view-container" style={{ display: 'flex', height: '100vh' }}>
-      <div style={{ flex: 1, overflowY: 'auto', padding: '20px' }}>
+      {/* Book Pane */}
+      <div
+         ref={bookPaneRef} // Attach ref
+         style={{ flex: 1, overflowY: 'auto', padding: '20px' }}
+         onScroll={handleBookPaneScroll} // Add scroll handler
+      >
          <BookPane
            markdownContent={bookData.markdown_content} // Pass markdown content
            imageUrls={bookData.image_urls} // Pass image URLs
-           // onScroll={handleScrollSync} // Pass scroll handler
          />
       </div>
-      <div style={{ flex: 1, overflowY: 'auto', padding: '20px', borderLeft: '1px solid #ccc' }}>
-         {/* NotePane will be implemented in a later phase */}
+      {/* Note Pane */}
+      <div
+         ref={notePaneRef} // Attach ref
+         style={{ flex: 1, overflowY: 'auto', padding: '20px', borderLeft: '1px solid #ccc' }}
+         onScroll={handleNotePaneScroll} // Add scroll handler
+      >
          <NotePane
            bookId={bookId} // Pass bookId to NotePane
            bookContent={bookData.markdown_content} // Pass book content to NotePane for LLM context
-           // onScrollSync={handleScrollSync} // Pass scroll handler
+           // NotePane now uses forwardRef, so we pass the ref prop directly
+           ref={notePaneRef}
          />
-         {/* Remove placeholder div */}
-         {/* <div>Note Pane Placeholder</div> */}
       </div>
     </div>
   );
