@@ -8,8 +8,8 @@ services:
     build: ./backend
     # When using network_mode: "host", the container shares the host's network namespace.
     # Port mapping is not needed or allowed in this mode.
-    # ports:
-    #   - "${BACKEND_PORT}:${BACKEND_PORT}"
+    ports:
+      - "${BACKEND_PORT}:8000"
     network_mode: "host" # Add this line to use the host's network
     volumes:
       # Mount the images path so backend can serve them.
