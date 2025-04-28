@@ -1,21 +1,27 @@
 import os
 import requests
-from dotenv import load_dotenv
+# Remove load_dotenv here, rely on main.py/docker-compose
+# from dotenv import load_dotenv
 import logging
 from fastapi import UploadFile # Use UploadFile type hint for clarity
-from fastapi import HTTPException # Import HTTPException
+# Remove HTTPException import here, raise standard exceptions instead
+# from fastapi import HTTPException
 
-load_dotenv()
+# load_dotenv() # Remove load_dotenv here
 logger = logging.getLogger(__name__)
 
 PDF_CLIENT_URL = os.getenv("PDF_CLIENT_URL")
 
-async def process_pdf_with_service(file: UploadFile, title: str = None):
+# Change from async def to def
+def process_pdf_with_service(file: UploadFile, title: str = None):
     """
     Sends a PDF file to the external PDF processing service.
+    This is a synchronous function intended to be run in a threadpool.
+    Raises standard exceptions on failure.
     """
     if not PDF_CLIENT_URL:
         logger.error("PDF_CLIENT_URL is not set in environment variables.")
+        # Raise a standard ValueError
         raise ValueError("PDF processing service URL is not configured.")
 
     url = f"{PDF_CLIENT_URL}/process-pdf"
@@ -23,14 +29,12 @@ async def process_pdf_with_service(file: UploadFile, title: str = None):
 
     # requests.post expects file-like objects or bytes for the 'files' parameter.
     # file.file is the SpooledTemporaryFile from UploadFile.
+    # Pass the file-like object directly to requests.
     files = {'file': (file.filename, file.file, file.content_type)}
     data = {'title': title} if title else {}
 
     try:
-        # Use requests.post for sending files
-        # Note: requests is synchronous. For a truly async FastAPI app,
-        # you might consider a library like aiohttp or running this in a background task.
-        # For now, we'll use requests for simplicity as per the plan.
+        # Use requests.post for sending files - this is synchronous
         response = requests.post(url, files=files, data=data)
         response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
 
@@ -41,14 +45,14 @@ async def process_pdf_with_service(file: UploadFile, title: str = None):
             return result
         else:
             logger.error(f"PDF processing service reported failure: {result.get('message')}")
-            # Raise HTTPException to propagate the error to the FastAPI handler
-            raise HTTPException(status_code=500, detail=result.get('message', 'PDF processing failed'))
+            # Raise a standard RuntimeError
+            raise RuntimeError(result.get('message', 'PDF processing failed'))
 
     except requests.exceptions.RequestException as e:
         logger.error(f"Error communicating with PDF processing service: {e}")
-        # Raise HTTPException for service unavailability or request errors
-        raise HTTPException(status_code=503, detail=f"Failed to connect to PDF processing service or request failed: {e}")
+        # Raise a standard RuntimeError for request errors
+        raise RuntimeError(f"Failed to connect to PDF processing service or request failed: {e}")
     except Exception as e:
         logger.error(f"An unexpected error occurred during PDF processing request: {e}")
-        # Catch any other unexpected errors
-        raise HTTPException(status_code=500, detail=f"An unexpected error occurred during processing: {e}")
+        # Catch any other unexpected errors and raise a standard RuntimeError
+        raise RuntimeError(f"An unexpected error occurred during processing: {e}")
