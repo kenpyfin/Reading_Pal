@@ -12,6 +12,7 @@ from magic_pdf.pipe.OCRPipe import OCRPipe
 from torch.cuda.amp import autocast
 import re # Import the regex module
 from contextlib import nullcontext # Import nullcontext for Python 3.7+
+import ollama # Import the ollama library
 
 # Initialize FastAPI app
 app = FastAPI(title="PDF Processing Service")
@@ -36,6 +37,12 @@ else:
 PDF_STORAGE_PATH = os.getenv('PDF_STORAGE_PATH')
 MARKDOWN_PATH = os.getenv('MARKDOWN_PATH')
 IMAGES_PATH = os.getenv('IMAGES_PATH')
+
+# Get Ollama configuration from environment variables
+OLLAMA_API_BASE = os.getenv('OLLAMA_API_BASE')
+# Use LLM_MODEL from .env for the reformatting model
+OLLAMA_REFORMAT_MODEL = os.getenv('LLM_MODEL') # Use the general LLM_MODEL setting
+
 
 # --- Helper function to sanitize filename ---
 def sanitize_filename(filename: str) -> str:
@@ -84,49 +91,58 @@ class ProcessResponse(BaseModel):
     images: Optional[List[ImageInfo]] = None
     file_path: str # This will be the path on the PDF service host
 
-def reformat_markdown_with_claude(md_text):
-    from anthropic import Anthropic
+# RENAME function and update logic to use Ollama
+def reformat_markdown_with_ollama(md_text):
+    # Check if Ollama configuration is available
+    if not OLLAMA_API_BASE or not OLLAMA_REFORMAT_MODEL:
+        logger.warning("OLLAMA_API_BASE or LLM_MODEL not set. Skipping markdown reformatting.")
+        return md_text # Return original text if config is not available
+
+    try:
+        # Use the synchronous Ollama client
+        client = ollama.Client(host=OLLAMA_API_BASE)
+        # Optional: Check if the model exists (can add overhead)
+        # client.show(OLLAMA_REFORMAT_MODEL) # This would raise an error if model doesn't exist
+        logger.info(f"Ollama client initialized for reformatting at {OLLAMA_API_BASE} using model {OLLAMA_REFORMAT_MODEL}.")
+    except Exception as e:
+        logger.error(f"Failed to initialize Ollama client or check model: {e}. Skipping markdown reformatting.")
+        return md_text # Return original text if client initialization fails
+
 
     # Approximate tokens per character (this is a rough estimate)
     TOKENS_PER_CHAR = 0.25
     # Leave room for system prompt and other message components
-    MAX_CHUNK_CHARS = int((4096 * 0.8) / TOKENS_PER_CHAR)  # Using 80% of max tokens
-
-    anthropic_api_key = os.getenv('ANTHROPIC_API_KEY')
-    if not anthropic_api_key:
-        logger.warning("ANTHROPIC_API_KEY not set. Skipping markdown reformatting.")
-        return md_text # Return original text if API key is not available
-
-    try:
-        client = Anthropic(api_key=anthropic_api_key)
-    except Exception as e:
-        logger.error(f"Failed to initialize Anthropic client: {e}. Skipping markdown reformatting.")
-        return md_text # Return original text if client initialization fails
-
+    # Adjust max tokens based on typical Ollama model context windows (e.g., 8192, 32768)
+    # Let's use a conservative chunk size, but allow larger if needed.
+    # Max tokens for response + prompt should fit within model context.
+    # Assuming a model with at least 8192 context, leave ~6000 for the chunk.
+    MAX_CHUNK_CHARS = int(6000 / TOKENS_PER_CHAR) # Roughly 24000 characters per chunk
 
     chunks = split_markdown_into_chunks(md_text, max_chunk_size=MAX_CHUNK_CHARS)
     reformatted_chunks = []
-    system_prompt = "You are a helpful assistant that reformats markdown text to be more readable and consistent. Only output the reformatted markdown without any other words."
+    # Adjust prompt for a general Ollama model
+    system_prompt = "You are a helpful assistant that reformats markdown text to be more readable and consistent. Preserve all original content, including text, headings, lists, code blocks, and image links. Only output the reformatted markdown without any conversational filler."
 
     for i, chunk in enumerate(chunks):
         try:
-            logger.info(f"Reformatting markdown chunk {i+1}/{len(chunks)}...")
-            message = client.messages.create(
-                model="claude-3-haiku-20240307", # Use a cost-effective model for reformatting
-                max_tokens=4096,
-                system=system_prompt,
+            logger.info(f"Reformatting markdown chunk {i+1}/{len(chunks)} using Ollama...")
+            # Use the chat endpoint
+            response = client.chat(
+                model=OLLAMA_REFORMAT_MODEL,
                 messages=[
-                    {
-                        "role": "user",
-                        "content": f"Please reformat this markdown text to be more readable without adding or deleting a single word:\n\n{chunk}"
-                    }
-                ]
+                    {'role': 'system', 'content': system_prompt},
+                    {'role': 'user', 'content': f"Reformat this markdown:\n\n{chunk}"}
+                ],
+                options={
+                    'temperature': 0.1, # Keep temperature low for consistent reformatting
+                    'num_predict': -1 # Generate until the model stops (within context limits)
+                }
             )
-            reformatted_chunk = message.content[0].text if message.content else ""
+            reformatted_chunk = response['message']['content'] if response and 'message' in response else ""
             reformatted_chunks.append(reformatted_chunk)
             logger.info(f"Finished reformatting chunk {i+1}.")
         except Exception as e:
-            logger.error(f"Error reformatting chunk {i+1}: {e}")
+            logger.error(f"Error reformatting chunk {i+1} with Ollama: {e}")
             # Fallback: return the original chunk if reformatting fails
             reformatted_chunks.append(chunk)
 
@@ -213,13 +229,14 @@ def process_pdf_to_markdown(file_path: str, title: str) -> Optional[str]:
             torch.set_default_dtype(torch.float32)
             torch.set_default_tensor_type(torch.cuda.FloatTensor)
             logger.info("CUDA available and configured.")
-            context_manager = autocast(dtype=torch.float16)
         else:
             logger.warning("CUDA not available. Using CPU.")
-            context_manager = nullcontext()
 
 
         # Initialize and run OCR pipeline
+        # Use autocast only if CUDA is available
+        context_manager = autocast(dtype=torch.float16) if torch.cuda.is_available() else nullcontext() # Need nullcontext from contextlib
+
         with context_manager:
             model_list = [] # Configure models if needed
             image_writer = FileBasedDataWriter(IMAGES_PATH)
@@ -231,16 +248,6 @@ def process_pdf_to_markdown(file_path: str, title: str) -> Optional[str]:
             logger.info("OCRPipe analysis complete.")
 
             # Generate markdown content
-            # OCRPipe saves images using the base filename of the input PDF
-            # Since we saved the temp file with the original filename,
-            # the images will be prefixed with the original filename base.
-            # We need to ensure the image_writer is configured correctly
-            # or handle the image path mapping later.
-            # For now, assume OCRPipe uses the base name of the file_path passed to it.
-            # The image_writer is initialized with IMAGES_PATH, so images go there.
-            # The filenames generated by OCRPipe are typically like {base_filename}_img_{page}_{idx}.png
-            # We will rely on listing files starting with the sanitized title prefix later.
-
             md_content = pipe.pipe_mk_markdown(
                 IMAGES_PATH, # Pass the image directory path
                 drop_mode=DropMode.NONE,
@@ -257,9 +264,9 @@ def process_pdf_to_markdown(file_path: str, title: str) -> Optional[str]:
             logger.error(f"Unexpected markdown content type: {type(md_content)}")
             md_text = "" # Default to empty string on unexpected type
 
-        # Reformat markdown using Claude
-        logger.info("Reformatting markdown with Claude...")
-        reformatted_md_text = reformat_markdown_with_claude(md_text)
+        # Reformat markdown using Ollama (UPDATED CALL)
+        logger.info("Reformatting markdown with Ollama...")
+        reformatted_md_text = reformat_markdown_with_ollama(md_text) # Call the new function
         logger.info("Markdown reformatting complete.")
 
         # The filename is now sanitized in the calling function (process_pdf)
@@ -286,7 +293,6 @@ async def process_pdf(
     Process a PDF file and convert it to markdown format
     """
     logger.info(f"Received request to process PDF: {file.filename}")
-    temp_path = None # Initialize temp_path to None
     try:
         # Generate base title from filename if not provided
         base_title = title if title else os.path.splitext(file.filename)[0]
@@ -296,7 +302,8 @@ async def process_pdf(
         logger.info(f"Original title: '{base_title}', Sanitized title: '{sanitized_title}'")
 
         # Save uploaded file temporarily using the original filename
-        # This is important because magic_pdf might use the original filename internally
+        # Use the original filename for the temporary file to avoid issues if the PDF library
+        # expects the original name or extension.
         temp_path = os.path.join(PDF_STORAGE_PATH, file.filename)
         logger.info(f"Saving temporary file to: {temp_path}")
         try:
@@ -312,17 +319,13 @@ async def process_pdf(
 
 
         # Process PDF and get markdown content
-        # Pass the sanitized title to the processing function.
-        # The processing function will use this title to name the output markdown file.
-        # Note: magic_pdf's image naming convention is based on the *input* filename.
-        # So images will be named like {original_filename_base}_img_...png.
-        # We will list images based on the *sanitized* title prefix later.
+        # Pass the sanitized title to the processing function
         markdown_content = process_pdf_to_markdown(temp_path, sanitized_title) # Pass sanitized_title
 
         if not markdown_content:
             # Cleanup temp file even if processing fails
             try:
-                if temp_path and os.path.exists(temp_path):
+                if os.path.exists(temp_path):
                     os.remove(temp_path)
                     logger.info(f"Cleaned up temporary file: {temp_path}")
             except Exception as e:
@@ -335,7 +338,7 @@ async def process_pdf(
 
         # Cleanup temporary file
         try:
-            if temp_path and os.path.exists(temp_path):
+            if os.path.exists(temp_path):
                 os.remove(temp_path)
                 logger.info(f"Cleaned up temporary file: {temp_path}")
         except Exception as e:
@@ -344,40 +347,20 @@ async def process_pdf(
         # Get list of generated images
         images = []
         if os.path.exists(IMAGES_PATH):
-            # Image files generated by OCRPipe use the base filename of the input PDF
-            # We need to look for files starting with the base of the *original* filename
-            # and potentially rename them or map them to the sanitized title.
-            # A simpler approach for now is to list all images and assume they belong
-            # to this processing run if they were recently created or if we can
-            # reliably link them via the magic_pdf output structure (which is complex).
-            # A more robust approach would be for OCRPipe to return the list of image files it created.
-            # Given the current OCRPipe implementation, images are named based on the *input* file.
-            # Let's list images based on the *original* filename base, not the sanitized title.
-            # This means the backend will need to map original filenames to sanitized titles for image serving.
-            # Or, we modify OCRPipe to use the desired output prefix.
-            # Let's stick to the plan of listing images based on the *sanitized* title prefix,
-            # assuming magic_pdf *can* be configured or implicitly uses the output path/title prefix.
-            # If magic_pdf strictly uses the input filename base, this part needs adjustment.
-            # Let's assume for now that images saved by the pipe are somehow linkable to the output title.
-            # A common pattern is {output_title}_img_{page}_{idx}.png. Let's try listing by sanitized title prefix.
-
+            # Image files generated by OCRPipe use the base filename as a prefix
+            # We need to look for files starting with the sanitized title
             image_prefix = sanitized_title
             logger.info(f"Looking for images with prefix: {image_prefix} in {IMAGES_PATH}")
             try:
-                # List files and filter by prefix and extension
-                all_image_files = [f for f in os.listdir(IMAGES_PATH) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.gif'))]
-                # Filter by prefix - this assumes magic_pdf names images using the output title prefix
-                # If magic_pdf names images using the *input* filename prefix, this filter needs to change
-                # to use os.path.splitext(file.filename)[0] instead of sanitized_title.
-                # Let's assume the output title prefix for now based on the user's request context.
-                matching_images = [f for f in all_image_files if f.startswith(image_prefix)]
-
-                for img_file in matching_images:
-                    full_img_path = os.path.join(IMAGES_PATH, img_file)
-                    images.append(ImageInfo(
-                        filename=img_file,
-                        path=full_img_path # This is the path on the PDF service host
-                    ))
+                for img_file in os.listdir(IMAGES_PATH):
+                    # Check if the file starts with the sanitized prefix and is a PNG
+                    # OCRPipe typically generates PNGs
+                    if img_file.startswith(image_prefix) and img_file.lower().endswith('.png'):
+                        full_img_path = os.path.join(IMAGES_PATH, img_file)
+                        images.append(ImageInfo(
+                            filename=img_file,
+                            path=full_img_path # This is the path on the PDF service host
+                        ))
                 logger.info(f"Found {len(images)} image files matching prefix '{image_prefix}'.")
             except Exception as e:
                  logger.error(f"Error listing images in {IMAGES_PATH}: {e}")
@@ -399,7 +382,7 @@ async def process_pdf(
         logger.error(f"Error processing PDF: {str(e)}", exc_info=True)
         # Cleanup temp file on unexpected errors too
         try:
-            if temp_path and os.path.exists(temp_path):
+            if 'temp_path' in locals() and os.path.exists(temp_path):
                 os.remove(temp_path)
                 logger.info(f"Cleaned up temporary file: {temp_path} after error.")
         except Exception as cleanup_e:
