@@ -99,7 +99,6 @@ async def get_book_by_id(book_id: str):
              try:
                 # Use run_in_threadpool for file reading as well
                 markdown_content = await run_in_threadpool(lambda p: open(p, 'r', encoding='utf-8').read(), markdown_file_path)
-                logger.info(f"Get endpoint: Successfully read markdown content (length: {len(markdown_content)})") # Add logging
              except Exception as file_read_error:
                 logger.error(f"Get endpoint: Failed to read markdown file {markdown_file_path}: {file_read_error}", exc_info=True) # Add logging with traceback
         else:
@@ -110,7 +109,6 @@ async def get_book_by_id(book_id: str):
             "_id": str(book_data_doc["_id"]), # Convert ObjectId to string
             "title": book_data_doc.get("title"),
             "original_filename": book_data_doc.get("original_filename"),
-            "markdown_content": markdown_content, # Include the read content
             "markdown_file_path": book_data_doc.get("markdown_file_path"), # Optionally include path
             "image_paths": book_data_doc.get("image_paths", []),
             # Convert server-side image paths to public URLs for the response
