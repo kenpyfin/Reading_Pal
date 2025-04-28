@@ -50,8 +50,9 @@ function BookList() {
         <ul>
           {books.map(book => (
             // Use Link to navigate to the BookView page for each book
-            <li key={book.id}>
-              <Link to={`/book/${book.id}`}>{book.title || book.original_filename}</Link>
+            // CHANGE: Use book._id here to get the actual ID string from the JSON response
+            <li key={book.id}> {/* key={book.id} is fine because React uses the Pydantic 'id' field */}
+              <Link to={`/book/${book._id}`}>{book.title || book.original_filename}</Link> {/* Use book._id for the URL */}
             </li>
           ))}
         </ul>
