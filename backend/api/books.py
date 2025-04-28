@@ -168,6 +168,7 @@ async def get_book_by_id(book_id: str):
     """
     logger.info(f"Received request for book ID: {book_id}")
     if not ObjectId.is_valid(book_id):
+        logger.warning(f"Invalid book ID format received: {book_id}")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid book ID format")
 
     book_data_doc = await get_book(book_id)
@@ -176,27 +177,46 @@ async def get_book_by_id(book_id: str):
         logger.info(f"Get endpoint: Book found in DB for ID: {book_id}")
 
         # Read markdown content from the file path
-        # Translate the stored host path to the container path before reading
         stored_markdown_path = book_data_doc.get("markdown_file_path")
+        logger.info(f"Get endpoint: Stored markdown path from DB: {stored_markdown_path}")
+
         container_markdown_path = translate_path(
             stored_markdown_path,
             HOST_MARKDOWN_PATH,
             CONTAINER_MARKDOWN_PATH
         )
+        logger.info(f"Get endpoint: Translated container markdown path: {container_markdown_path}")
+
 
         markdown_content = ""
-        logger.info(f"Get endpoint: Attempting to read markdown from container path: {container_markdown_path}")
-        if container_markdown_path and os.path.exists(container_markdown_path):
-             try:
-                markdown_content = await run_in_threadpool(lambda p: open(p, 'r', encoding='utf-8').read(), container_markdown_path)
-                logger.info(f"Get endpoint: Successfully read markdown content (length: {len(markdown_content)})")
-             except Exception as file_read_error:
-                logger.error(f"Get endpoint: Failed to read markdown file {container_markdown_path}: {file_read_error}", exc_info=True)
+        # Add detailed checks and logging before attempting to open
+        if not container_markdown_path:
+             logger.error(f"Get endpoint: Container markdown path is empty after translation for book ID {book_id}.")
+        elif not os.path.exists(container_markdown_path):
+             logger.error(f"Get endpoint: Markdown file NOT FOUND at container path: {container_markdown_path} for book ID {book_id}.")
+             # You might want to return a specific error or message to the frontend here
+             # indicating the file is missing, rather than just empty content.
+             # For now, it will return empty content.
         else:
-             logger.warning(f"Get endpoint: Container markdown file path missing or file not found: {container_markdown_path}")
+             logger.info(f"Get endpoint: Markdown file found at container path: {container_markdown_path}. Attempting to read...")
+             try:
+                # Use run_in_threadpool for file I/O
+                markdown_content = await run_in_threadpool(lambda p: open(p, 'r', encoding='utf-8').read(), container_markdown_path)
+                logger.info(f"Get endpoint: Successfully read markdown content (length: {len(markdown_content)}) from {container_markdown_path}")
+                if not markdown_content.strip():
+                     logger.warning(f"Get endpoint: Markdown content read from {container_markdown_path} is empty or only whitespace.")
+             except Exception as file_read_error:
+                logger.error(f"Get endpoint: Failed to read markdown file {container_markdown_path} for book ID {book_id}: {file_read_error}", exc_info=True)
+                # Optionally set markdown_content to an error message string
+                # markdown_content = f"Error reading markdown file: {file_read_error}"
+
 
         # Image URLs are generated from the basename of the stored host path
+        # This assumes the basename of the host path matches the filename saved in the images directory
+        # and that the static mount correctly serves files by this basename.
         image_urls = [f"/images/{os.path.basename(path)}" for path in book_data_doc.get("image_paths", [])]
+        logger.info(f"Get endpoint: Generated {len(image_urls)} image URLs: {image_urls}")
+
 
         response_data = {
             "_id": str(book_data_doc["_id"]),
