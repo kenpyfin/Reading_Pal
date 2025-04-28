@@ -1,0 +1,23 @@
+/* frontend/src/components/NotePane.css */
+
+/* This file can be used for styles specific to the NotePane component */
+/* Styles for .note-pane, .notes-list, .note-item, .new-note-form, etc. */
+/* are already defined in BookView.css for the dual-pane layout context. */
+/* You can add component-specific overrides or additional styles here if needed. */
+
+/* Example: Style for individual note items */
+.note-item {
+    /* Styles defined in BookView.css */
+}
+
+/* Example: Style for the new note textarea */
+.new-note-form textarea {
+    /* Styles defined in BookView.css */
+}
+
+/* Example: Style for the LLM interaction section (if uncommented) */
+.llm-interaction {
+    /* Styles defined in BookView.css */
+}
+
+/* Add any other NotePane specific styles here */

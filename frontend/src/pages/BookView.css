@@ -1,0 +1,161 @@
+/* frontend/src/pages/BookView.css */
+
+.book-view-container {
+  display: flex;
+  height: 100vh; /* Full viewport height */
+  width: 100%;
+  overflow: hidden; /* Prevent main container scroll */
+}
+
+.book-pane-container,
+.note-pane-container {
+  flex: 1; /* Each takes equal width */
+  overflow-y: auto; /* Enable vertical scrolling */
+  padding: 20px;
+  box-sizing: border-box; /* Include padding in element's total width and height */
+}
+
+.note-pane-container {
+  border-left: 1px solid #ccc; /* Separator line */
+}
+
+/* Optional: Basic styling for content within panes */
+.book-pane h2,
+.note-pane h2 {
+  margin-top: 0;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 10px;
+}
+
+.book-pane img {
+    max-width: 100%;
+    height: auto;
+    display: block; /* Prevent extra space below image */
+    margin: 10px auto; /* Center images */
+}
+
+/* Add some basic styling for notes */
+.notes-list {
+    margin-bottom: 20px;
+}
+
+.note-item {
+    background-color: #f9f9f9;
+    border: 1px solid #eee;
+    padding: 10px;
+    margin-bottom: 10px;
+    border-radius: 4px;
+}
+
+.note-item p {
+    margin: 0;
+}
+
+.new-note-form {
+    margin-top: 20px;
+    padding-top: 20px;
+    border-top: 1px solid #eee;
+}
+
+.new-note-form textarea {
+    display: block;
+    width: calc(100% - 20px); /* Adjust for padding */
+    padding: 10px;
+    margin-bottom: 10px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-family: inherit; /* Use inherited font */
+    font-size: inherit; /* Use inherited font size */
+}
+
+.new-note-form button {
+    padding: 8px 15px;
+    background-color: #007bff;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.new-note-form button:disabled {
+    background-color: #cccccc;
+    cursor: not-allowed;
+}
+
+/* Style for LLM interaction section (if uncommented later) */
+.llm-interaction {
+    margin-top: 30px;
+    padding-top: 20px;
+    border-top: 1px dashed #ccc;
+}
+
+.llm-interaction h3, .llm-interaction h4 {
+    margin-top: 0;
+    margin-bottom: 10px;
+}
+
+.llm-response {
+    background-color: #e9f7ef; /* Light green background */
+    border: 1px solid #d0e9c6; /* Green border */
+    padding: 15px;
+    margin-top: 15px;
+    border-radius: 4px;
+}
+
+.llm-response h4 {
+    margin-top: 0;
+    color: #28a745; /* Green text */
+}
+
+.llm-response p {
+    margin: 0;
+    white-space: pre-wrap; /* Preserve whitespace and line breaks */
+}
+
+/* Basic styling for the BookPane content itself */
+.book-pane {
+    /* Add any specific styles for the markdown content wrapper if needed */
+}
+
+/* Ensure markdown elements are styled reasonably */
+.book-pane p { margin-bottom: 1em; }
+.book-pane h1, .book-pane h2, .book-pane h3, .book-pane h4, .book-pane h5, .book-pane h6 { margin-top: 1em; margin-bottom: 0.5em; }
+.book-pane ul, .book-pane ol { margin-bottom: 1em; padding-left: 20px; }
+.book-pane li { margin-bottom: 0.5em; }
+.book-pane pre {
+    background-color: #f4f4f4;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    padding: 10px;
+    overflow-x: auto;
+    margin-bottom: 1em;
+}
+.book-pane code {
+    font-family: Consolas, Monaco, 'Andale Mono', 'Ubuntu Mono', monospace;
+    font-size: 0.9em;
+}
+.book-pane pre code {
+    display: block;
+    padding: 0;
+    background-color: transparent;
+    border: none;
+}
+.book-pane blockquote {
+    border-left: 4px solid #ccc;
+    padding: 10px 15px;
+    color: #666;
+    margin-bottom: 1em;
+}
+.book-pane table {
+    border-collapse: collapse;
+    margin-bottom: 1em;
+    width: 100%;
+}
+.book-pane th, .book-pane td {
+    border: 1px solid #ddd;
+    padding: 8px;
+    text-align: left;
+}
+.book-pane th {
+    background-color: #f2f2f2;
+}
