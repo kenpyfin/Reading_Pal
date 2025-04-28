@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react'; // Import useRef
-import { useParams } from 'react-router-dom'; // Assuming react-router-dom for routing
+import { useParams, Link } from 'react-router-dom'; // Import Link for navigation
 import BookPane from '../components/BookPane';
 import NotePane from '../components/NotePane'; // Keep import for future phase
 
@@ -22,6 +22,14 @@ function BookView() {
 
         if (!response.ok) {
            const errorData = await response.json();
+           // Check if the error is specifically 404 Not Found
+           if (response.status === 404) {
+               // Set bookData to null explicitly for the "not found" state
+               setBookData(null);
+               // No need to set a specific error message here, the !bookData check handles it
+               return; // Stop processing
+           }
+           // For other errors, throw the error
            throw new Error(`HTTP error! status: ${response.status} - ${errorData.detail || response.statusText}`);
         }
         const data = await response.json();
@@ -71,15 +79,27 @@ function BookView() {
 
 
   if (loading) {
-    return <div>Loading book...</div>;
+    return <div style={{ padding: '20px' }}>Loading book...</div>;
   }
 
   if (error) {
-    return <div>Error: {error}</div>;
+    return <div style={{ padding: '20px', color: 'red' }}>Error loading book: {error}</div>;
   }
 
+  // CHANGE: Improve the "Book not found" message
   if (!bookData) {
-    return <div>Book not found.</div>;
+    return (
+      <div style={{ padding: '20px', textAlign: 'center' }}>
+        <h2>Book Not Found</h2>
+        <p>The book with ID "{bookId}" could not be found.</p>
+        <p>It might have been deleted or the link is incorrect.</p>
+        <div style={{ marginTop: '20px' }}>
+          <Link to="/">Go back to the Book List</Link>
+          <span style={{ margin: '0 10px' }}>|</span>
+          <Link to="/upload">Upload a New PDF</Link>
+        </div>
+      </div>
+    );
   }
 
   return (
