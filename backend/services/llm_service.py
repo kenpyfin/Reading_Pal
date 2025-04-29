@@ -262,8 +262,8 @@ class LLMService:
 # Instantiate the service
 llm_service = LLMService(
     anthropic=anthropic_client,
-    deepseek=deepseek_client, # Pass the config dict
-    gemini=gemini_model, # Pass the GenerativeModel instance
+    deepseek=deepseek_client, # Pass the config/client instance
+    gemini=gemini_client, # Pass the GenerativeModel instance (Corrected variable name)
     ollama=ollama_client # Pass the AsyncClient instance
 )
 
