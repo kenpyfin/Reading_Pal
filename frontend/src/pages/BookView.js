@@ -2,6 +2,8 @@ import React, { useEffect, useState, useRef } from 'react'; // Import useRef
 import { useParams, Link } from 'react-router-dom'; // Import Link for navigation
 import BookPane from '../components/BookPane'; // Import the updated BookPane
 import NotePane from '../components/NotePane'; // Keep import for future phase
+// Assuming you have a CSS file for BookView layout
+// import './BookView.css'; // Uncomment if you have this file
 
 function BookView() {
   const { bookId } = useParams(); // Get bookId from URL
@@ -9,12 +11,18 @@ function BookView() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Refs for scroll synchronization
+  // Refs for scroll synchronization and direct element access
   const bookPaneRef = useRef(null);
   const notePaneRef = useRef(null);
 
-  // State to hold text selected in the BookPane
+  // State to hold the currently selected text from the book pane
   const [selectedBookText, setSelectedBookText] = useState(null);
+  // Add state to hold the scroll percentage when text is selected
+  const [selectedScrollPercentage, setSelectedScrollPercentage] = useState(null); // ADD THIS LINE
+
+  // Add state to trigger scrolling in the book pane from NotePane clicks
+  const [scrollToPercentage, setScrollToPercentage] = useState(null); // ADD THIS LINE
+
 
   useEffect(() => {
     const fetchBook = async () => {
@@ -55,24 +63,56 @@ function BookView() {
   // Handler for text selection in BookPane
   const handleTextSelect = (text) => {
       setSelectedBookText(text);
+      // Capture the current scroll percentage of the book pane when text is selected
+      if (bookPaneRef.current) {
+          const element = bookPaneRef.current;
+          // Calculate percentage: current scroll / (total scrollable height)
+          // total scrollable height = scrollHeight - clientHeight
+          const percentage = element.scrollTop / (element.scrollHeight - element.clientHeight);
+          setSelectedScrollPercentage(percentage); // CAPTURE THE PERCENTAGE
+      } else {
+          setSelectedScrollPercentage(null); // Reset if ref is not available
+      }
   };
 
-  // TODO: Implement scroll synchronization logic between panes
-  // This is a placeholder function. Actual implementation needs to map
-  // scroll positions between the two panes, which might have different heights
-  // and content structures.
+  // Add handler for clicking a note in the NotePane
+  const handleNoteClick = (percentage) => { // ADD THIS FUNCTION
+      // This function is called by NotePane when a note is clicked
+      if (percentage !== null && percentage !== undefined) {
+          setScrollToPercentage(percentage); // Set state to trigger scroll effect in BookPane
+      }
+  };
+
+  // Add useEffect to scroll the book pane when scrollToPercentage changes
+  useEffect(() => { // ADD THIS useEffect
+      if (scrollToPercentage !== null && bookPaneRef.current) {
+          const bookElement = bookPaneRef.current;
+          // Calculate the target scroll position from the percentage
+          const targetScrollTop = scrollToPercentage * (bookElement.scrollHeight - bookElement.clientHeight);
+
+          // Use smooth scrolling for better UX
+          bookElement.scrollTo({
+              top: targetScrollTop,
+              behavior: 'smooth'
+          });
+
+          // Reset the state after scrolling so it can be triggered again
+          setScrollToPercentage(null);
+      }
+  }, [scrollToPercentage, bookPaneRef]); // Depend on scrollToPercentage and bookPaneRef
+
+
+  // Basic percentage-based scroll synchronization (keep as is)
   const handleScrollSync = (scrollingPaneRef, targetPaneRef) => {
       if (!scrollingPaneRef.current || !targetPaneRef.current) return;
 
-      // Basic percentage-based sync (might not be accurate for all content)
       const scrollingElement = scrollingPaneRef.current;
       const targetElement = targetPaneRef.current;
 
       const scrollPercentage = scrollingElement.scrollTop / (scrollingElement.scrollHeight - scrollingElement.clientHeight);
 
-      // Prevent infinite loop by checking if the target is already close to the desired position
       const targetScrollTop = scrollPercentage * (targetElement.scrollHeight - targetElement.clientHeight);
-      if (Math.abs(targetElement.scrollTop - targetScrollTop) > 5) { // Use a small threshold
+      if (Math.abs(targetElement.scrollTop - targetScrollTop) > 5) {
            targetElement.scrollTop = targetScrollTop;
       }
   };
@@ -94,7 +134,6 @@ function BookView() {
     return <div style={{ padding: '20px', color: 'red' }}>Error loading book: {error}</div>;
   }
 
-  // CHANGE: Improve the "Book not found" message
   if (!bookData) {
     return (
       <div style={{ padding: '20px', textAlign: 'center' }}>
@@ -114,27 +153,27 @@ function BookView() {
     <div className="book-view-container" style={{ display: 'flex', height: '100vh' }}>
       {/* Book Pane */}
       <div
-         ref={bookPaneRef} // Attach ref
+         ref={bookPaneRef}
          style={{ flex: 1, overflowY: 'auto', padding: '20px' }}
-         onScroll={handleBookPaneScroll} // Add scroll handler
-         // Pass the ref and the text selection handler to BookPane
+         onScroll={handleBookPaneScroll}
       >
          <BookPane
-           markdownContent={bookData.markdown_content} // Pass markdown content
-           imageUrls={bookData.image_urls} // Pass image URLs
+           markdownContent={bookData.markdown_content}
+           imageUrls={bookData.image_urls}
            onTextSelect={handleTextSelect} // Pass the text selection handler
          />
       </div>
       {/* Note Pane */}
       <div
-         ref={notePaneRef} // Attach ref
+         ref={notePaneRef}
          style={{ flex: 1, overflowY: 'auto', padding: '20px', borderLeft: '1px solid #ccc' }}
-         onScroll={handleNotePaneScroll} // Add scroll handler
+         onScroll={handleNotePaneScroll}
       >
          <NotePane
-           bookId={bookId} // Pass bookId to NotePane
-           selectedBookText={selectedBookText} // Pass the selected text to NotePane
-           bookContent={bookData.markdown_content} // Pass book content to NotePane for LLM context
+           bookId={bookId}
+           selectedBookText={selectedBookText} // Pass the selected text
+           selectedScrollPercentage={selectedScrollPercentage} // PASS THE CAPTURED PERCENTAGE
+           onNoteClick={handleNoteClick} // PASS THE NOTE CLICK HANDLER
            // NotePane now uses forwardRef, so we pass the ref prop directly
            ref={notePaneRef}
          />

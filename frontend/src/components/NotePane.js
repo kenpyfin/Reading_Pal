@@ -1,14 +1,13 @@
-import React, { useState, useEffect, useRef, forwardRef } from 'react'; // Import forwardRef
+// Import forwardRef if not already imported
+import React, { useState, useEffect, useRef, forwardRef } from 'react';
 import './NotePane.css'; // Assuming you'll add some basic CSS
 
-// Wrap the component with forwardRef
-const NotePane = forwardRef(({ bookId, selectedBookText }, ref) => { // Accept selectedBookText prop
+// Wrap the component with forwardRef and accept new props
+const NotePane = forwardRef(({ bookId, selectedBookText, selectedScrollPercentage, onNoteClick }, ref) => { // ACCEPT NEW PROPS
   const [notes, setNotes] = useState([]);
   const [newNoteContent, setNewNoteContent] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  // Remove the internal notePaneRef as it's now passed from parent
-  // const notePaneRef = useRef(null); // Ref for the scrollable div
 
   // Add state variables for LLM interaction
   const [llmLoading, setLlmLoading] = useState(false);
@@ -18,12 +17,16 @@ const NotePane = forwardRef(({ bookId, selectedBookText }, ref) => { // Accept s
   const [llmError, setLlmError] = useState(null);
 
 
-  // Effect to update newNoteContent when selectedBookText changes
+  // --- Enhancement 1: REMOVE or COMMENT OUT this useEffect block ---
+  // This effect is what was pre-filling the new note content.
+  /*
   useEffect(() => {
     if (selectedBookText !== null) { // Only update if text is selected or cleared
       setNewNoteContent(selectedBookText || ''); // Use selected text, or clear if null
     }
   }, [selectedBookText]); // Dependency on selectedBookText prop
+  */
+  // The new note input will now remain empty by default.
 
 
   // Fetch notes when bookId changes
@@ -33,7 +36,7 @@ const NotePane = forwardRef(({ bookId, selectedBookText }, ref) => { // Accept s
       setLoading(true);
       setError(null);
       try {
-        const response = await fetch(`/api/notes/${bookId}`); // Use relative path with /api prefix
+        const response = await fetch(`/api/notes/${bookId}`);
         if (!response.ok) {
           const errorData = await response.json();
           throw new Error(`HTTP error! status: ${response.status} - ${errorData.detail || response.statusText}`);
@@ -51,7 +54,7 @@ const NotePane = forwardRef(({ bookId, selectedBookText }, ref) => { // Accept s
     };
 
     fetchNotes();
-  }, [bookId]); // Dependency array includes bookId
+  }, [bookId]);
 
   const handleSaveNote = async () => {
     if (!newNoteContent.trim()) return;
@@ -59,13 +62,13 @@ const NotePane = forwardRef(({ bookId, selectedBookText }, ref) => { // Accept s
     const noteData = {
       book_id: bookId,
       content: newNoteContent.trim(),
-      source_text: selectedBookText || undefined, // Include source_text if available, otherwise omit
-      // TODO: Add position info (e.g., scroll percentage, section ID) later
+      source_text: selectedBookText || undefined, // Include source_text if available
+      // --- Enhancement 2: Include the captured scroll percentage ---
+      scroll_percentage: selectedScrollPercentage || undefined, // INCLUDE THE PERCENTAGE
     };
 
     try {
-      // CHANGE: Add /api prefix to the POST notes endpoint
-      const response = await fetch('/api/notes/', { // Use relative path for POST with /api prefix
+      const response = await fetch('/api/notes/', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -83,7 +86,8 @@ const NotePane = forwardRef(({ bookId, selectedBookText }, ref) => { // Accept s
       // Add the new note to the state and sort
       setNotes(prevNotes => [...prevNotes, savedNote].sort((a, b) => new Date(a.created_at) - new Date(b.created_at)));
       setNewNoteContent(''); // Clear the input field
-      // Note: selectedBookText is cleared by the parent (BookView) via prop update
+      // Note: selectedBookText and selectedScrollPercentage are cleared by the parent (BookView) via prop update
+      // when a new selection is made or selection is cleared.
 
     } catch (err) {
       console.error('Failed to save note:', err);
@@ -91,23 +95,25 @@ const NotePane = forwardRef(({ bookId, selectedBookText }, ref) => { // Accept s
     }
   };
 
-  // Remove the internal handleScroll function
-  // const handleScroll = () => {
-  //   if (notePaneRef.current && onNotePaneScroll) {
-  //     onNotePaneScroll(notePaneRef.current);
-  //   }
-  // };
+  // --- Enhancement 2: Add handler for Note Click ---
+  const handleNoteClickInternal = (note) => { // Use a different name to avoid conflict with prop
+      // Check if the note has a scroll percentage and the handler is provided by the parent
+      if (note.scroll_percentage !== null && note.scroll_percentage !== undefined && onNoteClick) {
+          onNoteClick(note.scroll_percentage); // Call the handler passed from parent (BookView)
+      }
+  };
 
-  // Add handleSummarizeBook function
+
+  // Add handleSummarizeBook function (keep as is)
   const handleSummarizeBook = async () => {
     if (!bookId) return;
     setLlmLoading(true);
-    setLlmAskResponse(null); // Clear previous ask response
-    setLlmSummarizeResponse(null); // Clear previous summarize response
-    setLlmError(null); // Clear previous error
+    setLlmAskResponse(null);
+    setLlmSummarizeResponse(null);
+    setLlmError(null);
 
     try {
-      const response = await fetch('/api/llm/summarize', { // Use relative path with /api prefix
+      const response = await fetch('/api/llm/summarize', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -118,7 +124,6 @@ const NotePane = forwardRef(({ bookId, selectedBookText }, ref) => { // Accept s
       const data = await response.json();
 
       if (!response.ok) {
-         // Backend might return error details in the response body even with a non-200 status
          throw new Error(data.detail || data.response || `HTTP error! status: ${response.status}`);
       }
 
@@ -132,30 +137,29 @@ const NotePane = forwardRef(({ bookId, selectedBookText }, ref) => { // Accept s
     }
   };
 
-  // Add handleAskLLM function
+  // Add handleAskLLM function (keep as is)
   const handleAskLLM = async () => {
     if (!bookId || !llmQuestion.trim()) {
         setLlmError("Please enter a question.");
         return;
     }
     setLlmLoading(true);
-    setLlmAskResponse(null); // Clear previous ask response
-    setLlmSummarizeResponse(null); // Clear previous summarize response
-    setLlmError(null); // Clear previous error
+    setLlmAskResponse(null);
+    setLlmSummarizeResponse(null);
+    setLlmError(null);
 
     try {
-      const response = await fetch('/api/llm/ask', { // Use relative path with /api prefix
+      const response = await fetch('/api/llm/ask', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ book_id: bookId, text: llmQuestion.trim() }), // Send book_id and question as text
+        body: JSON.stringify({ book_id: bookId, text: llmQuestion.trim() }),
       });
 
       const data = await response.json();
 
       if (!response.ok) {
-         // Backend might return error details in the response body even with a non-200 status
          throw new Error(data.detail || data.response || `HTTP error! status: ${response.status}`);
       }
 
@@ -188,7 +192,14 @@ const NotePane = forwardRef(({ bookId, selectedBookText }, ref) => { // Accept s
           <p>No notes yet. Add one below!</p>
         ) : (
           notes.map(note => (
-            <div key={note.id} className="note-item">
+            {/* --- Enhancement 2: Make note item clickable --- */}
+            {/* Add onClick handler and a class for styling cursor */}
+            <div
+                key={note.id}
+                className={`note-item ${note.scroll_percentage !== null ? 'clickable-note' : ''}`} // Add class if clickable
+                onClick={() => handleNoteClickInternal(note)} // CALL THE INTERNAL HANDLER
+                style={{ cursor: note.scroll_percentage !== null ? 'pointer' : 'default' }} // Change cursor
+            >
               {/* Display source text if available */}
               {note.source_text && (
                   <blockquote style={{ fontSize: '0.9em', color: '#555', borderLeft: '2px solid #ccc', paddingLeft: '10px', margin: '5px 0' }}>
@@ -198,6 +209,8 @@ const NotePane = forwardRef(({ bookId, selectedBookText }, ref) => { // Accept s
               <p>{note.content}</p>
               {/* Optional: Display timestamp, edit/delete buttons */}
               {/* <small>{new Date(note.created_at).toLocaleString()}</small> */}
+              {/* Optional: Display scroll percentage for debugging */}
+              {/* {note.scroll_percentage !== null && <small>Scroll: {note.scroll_percentage.toFixed(2)}</small>} */}
             </div>
           ))
         )}
@@ -220,10 +233,14 @@ const NotePane = forwardRef(({ bookId, selectedBookText }, ref) => { // Accept s
         {selectedBookText && (
             <p style={{ fontSize: '0.9em', color: '#555', marginTop: '5px' }}>Note will be linked to selected text.</p>
         )}
+         {/* Optional: Add an indicator if scroll percentage was captured */}
+        {selectedScrollPercentage !== null && (
+            <p style={{ fontSize: '0.9em', color: '#555', marginTop: '5px' }}>Note will be linked to scroll position.</p>
+        )}
 
       </div>
 
-      {/* LLM Interaction section - Uncommented and implemented */}
+      {/* LLM Interaction section */}
       <div className="llm-interaction">
         <h3>LLM Reading Assistance</h3>
         <button onClick={handleSummarizeBook} disabled={llmLoading || !bookId} style={{ marginBottom: '15px' }}>
