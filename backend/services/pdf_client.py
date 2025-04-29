@@ -39,14 +39,14 @@ def process_pdf_with_service(file: UploadFile, title: str = None):
         response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
 
         result = response.json()
-        logger.info(f"PDF processing service response: {result}")
+        logger.info(f"PDF processing service response: {result.get("success")}")
 
         if result.get("success"):
             return result
         else:
-            logger.error(f"PDF processing service reported failure: {result.get('message')}")
+            logger.error(f"PDF processing service reported failure: {result.get('file_path')}")
             # Raise a standard RuntimeError
-            raise RuntimeError(result.get('message', 'PDF processing failed'))
+            raise RuntimeError(result.get('file_path', 'PDF processing failed'))
 
     except requests.exceptions.RequestException as e:
         logger.error(f"Error communicating with PDF processing service: {e}")
