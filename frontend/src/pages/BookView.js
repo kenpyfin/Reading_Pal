@@ -90,13 +90,15 @@ function BookView() {
           // Calculate the target scroll position from the percentage
           const targetScrollTop = scrollToPercentage * (bookElement.scrollHeight - bookElement.clientHeight);
 
-          // Use smooth scrolling for better UX
+          // Use INSTANT scrolling for direct jump
           bookElement.scrollTo({
               top: targetScrollTop,
-              behavior: 'smooth'
+              // Change behavior from 'smooth' to 'instant'
+              behavior: 'instant' // CHANGE THIS LINE
           });
 
           // Reset the state after scrolling so it can be triggered again
+          // Keep this line so clicking the same note after scrolling away works
           setScrollToPercentage(null);
       }
   }, [scrollToPercentage, bookPaneRef]); // Depend on scrollToPercentage and bookPaneRef
