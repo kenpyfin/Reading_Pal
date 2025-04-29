@@ -17,6 +17,10 @@ router = APIRouter()
 CONTAINER_IMAGES_PATH = os.getenv("IMAGES_PATH")
 CONTAINER_MARKDOWN_PATH = os.getenv("MARKDOWN_PATH")
 
+# Add logging to confirm environment variables are loaded
+logger.info(f"API Books: CONTAINER_IMAGES_PATH = {CONTAINER_IMAGES_PATH}")
+logger.info(f"API Books: CONTAINER_MARKDOWN_PATH = {CONTAINER_MARKDOWN_PATH}")
+
 # Remove the translate_path function as it's no longer needed
 
 
@@ -35,6 +39,9 @@ async def upload_pdf(
         # This call is synchronous, so run it in a threadpool
         processed_data = await run_in_threadpool(process_pdf_with_service, file, title)
 
+        # Add logging for processed_data
+        logger.info(f"Upload endpoint: Received processed_data from PDF service: {processed_data}")
+
         if not processed_data or not processed_data.get("success"):
              raise HTTPException(status_code=500, detail=processed_data.get("message", "PDF processing failed"))
 
@@ -45,6 +52,10 @@ async def upload_pdf(
         # The PDF service returns a list of image dicts, each with 'filename' and 'path'
         image_filenames = [img["filename"] for img in processed_data.get("images", [])]
 
+        # Add logging for extracted filenames
+        logger.info(f"Upload endpoint: Extracted markdown_filename: {markdown_filename}")
+        logger.info(f"Upload endpoint: Extracted image_filenames: {image_filenames}")
+
         # Store ONLY filenames in the DB. The backend will construct container paths.
         book_data = {
             "title": processed_data.get("title", title or os.path.splitext(file.filename)[0]),
@@ -53,6 +64,9 @@ async def upload_pdf(
             "markdown_filename": markdown_filename,
             "image_filenames": image_filenames,
         }
+
+        # Add logging for data prepared for DB
+        logger.info(f"Upload endpoint: Data prepared for DB: {book_data}")
 
         book_id = await save_book(book_data)
         logger.info(f"Book saved with ID: {book_id}")
@@ -159,12 +173,19 @@ async def get_book_by_id(book_id: str):
 
     book_data_doc = await get_book(book_id)
 
+    # Add logging for the raw document retrieved from DB
+    logger.info(f"Get endpoint: Retrieved book document from DB: {book_data_doc}")
+
     if book_data_doc:
         logger.info(f"Get endpoint: Book found in DB for ID: {book_id}")
 
         # Retrieve filenames from the DB document
         stored_markdown_filename = book_data_doc.get("markdown_filename")
         stored_image_filenames = book_data_doc.get("image_filenames", [])
+
+        # Add logging for retrieved filenames
+        logger.info(f"Get endpoint: Retrieved markdown_filename from DB: {stored_markdown_filename}")
+        logger.info(f"Get endpoint: Retrieved image_filenames from DB: {stored_image_filenames}")
 
         # Construct the container markdown path using the container mount point and filename
         markdown_content = ""

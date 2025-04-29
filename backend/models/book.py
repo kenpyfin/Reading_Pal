@@ -8,9 +8,7 @@ class Book(BaseModel):
     id: str = Field(alias='_id')
     title: str
     original_filename: str
-    # Store the file path instead of the content
-    markdown_file_path: Optional[str] = None
-    image_paths: List[str] = []
+    # These fields are for the API response, derived from stored filenames
     # This field is for the API response, not stored in DB
     markdown_content: Optional[str] = None
     image_urls: List[str] = []
@@ -22,8 +20,6 @@ class Book(BaseModel):
                 "_id": "60f1b0b3b3f3f3f3f3f3f3f3",
                 "title": "Sample Book",
                 "original_filename": "sample.pdf",
-                "markdown_file_path": "/home/user/storage/markdown/Sample Book.md",
-                "image_paths": ["/home/user/storage/images/Sample Book_img_001.png"],
                 "markdown_content": "# Sample Book\n\nThis is the content...",
                 "image_urls": ["/images/Sample Book_img_001.png"]
             }
