@@ -5,17 +5,23 @@ from datetime import datetime
 from bson import ObjectId
 
 # Custom Pydantic type for ObjectId
+# Inherit from ObjectId to leverage its methods and type checking
 class PyObjectId(ObjectId):
     # Pydantic v2 validation using __validate__
     @classmethod
     def __validate__(cls, __input_value, _info):
-        if not ObjectId.is_valid(__input_value):
-            raise PydanticCustomError(
-                'invalid_object_id',
-                'Invalid ObjectId',
-                {'value': __input_value},
-            )
-        return ObjectId(__input_value)
+        # Handle ObjectId instance directly (most common case when loading from DB)
+        if isinstance(__input_value, ObjectId):
+            return __input_value
+        # Handle string representation (e.g., from API input or if DB returns strings)
+        if isinstance(__input_value, str) and ObjectId.is_valid(__input_value):
+            return ObjectId(__input_value) # Return ObjectId instance after parsing
+        # Raise error for invalid types or invalid string format
+        raise PydanticCustomError(
+            'invalid_object_id',
+            'ObjectId must be an instance of ObjectId or a valid string representation',
+            {'value': __input_value, 'type': type(__input_value)},
+        )
 
     @classmethod
     def __get_pydantic_json_schema__(cls, field_schema):
@@ -35,7 +41,8 @@ class NoteUpdate(BaseModel):
     # TODO: Add fields for position/section reference later
 
 class Note(NoteBase):
-    id: PyObjectId = Field(default_factory=PyObjectId, alias="_id")
+    # Use PyObjectId type hint for the id field, alias to "_id" for MongoDB mapping
+    id: PyObjectId = Field(alias="_id") # Removed default_factory
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
