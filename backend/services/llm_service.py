@@ -22,9 +22,10 @@ DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # Initialize LLM clients based on configuration
+# Keep these outside the class for singleton pattern
 anthropic_client = None
-deepseek_client = None # For requests, this might just be the API key/URL
-gemini_client = None
+deepseek_config = None # For requests, this might just be the API key/URL
+gemini_model = None # Store the GenerativeModel instance
 ollama_client = None
 
 if LLM_SERVICE == "anthropic":
@@ -34,6 +35,7 @@ if LLM_SERVICE == "anthropic":
             logger.info("Anthropic client initialized.")
         except Exception as e:
             logger.error(f"Failed to initialize Anthropic client: {e}")
+            # Set client to None explicitly on failure
             anthropic_client = None
     else:
         logger.warning("ANTHROPIC_API_KEY not set. Anthropic LLM service disabled.")
@@ -42,7 +44,7 @@ elif LLM_SERVICE == "deepseek":
     if DEEPSEEK_API_KEY:
         # For requests-based client, we just need the API key and potentially the base URL
         # Assuming DeepSeek uses an OpenAI-compatible endpoint
-        deepseek_client = {"api_key": DEEPSEEK_API_KEY, "base_url": "https://api.deepseek.com/chat/completions"}
+        deepseek_config = {"api_key": DEEPSEEK_API_KEY, "base_url": "https://api.deepseek.com/chat/completions"}
         logger.info("DeepSeek client configured (using requests).")
     else:
         logger.warning("DEEPSEEK_API_KEY not set. DeepSeek LLM service disabled.")
@@ -54,16 +56,17 @@ elif LLM_SERVICE == "gemini":
             # Initialize the model, not the client itself
             # Check if the model exists (synchronous check during init)
             try:
-                gemini_client = genai.GenerativeModel(model_name=LLM_MODEL) # Use configured model
+                # Use the configured model name
+                gemini_model = genai.GenerativeModel(model_name=LLM_MODEL)
                 # A simple test call might be needed to confirm connectivity/model existence
                 # For now, rely on error handling during actual calls.
                 logger.info(f"Gemini client initialized with model: {LLM_MODEL}.")
             except Exception as e:
                  logger.error(f"Failed to initialize Gemini model '{LLM_MODEL}': {e}")
-                 gemini_client = None
+                 gemini_model = None
         except Exception as e:
             logger.error(f"Failed to configure Gemini client: {e}")
-            gemini_client = None
+            gemini_model = None
     else:
         logger.warning("GEMINI_API_KEY not set. Gemini LLM service disabled.")
 
@@ -86,7 +89,7 @@ else:
 
 
 class LLMService:
-    def __init__(self, anthropic=None, deepseek=None, gemini=None, ollama=None):
+    def __init__(self, anthropic=None, deepseek=config, gemini=None, ollama=None):
         self.anthropic_client = anthropic
         self.deepseek_config = deepseek # Store config dict for requests
         self.gemini_model = gemini # Store the GenerativeModel instance
@@ -98,7 +101,12 @@ class LLMService:
         """
         Sends a question to the configured LLM with provided context.
         """
-        full_prompt = f"Context:\n{context}\n\nQuestion: {prompt}\n\nAnswer the question based ONLY on the provided context."
+        # Adjust prompt based on whether context is provided
+        if context:
+            full_prompt = f"Context:\n{context}\n\nQuestion: {prompt}\n\nAnswer the question based ONLY on the provided context."
+        else:
+            full_prompt = prompt # If no context, just send the prompt
+
         # Log length instead of content
         logger.info(f"Sending 'ask' prompt to LLM ({self.service_name}/{self.model_name}). Prompt length: {len(full_prompt)}")
 
@@ -173,7 +181,11 @@ class LLMService:
 
 
             else:
-                 return f"LLM service '{self.service_name}' is configured but client is not initialized or implemented."
+                 # This case should ideally not be reached if initialization logic is correct
+                 # but provides a fallback.
+                 error_msg = f"LLM service '{self.service_name}' is configured but client is not initialized or implemented."
+                 logger.error(error_msg)
+                 return error_msg
 
         except Exception as e:
             logger.error(f"Error calling {self.service_name} LLM 'ask' method: {e}")
@@ -183,6 +195,9 @@ class LLMService:
         """
         Sends text to the configured LLM for summarization.
         """
+        if not text:
+            return "No text provided to summarize."
+
         prompt = f"Please provide a concise summary of the following text:\n\n{text}"
         # Log length instead of content
         logger.info(f"Sending 'summarize' prompt to LLM ({self.service_name}/{self.model_name}). Text length: {len(text)}")
@@ -252,18 +267,21 @@ class LLMService:
                      return f"Error from DeepSeek API: Invalid response format."
 
             else:
-                 return f"LLM service '{self.service_name}' is configured but client is not initialized or implemented."
+                 # This case should ideally not be reached
+                 error_msg = f"LLM service '{self.service_name}' is configured but client is not initialized or implemented."
+                 logger.error(error_msg)
+                 return error_msg
 
         except Exception as e:
             logger.error(f"Error calling {self.service_name} LLM 'summarize' method: {e}")
             return f"Error generating summary from LLM: {e}"
 
 
-# Instantiate the service
+# Instantiate the service as a singleton
 llm_service = LLMService(
     anthropic=anthropic_client,
-    deepseek=deepseek_client, # Pass the config/client instance
-    gemini=gemini_client, # Pass the GenerativeModel instance (Corrected variable name)
+    deepseek=deepseek_config, # Pass the config dict
+    gemini=gemini_model, # Pass the GenerativeModel instance
     ollama=ollama_client # Pass the AsyncClient instance
 )
 
@@ -273,7 +291,7 @@ async def ask_question(prompt: str, context: str) -> str:
     Sends a question to the configured LLM with provided context.
     Calls the async LLMService.ask method.
     """
-    logger.info(f"Calling LLM service 'ask' via wrapper with prompt length: {len(prompt)}...")
+    logger.info(f"Calling LLM service 'ask' via wrapper with prompt length: {len(prompt)} and context length: {len(context)}...")
     return await llm_service.ask(prompt, context)
 
 
