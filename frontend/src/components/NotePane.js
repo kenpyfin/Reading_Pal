@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, forwardRef } from 'react'; // Impor
 import './NotePane.css'; // Assuming you'll add some basic CSS
 
 // Wrap the component with forwardRef
-const NotePane = forwardRef(({ bookId }, ref) => { // Removed onNotePaneScroll prop
+const NotePane = forwardRef(({ bookId, selectedBookText }, ref) => { // Accept selectedBookText prop
   const [notes, setNotes] = useState([]);
   const [newNoteContent, setNewNoteContent] = useState('');
   const [loading, setLoading] = useState(true);
@@ -16,6 +16,14 @@ const NotePane = forwardRef(({ bookId }, ref) => { // Removed onNotePaneScroll p
   const [llmAskResponse, setLlmAskResponse] = useState(null);
   const [llmSummarizeResponse, setLlmSummarizeResponse] = useState(null);
   const [llmError, setLlmError] = useState(null);
+
+
+  // Effect to update newNoteContent when selectedBookText changes
+  useEffect(() => {
+    if (selectedBookText !== null) { // Only update if text is selected or cleared
+      setNewNoteContent(selectedBookText || ''); // Use selected text, or clear if null
+    }
+  }, [selectedBookText]); // Dependency on selectedBookText prop
 
 
   // Fetch notes when bookId changes
@@ -51,6 +59,7 @@ const NotePane = forwardRef(({ bookId }, ref) => { // Removed onNotePaneScroll p
     const noteData = {
       book_id: bookId,
       content: newNoteContent.trim(),
+      source_text: selectedBookText || undefined, // Include source_text if available, otherwise omit
       // TODO: Add position info (e.g., scroll percentage, section ID) later
     };
 
@@ -74,6 +83,7 @@ const NotePane = forwardRef(({ bookId }, ref) => { // Removed onNotePaneScroll p
       // Add the new note to the state and sort
       setNotes(prevNotes => [...prevNotes, savedNote].sort((a, b) => new Date(a.created_at) - new Date(b.created_at)));
       setNewNoteContent(''); // Clear the input field
+      // Note: selectedBookText is cleared by the parent (BookView) via prop update
 
     } catch (err) {
       console.error('Failed to save note:', err);
@@ -179,6 +189,12 @@ const NotePane = forwardRef(({ bookId }, ref) => { // Removed onNotePaneScroll p
         ) : (
           notes.map(note => (
             <div key={note.id} className="note-item">
+              {/* Display source text if available */}
+              {note.source_text && (
+                  <blockquote style={{ fontSize: '0.9em', color: '#555', borderLeft: '2px solid #ccc', paddingLeft: '10px', margin: '5px 0' }}>
+                      {note.source_text}
+                  </blockquote>
+              )}
               <p>{note.content}</p>
               {/* Optional: Display timestamp, edit/delete buttons */}
               {/* <small>{new Date(note.created_at).toLocaleString()}</small> */}
@@ -200,6 +216,11 @@ const NotePane = forwardRef(({ bookId }, ref) => { // Removed onNotePaneScroll p
         <button onClick={handleSaveNote} disabled={!newNoteContent.trim()}>
           Save Note
         </button>
+        {/* Optional: Add an indicator if the note is based on selection */}
+        {selectedBookText && (
+            <p style={{ fontSize: '0.9em', color: '#555', marginTop: '5px' }}>Note will be linked to selected text.</p>
+        )}
+
       </div>
 
       {/* LLM Interaction section - Uncommented and implemented */}

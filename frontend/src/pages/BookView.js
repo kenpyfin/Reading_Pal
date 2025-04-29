@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react'; // Import useRef
 import { useParams, Link } from 'react-router-dom'; // Import Link for navigation
-import BookPane from '../components/BookPane';
+import BookPane from '../components/BookPane'; // Import the updated BookPane
 import NotePane from '../components/NotePane'; // Keep import for future phase
 
 function BookView() {
@@ -12,6 +12,9 @@ function BookView() {
   // Refs for scroll synchronization
   const bookPaneRef = useRef(null);
   const notePaneRef = useRef(null);
+
+  // State to hold text selected in the BookPane
+  const [selectedBookText, setSelectedBookText] = useState(null);
 
   useEffect(() => {
     const fetchBook = async () => {
@@ -48,6 +51,11 @@ function BookView() {
     }
 
   }, [bookId]);
+
+  // Handler for text selection in BookPane
+  const handleTextSelect = (text) => {
+      setSelectedBookText(text);
+  };
 
   // TODO: Implement scroll synchronization logic between panes
   // This is a placeholder function. Actual implementation needs to map
@@ -109,10 +117,12 @@ function BookView() {
          ref={bookPaneRef} // Attach ref
          style={{ flex: 1, overflowY: 'auto', padding: '20px' }}
          onScroll={handleBookPaneScroll} // Add scroll handler
+         // Pass the ref and the text selection handler to BookPane
       >
          <BookPane
            markdownContent={bookData.markdown_content} // Pass markdown content
            imageUrls={bookData.image_urls} // Pass image URLs
+           onTextSelect={handleTextSelect} // Pass the text selection handler
          />
       </div>
       {/* Note Pane */}
@@ -123,6 +133,7 @@ function BookView() {
       >
          <NotePane
            bookId={bookId} // Pass bookId to NotePane
+           selectedBookText={selectedBookText} // Pass the selected text to NotePane
            bookContent={bookData.markdown_content} // Pass book content to NotePane for LLM context
            // NotePane now uses forwardRef, so we pass the ref prop directly
            ref={notePaneRef}

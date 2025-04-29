@@ -1,12 +1,21 @@
-import React from 'react';
+import React, { forwardRef } from 'react'; // Import forwardRef
 import ReactMarkdown from 'react-markdown'; // Import react-markdown
 import remarkGfm from 'remark-gfm'; // Import remark-gfm for GitHub Flavored Markdown
 
-function BookPane({ markdownContent, imageUrls }) {
-  // TODO: Implement scroll tracking for synchronization
+// Wrap the component with forwardRef
+const BookPane = forwardRef(({ markdownContent, imageUrls, onTextSelect }, ref) => { // Accept onTextSelect prop and ref
+  // Function to handle text selection
+  const handleMouseUp = () => {
+    const selection = window.getSelection();
+    const selectedText = selection.toString().trim();
+    // Call the parent component's handler with the selected text or null if selection is empty
+    if (onTextSelect) { // Check if the prop is provided
+      onTextSelect(selectedText.length > 0 ? selectedText : null);
+    }
+  };
 
   return (
-    <div className="book-pane">
+    <div className="book-pane" ref={ref} onMouseUp={handleMouseUp}> {/* Attach ref and onMouseUp listener */}
       <h2>Book Content</h2>
       {markdownContent ? (
         <ReactMarkdown
@@ -26,6 +35,7 @@ function BookPane({ markdownContent, imageUrls }) {
       )}
     </div>
   );
-}
+});
 
+// Export the component wrapped with forwardRef
 export default BookPane;

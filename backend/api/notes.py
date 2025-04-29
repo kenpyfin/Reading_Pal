@@ -1,6 +1,6 @@
 import logging
 from fastapi import APIRouter, HTTPException, status
-from typing import List
+from typing import List, Optional # Import Optional
 from bson import ObjectId # Import ObjectId
 from datetime import datetime # Import datetime
 
@@ -16,14 +16,24 @@ async def create_note(note: NoteCreate):
     """
     Creates a new note for a book.
     """
+    # FastAPI/Pydantic automatically handles the NoteCreate model, including source_text if provided
     logger.info(f"Received request to create note for book ID: {note.book_id}")
+    # Log the received note data for debugging, excluding potentially long content/source_text
+    logger.debug(f"Note data received (excluding content/source_text): book_id={note.book_id}")
+    if note.content:
+        logger.debug(f"Note content length: {len(note.content)}")
+    if note.source_text:
+        logger.debug(f"Note source_text length: {len(note.source_text)}")
+
     try:
         # Validate book_id format (optional, depends on how strict you want to be)
         # if not ObjectId.is_valid(note.book_id):
         #     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid book ID format")
 
-        # Convert Pydantic model to dict for saving
-        note_data = note.model_dump() # Use model_dump() for Pydantic v2+
+        # Convert Pydantic model to dictionary, including the source_text field if present
+        # by_alias=True ensures _id alias is handled correctly
+        # exclude_unset=True can be used to not save fields that weren't provided, but source_text is Optional, so it will be None if not sent
+        note_data = note.model_dump(by_alias=True) # Use model_dump for Pydantic v2, includes source_text
         # Add timestamps - handled by default_factory in model, but can set explicitly if needed
         # note_data["created_at"] = datetime.utcnow()
         # note_data["updated_at"] = datetime.utcnow()
@@ -37,6 +47,7 @@ async def create_note(note: NoteCreate):
              raise HTTPException(status_code=500, detail="Failed to retrieve saved note.")
 
         # Convert ObjectId to string for the response model
+        # This is handled by json_encoders in the Note model config, but explicit conversion is safer
         saved_note['_id'] = str(saved_note['_id'])
 
         return Note(**saved_note)
