@@ -14,8 +14,8 @@ router = APIRouter()
 
 # Retrieve container paths from environment variables
 # These should be set in docker-compose.yml to the mount points inside the container
-CONTAINER_IMAGES_PATH = os.getenv("IMAGES_PATH")
-CONTAINER_MARKDOWN_PATH = os.getenv("MARKDOWN_PATH")
+CONTAINER_IMAGES_PATH = "/app/storage/images"
+CONTAINER_MARKDOWN_PATH = "/app/storage/markdown"
 
 # Add logging to confirm environment variables are loaded
 logger.info(f"API Books: CONTAINER_IMAGES_PATH = {CONTAINER_IMAGES_PATH}")
