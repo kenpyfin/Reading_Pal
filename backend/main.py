@@ -34,6 +34,7 @@ print(f"DEBUG: Parsed BACKEND_PORT for Uvicorn: {BACKEND_PORT}")
 
 # Mount static files directory for images
 # This path must match the IMAGES_PATH configured in .env and docker-compose
+# It should be the CONTAINER path, which is correctly set in docker-compose.yml
 images_path = os.getenv("IMAGES_PATH")
 if images_path and os.path.exists(images_path):
     app.mount("/images", StaticFiles(directory=images_path), name="images")
@@ -43,6 +44,7 @@ else:
 
 # Mount static files directory for markdown (optional, but good for debugging/direct access)
 # This path must match the MARKDOWN_PATH configured in .env and docker-compose
+# It should be the CONTAINER path, which is correctly set in docker-compose.yml
 markdown_path = os.getenv("MARKDOWN_PATH")
 if markdown_path and os.path.exists(markdown_path):
      # Choose a different path than /markdown to avoid conflicts if needed

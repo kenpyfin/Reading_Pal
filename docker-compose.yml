@@ -33,13 +33,22 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       # PDF_CLIENT_URL now uses the value from the root .env, pointing to the standalone service
       PDF_CLIENT_URL: ${PDF_CLIENT_URL}
+      # These environment variables should now hold the CONTAINER paths
       IMAGES_PATH: /app/storage/images # Path within the backend container where images are mounted
       MARKDOWN_PATH: /app/storage/markdown # Path within the backend container where markdown is mounted
+      # Remove the HOST/CONTAINER path translation variables as they are no longer needed
+      # HOST_IMAGES_PATH: ${IMAGES_PATH}
+      # CONTAINER_IMAGES_PATH: /app/storage/images
+      # HOST_MARKDOWN_PATH: ${MARKDOWN_PATH}
+      # CONTAINER_MARKDOWN_PATH: /app/storage/markdown
       # BACKEND_PORT is still needed as an environment variable for the application running inside
       BACKEND_PORT: ${BACKEND_PORT}
     # Remove pdf_service dependency. Backend does not depend on frontend.
     # depends_on:
     #   - pdf_service
+    # Add this section to make host.docker.internal resolvable
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   frontend:
     build: ./frontend

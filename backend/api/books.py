@@ -12,39 +12,12 @@ from backend.models.book import Book
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# Retrieve container and host paths from environment variables
+# Retrieve container paths from environment variables
+# These should be set in docker-compose.yml to the mount points inside the container
 CONTAINER_IMAGES_PATH = os.getenv("IMAGES_PATH")
 CONTAINER_MARKDOWN_PATH = os.getenv("MARKDOWN_PATH")
-HOST_IMAGES_PATH = os.getenv("HOST_IMAGES_PATH")
-HOST_MARKDOWN_PATH = os.getenv("HOST_MARKDOWN_PATH")
 
-# Add a helper function for path translation
-def translate_path(stored_path: str, host_prefix: str, container_prefix: str) -> str:
-    """
-    Translates a file path stored with a host prefix to a path
-    accessible within the container using the container prefix.
-    Returns the original path if it doesn't start with the host prefix
-    or if prefixes are not configured.
-    """
-    if not stored_path or not host_prefix or not container_prefix:
-        logger.warning(f"Path translation skipped: missing path or prefixes. Stored: {stored_path}, Host Prefix: {host_prefix}, Container Prefix: {container_prefix}")
-        return stored_path # Cannot translate without prefixes
-
-    # Ensure prefixes have trailing slash for consistent replacement
-    host_prefix = host_prefix.rstrip('/') + '/'
-    container_prefix = container_prefix.rstrip('/') + '/'
-
-    if stored_path.startswith(host_prefix):
-        relative_path = stored_path[len(host_prefix):]
-        translated_path = os.path.join(container_prefix, relative_path)
-        logger.debug(f"Translated path: {stored_path} -> {translated_path}")
-        return translated_path
-    else:
-        logger.warning(f"Stored path does not start with host prefix. No translation: {stored_path} (Host Prefix: {host_prefix})")
-        # If the path doesn't start with the expected host prefix,
-        # it might already be a container path or something unexpected.
-        # Return the original path, but log a warning.
-        return stored_path
+# Remove the translate_path function as it's no longer needed
 
 
 @router.post("/upload", response_model=Book)
@@ -58,40 +31,50 @@ async def upload_pdf(
     """
     logger.info(f"Received upload request for file: {file.filename}")
     try:
-        # process_pdf_with_service returns host paths
+        # process_pdf_with_service returns host paths and filenames
+        # This call is synchronous, so run it in a threadpool
         processed_data = await run_in_threadpool(process_pdf_with_service, file, title)
 
         if not processed_data or not processed_data.get("success"):
              raise HTTPException(status_code=500, detail=processed_data.get("message", "PDF processing failed"))
 
-        # Store the host paths returned by the PDF service in the DB
+        # Extract filenames from the processed data returned by the PDF service
+        # The PDF service saves files using the sanitized title as a prefix,
+        # and returns the full host path. We only need the basename (filename).
+        markdown_filename = os.path.basename(processed_data.get("file_path", ""))
+        # The PDF service returns a list of image dicts, each with 'filename' and 'path'
+        image_filenames = [img["filename"] for img in processed_data.get("images", [])]
+
+        # Store ONLY filenames in the DB. The backend will construct container paths.
         book_data = {
             "title": processed_data.get("title", title or os.path.splitext(file.filename)[0]),
             "original_filename": file.filename,
-            "markdown_file_path": processed_data.get("file_path", ""), # This is the host path
-            "image_paths": [img["path"] for img in processed_data.get("images", [])], # These are host paths
+            # Store filenames instead of full paths
+            "markdown_filename": markdown_filename,
+            "image_filenames": image_filenames,
         }
 
         book_id = await save_book(book_data)
         logger.info(f"Book saved with ID: {book_id}")
 
+        # Retrieve the saved book document to ensure we have the _id and stored data
         saved_book_doc = await get_book(book_id)
         if not saved_book_doc:
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve saved book data after saving.")
 
-        # Read markdown content from the file path for the response
-        # Translate the stored host path to the container path before reading
-        stored_markdown_path = saved_book_doc.get("markdown_file_path")
-        container_markdown_path = translate_path(
-            stored_markdown_path,
-            HOST_MARKDOWN_PATH,
-            CONTAINER_MARKDOWN_PATH
-        )
-
+        # Read markdown content from the file using the container path
         markdown_content = ""
+        stored_markdown_filename = saved_book_doc.get("markdown_filename")
+        container_markdown_path = None
+
+        # Construct the full container path using the container mount point and filename
+        if CONTAINER_MARKDOWN_PATH and stored_markdown_filename:
+            container_markdown_path = os.path.join(CONTAINER_MARKDOWN_PATH, stored_markdown_filename)
+
         logger.info(f"Upload endpoint: Attempting to read markdown from container path: {container_markdown_path}")
         if container_markdown_path and os.path.exists(container_markdown_path):
             try:
+                # File I/O is blocking, run in threadpool
                 markdown_content = await run_in_threadpool(lambda p: open(p, 'r', encoding='utf-8').read(), container_markdown_path)
                 logger.info(f"Upload endpoint: Successfully read markdown content (length: {len(markdown_content)})")
             except Exception as file_read_error:
@@ -100,16 +83,19 @@ async def upload_pdf(
              logger.warning(f"Upload endpoint: Container markdown file path missing or file not found: {container_markdown_path}")
 
 
-        # Image URLs are generated from the basename, which works with the static mount
-        image_urls = [f"/images/{os.path.basename(path)}" for path in saved_book_doc.get("image_paths", [])]
+        # Generate image URLs using the static mount prefix and stored filenames
+        stored_image_filenames = saved_book_doc.get("image_filenames", [])
+        image_urls = [f"/images/{filename}" for filename in stored_image_filenames]
+        logger.info(f"Upload endpoint: Generated {len(image_urls)} image URLs: {image_urls}")
 
+
+        # Construct the response model
         response_data = {
             "_id": str(saved_book_doc["_id"]),
             "title": saved_book_doc.get("title"),
             "original_filename": saved_book_doc.get("original_filename"),
             "markdown_content": markdown_content, # Include content in upload response
-            "markdown_file_path": stored_markdown_path, # Store the original host path
-            "image_paths": saved_book_doc.get("image_paths", []), # Store original host paths
+            # Do NOT include internal filenames in the API response model
             "image_urls": image_urls # Include generated URLs
         }
         logger.info(f"Upload endpoint: Returning book data for ID {book_id}")
@@ -117,6 +103,7 @@ async def upload_pdf(
         return Book(**response_data)
 
     except HTTPException as e:
+        # Re-raise FastAPI HTTPExceptions
         raise e
     except Exception as e:
         logger.error(f"Error during PDF upload and processing: {e}", exc_info=True)
@@ -126,7 +113,7 @@ async def upload_pdf(
 async def list_books():
     """
     Retrieves a list of all books from the database.
-    Does NOT include full markdown content in the list view.
+    Does NOT include full markdown content or image URLs in the list view.
     """
     logger.info("Received request to list all books")
     database = get_database()
@@ -136,6 +123,7 @@ async def list_books():
 
     try:
         # Fetch all book documents. Project only necessary fields for the list view.
+        # We only need title and original_filename for the list display.
         books_cursor = database.books.find({}, {"title": 1, "original_filename": 1})
         books_list = await books_cursor.to_list(length=1000)
 
@@ -146,8 +134,6 @@ async def list_books():
                  "title": book_doc.get("title", "Untitled"),
                  "original_filename": book_doc.get("original_filename", "N/A"),
                  # These fields are not needed for the list view, set to None/empty
-                 "markdown_file_path": None,
-                 "image_paths": [],
                  "markdown_content": None,
                  "image_urls": []
              }
@@ -176,22 +162,21 @@ async def get_book_by_id(book_id: str):
     if book_data_doc:
         logger.info(f"Get endpoint: Book found in DB for ID: {book_id}")
 
-        # Read markdown content from the file path
-        stored_markdown_path = book_data_doc.get("markdown_file_path")
-        logger.info(f"Get endpoint: Stored markdown path from DB: {stored_markdown_path}")
+        # Retrieve filenames from the DB document
+        stored_markdown_filename = book_data_doc.get("markdown_filename")
+        stored_image_filenames = book_data_doc.get("image_filenames", [])
 
-        container_markdown_path = translate_path(
-            stored_markdown_path,
-            HOST_MARKDOWN_PATH,
-            CONTAINER_MARKDOWN_PATH
-        )
-        logger.info(f"Get endpoint: Translated container markdown path: {container_markdown_path}")
-
-
+        # Construct the container markdown path using the container mount point and filename
         markdown_content = ""
+        container_markdown_path = None
+        if CONTAINER_MARKDOWN_PATH and stored_markdown_filename:
+            container_markdown_path = os.path.join(CONTAINER_MARKDOWN_PATH, stored_markdown_filename)
+
+        logger.info(f"Get endpoint: Constructed container markdown path: {container_markdown_path}")
+
         # Add detailed checks and logging before attempting to open
         if not container_markdown_path:
-             logger.error(f"Get endpoint: Container markdown path is empty after translation for book ID {book_id}.")
+             logger.error(f"Get endpoint: Container markdown path is empty for book ID {book_id}.")
         elif not os.path.exists(container_markdown_path):
              logger.error(f"Get endpoint: Markdown file NOT FOUND at container path: {container_markdown_path} for book ID {book_id}.")
              # You might want to return a specific error or message to the frontend here
@@ -211,19 +196,16 @@ async def get_book_by_id(book_id: str):
                 # markdown_content = f"Error reading markdown file: {file_read_error}"
 
 
-        # Image URLs are generated from the basename of the stored host path
-        # This assumes the basename of the host path matches the filename saved in the images directory
-        # and that the static mount correctly serves files by this basename.
-        image_urls = [f"/images/{os.path.basename(path)}" for path in book_data_doc.get("image_paths", [])]
+        # Generate image URLs using the static mount prefix and stored filenames
+        image_urls = [f"/images/{filename}" for filename in stored_image_filenames]
         logger.info(f"Get endpoint: Generated {len(image_urls)} image URLs: {image_urls}")
 
 
+        # Construct the response model
         response_data = {
             "_id": str(book_data_doc["_id"]),
             "title": book_data_doc.get("title"),
             "original_filename": book_data_doc.get("original_filename"),
-            "markdown_file_path": stored_markdown_path, # Optionally include original host path
-            "image_paths": book_data_doc.get("image_paths", []), # Optionally include original host paths
             "markdown_content": markdown_content, # Include content in get response
             "image_urls": image_urls # Include generated URLs
         }
