@@ -89,7 +89,8 @@ else:
 
 
 class LLMService:
-    def __init__(self, anthropic=None, deepseek=config, gemini=None, ollama=None):
+    # Corrected the default value for deepseek from 'config' to None
+    def __init__(self, anthropic=None, deepseek=None, gemini=None, ollama=None):
         self.anthropic_client = anthropic
         self.deepseek_config = deepseek # Store config dict for requests
         self.gemini_model = gemini # Store the GenerativeModel instance
