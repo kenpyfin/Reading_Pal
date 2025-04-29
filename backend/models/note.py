@@ -1,19 +1,21 @@
 from pydantic import BaseModel, Field
+from pydantic_core import PydanticCustomError # Import for Pydantic v2 custom errors
 from typing import Optional
 from datetime import datetime
 from bson import ObjectId
 
 # Custom Pydantic type for ObjectId
 class PyObjectId(ObjectId):
+    # Pydantic v2 validation using __validate__
     @classmethod
-    def __get_validators__(cls):
-        yield cls.validate
-
-    @classmethod
-    def validate(cls, v):
-        if not ObjectId.is_valid(v):
-            raise ValueError("Invalid ObjectId")
-        return ObjectId(v)
+    def __validate__(cls, __input_value, _info):
+        if not ObjectId.is_valid(__input_value):
+            raise PydanticCustomError(
+                'invalid_object_id',
+                'Invalid ObjectId',
+                {'value': __input_value},
+            )
+        return ObjectId(__input_value)
 
     @classmethod
     def __get_pydantic_json_schema__(cls, field_schema):
