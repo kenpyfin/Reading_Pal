@@ -99,7 +99,8 @@ class LLMService:
         Sends a question to the configured LLM with provided context.
         """
         full_prompt = f"Context:\n{context}\n\nQuestion: {prompt}\n\nAnswer the question based ONLY on the provided context."
-        logger.info(f"Sending 'ask' prompt to LLM ({self.service_name}/{self.model_name}): {full_prompt[:200]}...") # Log truncated prompt
+        # Log length instead of content
+        logger.info(f"Sending 'ask' prompt to LLM ({self.service_name}/{self.model_name}). Prompt length: {len(full_prompt)}")
 
         try:
             if self.service_name == "anthropic" and self.anthropic_client:
@@ -183,7 +184,8 @@ class LLMService:
         Sends text to the configured LLM for summarization.
         """
         prompt = f"Please provide a concise summary of the following text:\n\n{text}"
-        logger.info(f"Sending 'summarize' prompt to LLM ({self.service_name}/{self.model_name}): {text[:200]}...") # Log truncated text
+        # Log length instead of content
+        logger.info(f"Sending 'summarize' prompt to LLM ({self.service_name}/{self.model_name}). Text length: {len(text)}")
 
         try:
             if self.service_name == "anthropic" and self.anthropic_client:
@@ -261,7 +263,7 @@ class LLMService:
 llm_service = LLMService(
     anthropic=anthropic_client,
     deepseek=deepseek_client, # Pass the config dict
-    gemini=gemini_client, # Pass the GenerativeModel instance
+    gemini=gemini_model, # Pass the GenerativeModel instance
     ollama=ollama_client # Pass the AsyncClient instance
 )
 
@@ -271,7 +273,7 @@ async def ask_question(prompt: str, context: str) -> str:
     Sends a question to the configured LLM with provided context.
     Calls the async LLMService.ask method.
     """
-    logger.info(f"Calling LLM service 'ask' via wrapper with prompt: {prompt[:100]}...")
+    logger.info(f"Calling LLM service 'ask' via wrapper with prompt length: {len(prompt)}...")
     return await llm_service.ask(prompt, context)
 
 
@@ -280,7 +282,7 @@ async def summarize_text(text: str) -> str:
     Sends text to the configured LLM for summarization.
     Calls the async LLMService.summarize method.
     """
-    logger.info(f"Calling LLM service 'summarize' via wrapper with text: {text[:100]}...")
+    logger.info(f"Calling LLM service 'summarize' via wrapper with text length: {len(text)}...")
     return await llm_service.summarize(text)
 
 # TODO: Add other LLM interaction functions as needed (e.g., extract_keywords)
