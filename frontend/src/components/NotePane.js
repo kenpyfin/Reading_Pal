@@ -192,8 +192,8 @@ const NotePane = forwardRef(({ bookId, selectedBookText, selectedScrollPercentag
           <p>No notes yet. Add one below!</p>
         ) : (
           notes.map(note => (
-            {/* --- Enhancement 2: Make note item clickable --- */}
-            {/* Add onClick handler and a class for styling cursor */}
+            // --- Enhancement 2: Make note item clickable ---
+            // Add onClick handler and a class for styling cursor
             <div
                 key={note.id}
                 className={`note-item ${note.scroll_percentage !== null ? 'clickable-note' : ''}`} // Add class if clickable
