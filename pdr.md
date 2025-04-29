@@ -29,7 +29,8 @@ The Reading Pal application aims to provide users with an efficient and engaging
 
 # Implementation Requirements
 - Use Python for backend and React for frontend.
-- Use MongoDB to store notes and any metadata needed, including the processed Markdown content and image paths for each book.
+- Use MongoDB to store notes and any metadata needed, including the processed Markdown file and image file paths for each book.
+- Do not store any markdown content in database only use by reading the file.
 - Only use env files for global variable or configuration settings. Do not use a config file layer.
 - The pdf_service folder contains a pdf processing service that needs to run separately and integrate with this app. The backend of this app needs to connect with this service correctly, send the PDF, and receive the processed data (Markdown string, image paths).
 - **The backend must implement a static file server route to serve images from the designated storage path to the frontend.**
