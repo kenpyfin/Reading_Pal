@@ -61,7 +61,7 @@ async def upload_pdf(
             "title": processed_data.get("title", title or os.path.splitext(file.filename)[0]),
             "original_filename": file.filename,
             # Store filenames instead of full paths
-            "markdown_filename": markdown_filename,
+            "markdown_filename": markdown_filename, # Keep filename to locate the file
             "image_filenames": image_filenames,
         }
 
@@ -79,7 +79,7 @@ async def upload_pdf(
         # Read markdown content from the file using the container path
         markdown_content = ""
         stored_markdown_filename = saved_book_doc.get("markdown_filename")
-        container_markdown_path = None
+        container_markdown_path = None # Initialize to None
 
         # Construct the full container path using the container mount point and filename
         if CONTAINER_MARKDOWN_PATH and stored_markdown_filename:
@@ -108,8 +108,7 @@ async def upload_pdf(
             "_id": str(saved_book_doc["_id"]),
             "title": saved_book_doc.get("title"),
             "original_filename": saved_book_doc.get("original_filename"),
-            "markdown_content": markdown_content, # Include content in upload response
-            # Do NOT include internal filenames in the API response model
+            "markdown_content": markdown_content, # Include content (read from file) in upload response
             "image_urls": image_urls # Include generated URLs
         }
         logger.info(f"Upload endpoint: Returning book data for ID {book_id}")
@@ -190,7 +189,7 @@ async def get_book_by_id(book_id: str):
         # Construct the container markdown path using the container mount point and filename
         markdown_content = ""
         container_markdown_path = None
-        if CONTAINER_MARKDOWN_PATH and stored_markdown_filename:
+        if CONTAINER_MARKDOWN_PATH and stored_markdown_filename: # Ensure both are valid before joining
             container_markdown_path = os.path.join(CONTAINER_MARKDOWN_PATH, stored_markdown_filename)
 
         logger.info(f"Get endpoint: Constructed container markdown path: {container_markdown_path}")
@@ -227,7 +226,7 @@ async def get_book_by_id(book_id: str):
             "_id": str(book_data_doc["_id"]),
             "title": book_data_doc.get("title"),
             "original_filename": book_data_doc.get("original_filename"),
-            "markdown_content": markdown_content, # Include content in get response
+            "markdown_content": markdown_content, # Include content (read from file) in get response
             "image_urls": image_urls # Include generated URLs
         }
         logger.info(f"Get endpoint: Returning book data for ID {book_id}")
