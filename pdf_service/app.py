@@ -41,7 +41,7 @@ IMAGES_PATH = os.getenv('IMAGES_PATH')
 # Get Ollama configuration from environment variables
 OLLAMA_API_BASE = os.getenv('OLLAMA_API_BASE')
 # Use LLM_MODEL from .env for the reformatting model
-OLLAMA_REFORMAT_MODEL = os.getenv('LLM_MODEL') # Use the general LLM_MODEL setting
+OLLAMA_REFORMAT_MODEL = os.getenv('OLLAMA_REFORMAT_MODEL') # Use the general LLM_MODEL setting
 
 
 # --- Helper function to sanitize filename ---
@@ -369,10 +369,10 @@ async def process_pdf(
         return ProcessResponse(
             success=True,
             message="PDF processed successfully",
-            title=base_title, # Return the original title in the response
-            markdown_content=markdown_content, # Return the content string
-            images=images, # Return list of image info (filename, host path)
-            file_path=markdown_file_path # Return the host path of the markdown file
+            title=base_title, 
+            markdown_content=markdown_content, 
+            images=images, 
+            file_path=markdown_file_path 
         )
 
     except HTTPException as e:

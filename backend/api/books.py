@@ -108,7 +108,6 @@ async def upload_pdf(
             "_id": str(saved_book_doc["_id"]),
             "title": saved_book_doc.get("title"),
             "original_filename": saved_book_doc.get("original_filename"),
-            "markdown_content": markdown_content, # Include content (read from file) in upload response
             "image_urls": image_urls # Include generated URLs
         }
         logger.info(f"Upload endpoint: Returning book data for ID {book_id}")
