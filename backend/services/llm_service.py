@@ -280,6 +280,13 @@ llm_service = LLMService(
     ollama=ollama_client # Pass the AsyncClient instance
 )
 
+# --- Add a check to see if any LLM service was successfully initialized ---
+if not (llm_service.anthropic_client or llm_service.deepseek_config or llm_service.gemini_model or llm_service.ollama_client):
+    logger.critical(f"No LLM service client was successfully initialized based on configuration (LLM_SERVICE='{LLM_SERVICE}'). LLM features will not work.")
+else:
+    logger.info(f"LLM service initialized using: {LLM_SERVICE}")
+
+
 # Update the async wrapper function to match the new parameter name
 async def ask_question(question: str, context: Optional[str]) -> str:
     """
