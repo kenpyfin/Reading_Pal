@@ -33,14 +33,14 @@ function BookView() {
 
         if (!response.ok) {
            const errorData = await response.json();
-           # Check if the error is specifically 404 Not Found
+           // Check if the error is specifically 404 Not Found
            if (response.status === 404) {
-               # Set bookData to null explicitly for the "not found" state
+               // Set bookData to null explicitly for the "not found" state
                setBookData(null);
-               # No need to set a specific error message here, the !bookData check handles it
-               return; # Stop processing
+               // No need to set a specific error message here, the !bookData check handles it
+               return; // Stop processing
            }
-           # For other errors, throw the error
+           // For other errors, throw the error
            throw new Error(`HTTP error! status: ${response.status} - ${errorData.detail || response.statusText}`);
         }
         const data = await response.json();
