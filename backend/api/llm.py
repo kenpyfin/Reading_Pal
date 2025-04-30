@@ -12,6 +12,11 @@ from backend.db.mongodb import get_book # Import function to get book data
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# Define the container markdown path locally, matching the docker-compose mount
+CONTAINER_MARKDOWN_PATH = "/app/storage/markdown"
+logger.info(f"LLM API: CONTAINER_MARKDOWN_PATH = {CONTAINER_MARKDOWN_PATH}")
+
+
 class LLMRequest(BaseModel):
     book_id: str
     text: str # This could be selected text or a question
@@ -41,19 +46,32 @@ async def ask_llm(request: LLMRequest):
     """
     logger.info(f"Received 'ask' request for book ID: {request.book_id}")
 
-    # 1. Fetch book data to get the markdown file path
+    # 1. Fetch book data to get the markdown filename
     book_data = await get_book(request.book_id)
     if not book_data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found")
 
-    # 2. Read the full markdown content from the file
-    # Use the full markdown content as context for the 'ask' task
-    markdown_content = await read_markdown_content(book_data.get("markdown_file_path"))
+    # Retrieve the stored markdown filename from the DB document
+    stored_markdown_filename = book_data.get("markdown_filename")
 
-    if not markdown_content:
-         # It's possible the markdown file wasn't saved correctly or path is wrong
-         logger.error(f"Markdown content not found for book ID: {request.book_id} at path: {book_data.get('markdown_file_path')}")
-         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Book content not available for asking questions.")
+    # Construct the full container path using the container mount point and filename
+    container_markdown_path = None
+    if CONTAINER_MARKDOWN_PATH and stored_markdown_filename: # Ensure both are valid before joining
+        container_markdown_path = os.path.join(CONTAINER_MARKDOWN_PATH, stored_markdown_filename)
+
+    logger.info(f"Ask endpoint: Constructed container markdown path: {container_markdown_path}")
+
+
+    # 2. Read the full markdown content from the file using the constructed path
+    markdown_content = ""
+    if container_markdown_path and os.path.exists(container_markdown_path):
+         logger.info(f"Ask endpoint: Markdown file found at container path: {container_markdown_path}. Attempting to read...")
+         markdown_content = await read_markdown_content(container_markdown_path)
+         if not markdown_content:
+              logger.warning(f"Ask endpoint: Markdown content read from {container_markdown_path} is empty.")
+    else:
+         logger.error(f"Ask endpoint: Container markdown path missing or file not found: {container_markdown_path} for book ID {request.book_id}.")
+         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Book content file not found or path invalid.")
 
 
     # 3. Send request to LLM service using the async wrapper
@@ -90,18 +108,32 @@ async def summarize_llm(request: LLMRequest):
     """
     logger.info(f"Received 'summarize' request for book ID: {request.book_id}")
 
-    # 1. Fetch book data to get the markdown file path
+    # 1. Fetch book data to get the markdown filename
     book_data = await get_book(request.book_id)
     if not book_data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found")
 
-    # 2. Read the full markdown content from the file
-    # For now, we summarize the entire book content
-    text_to_summarize = await read_markdown_content(book_data.get("markdown_file_path"))
+    # Retrieve the stored markdown filename from the DB document
+    stored_markdown_filename = book_data.get("markdown_filename")
 
-    if not text_to_summarize:
-         logger.error(f"Markdown content not found for book ID: {request.book_id} at path: {book_data.get('markdown_file_path')}")
-         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Book content not available for summarization.")
+    # Construct the full container path using the container mount point and filename
+    container_markdown_path = None
+    if CONTAINER_MARKDOWN_PATH and stored_markdown_filename: # Ensure both are valid before joining
+        container_markdown_path = os.path.join(CONTAINER_MARKDOWN_PATH, stored_markdown_filename)
+
+    logger.info(f"Summarize endpoint: Constructed container markdown path: {container_markdown_path}")
+
+
+    # 2. Read the full markdown content from the file using the constructed path
+    text_to_summarize = ""
+    if container_markdown_path and os.path.exists(container_markdown_path):
+         logger.info(f"Summarize endpoint: Markdown file found at container path: {container_markdown_path}. Attempting to read...")
+         text_to_summarize = await read_markdown_content(container_markdown_path)
+         if not text_to_summarize:
+              logger.warning(f"Summarize endpoint: Markdown content read from {container_markdown_path} is empty.")
+    else:
+         logger.error(f"Summarize endpoint: Container markdown path missing or file not found: {container_markdown_path} for book ID {request.book_id}.")
+         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Book content file not found or path invalid.")
 
 
     # 3. Send request to LLM service using the async wrapper
