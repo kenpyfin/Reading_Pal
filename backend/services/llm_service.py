@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 LLM_SERVICE = os.getenv("LLM_SERVICE", "ollama")
 LLM_MODEL = os.getenv("LLM_MODEL", "deepseek-coder:v2") # Default model, adjust as needed
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL")
+OLLAMA_BASE_URL = os.getenv("OLLAMA_API_BASE")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
