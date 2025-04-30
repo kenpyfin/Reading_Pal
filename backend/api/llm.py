@@ -19,8 +19,9 @@ logger.info(f"LLM API: CONTAINER_MARKDOWN_PATH = {CONTAINER_MARKDOWN_PATH}")
 
 class LLMRequest(BaseModel):
     book_id: str
-    text: str # This could be selected text or a question
-    context: Optional[str] = None # Optional additional context (e.g., surrounding text)
+    # --- Change field name from 'text' to 'question' ---
+    question: str # This is the user's question
+    context: Optional[str] = None # This is the optional selected text
 
 class LLMResponse(BaseModel):
     response: str
@@ -41,45 +42,27 @@ async def read_markdown_content(markdown_file_path: str) -> str:
 @router.post("/ask", response_model=LLMResponse)
 async def ask_llm(request: LLMRequest):
     """
-    Sends a question about book content to the LLM service.
-    Fetches the full book content as context.
+    Sends a question about book content to the configured LLM.
+    Uses selected text (if provided in context) as primary reference.
     """
-    logger.info(f"Received 'ask' request for book ID: {request.book_id}")
+    # Log the received question and context length
+    logger.info(f"Received 'ask' request for book ID: {request.book_id}. Question length: {len(request.question)}. Context length: {len(request.context) if request.context else 0}")
 
-    # 1. Fetch book data to get the markdown filename
+    # 1. Fetch book data (still useful to confirm book exists)
     book_data = await get_book(request.book_id)
     if not book_data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found")
 
-    # Retrieve the stored markdown filename from the DB document
-    stored_markdown_filename = book_data.get("markdown_filename")
+    # The full markdown content reading logic is removed from here
+    # as the requirement is to use the selected text (request.context)
+    # for the 'ask' endpoint.
 
-    # Construct the full container path using the container mount point and filename
-    container_markdown_path = None
-    if CONTAINER_MARKDOWN_PATH and stored_markdown_filename: # Ensure both are valid before joining
-        container_markdown_path = os.path.join(CONTAINER_MARKDOWN_PATH, stored_markdown_filename)
-
-    logger.info(f"Ask endpoint: Constructed container markdown path: {container_markdown_path}")
-
-
-    # 2. Read the full markdown content from the file using the constructed path
-    markdown_content = ""
-    if container_markdown_path and os.path.exists(container_markdown_path):
-         logger.info(f"Ask endpoint: Markdown file found at container path: {container_markdown_path}. Attempting to read...")
-         markdown_content = await read_markdown_content(container_markdown_path)
-         if not markdown_content:
-              logger.warning(f"Ask endpoint: Markdown content read from {container_markdown_path} is empty.")
-    else:
-         logger.error(f"Ask endpoint: Container markdown path missing or file not found: {container_markdown_path} for book ID {request.book_id}.")
-         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Book content file not found or path invalid.")
-
-
-    # 3. Send request to LLM service using the async wrapper
+    # 2. Send request to LLM service using the async wrapper
     try:
-        # Simply await the async wrapper function
+        # --- Call llm_service.ask with the user's question and selected text as context ---
         llm_response = await ask_question(
-            request.text, # The question
-            markdown_content # The book content as context
+            request.question, # Pass the user's question as the prompt
+            request.context # Pass the selected text as the context
         )
 
         # The LLM service functions now return error messages as strings
@@ -100,6 +83,7 @@ async def ask_llm(request: LLMRequest):
         # Catch any unexpected errors during the process (e.g., DB error, file read error)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An unexpected error occurred: {e}")
 
+# Keep the /summarize endpoint as is for now, as it wasn't explicitly requested to be removed from the backend.
 @router.post("/summarize", response_model=LLMResponse)
 async def summarize_llm(request: LLMRequest):
     """

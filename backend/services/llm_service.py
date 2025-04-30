@@ -98,25 +98,28 @@ class LLMService:
         self.service_name = LLM_SERVICE
         self.model_name = LLM_MODEL
 
-    async def ask(self, prompt: str, context: str) -> str:
+    async def ask(self, prompt: str, context: Optional[str]) -> str:
         """
-        Sends a question to the configured LLM with provided context.
+        Sends a question to the configured LLM with optional provided context (selected text).
         """
-        # Adjust prompt based on whether context is provided
+        # --- Adjust prompt based on whether context is provided ---
         if context:
-            full_prompt = f"Context:\n{context}\n\nQuestion: {prompt}\n\nAnswer the question based ONLY on the provided context."
+            # If context is provided (selected text), instruct the LLM to use it
+            full_prompt = f"Context:\n{context}\n\nQuestion: {prompt}\n\nAnswer the question based ONLY on the provided context. If the context does not contain the answer, state that you cannot answer based on the provided text."
         else:
-            full_prompt = prompt # If no context, just send the prompt
+            # If no context is provided, just send the prompt (the user's question)
+            full_prompt = prompt
 
         # Log length instead of content
         logger.info(f"Sending 'ask' prompt to LLM ({self.service_name}/{self.model_name}). Prompt length: {len(full_prompt)}")
 
         try:
             if self.service_name == "anthropic" and self.anthropic_client:
+                # ... (Anthropic call using full_prompt)
                 message = await self.anthropic_client.messages.create(
-                    model=self.model_name, # Use the configured model
-                    max_tokens=4096, # Adjust as needed, Anthropic models have large context
-                    system="You are a helpful assistant that answers questions based on provided text.",
+                    model=self.model_name,
+                    max_tokens=4096,
+                    system="You are a helpful assistant that answers questions based on provided text, or general knowledge if no specific text is given.", # Adjust system prompt slightly
                     messages=[
                         {"role": "user", "content": full_prompt}
                     ]
@@ -124,7 +127,7 @@ class LLMService:
                 return message.content[0].text if message.content else "No response from LLM."
 
             elif self.service_name == "ollama" and self.ollama_client:
-                 # Ollama async client call
+                 # ... (Ollama async client call using full_prompt)
                  response = await self.ollama_client.chat(
                      model=self.model_name,
                      messages=[
@@ -134,20 +137,16 @@ class LLMService:
                  return response['message']['content'] if response and 'message' in response else "No response from LLM."
 
             elif self.service_name == "gemini" and self.gemini_model:
-                 # Gemini async client call
-                 # Note: Gemini's API might structure context differently.
-                 # This is a basic implementation assuming a single user message with context+prompt.
+                 # ... (Gemini async client call using full_prompt)
                  response = await self.gemini_model.generate_content_async(
                      contents=[
                          {"role": "user", "parts": [full_prompt]}
                      ]
                  )
-                 # Accessing response text might vary slightly based on the library version
                  return response.text if response and response.text else "No response from LLM."
 
             elif self.service_name == "deepseek" and self.deepseek_config:
-                 # DeepSeek API call using requests (synchronous, needs run_in_threadpool)
-                 # This structure assumes a chat completions endpoint similar to OpenAI
+                 # ... (DeepSeek API call using requests (synchronous, needs run_in_threadpool) using full_prompt)
                  headers = {
                      "Authorization": f"Bearer {self.deepseek_config['api_key']}",
                      "Content-Type": "application/json"
@@ -157,9 +156,8 @@ class LLMService:
                      "messages": [
                          {"role": "user", "content": full_prompt}
                      ],
-                     "max_tokens": 4096 # Adjust as needed
+                     "max_tokens": 4096
                  }
-                 # Use run_in_threadpool for the synchronous requests call
                  from fastapi.concurrency import run_in_threadpool
                  try:
                      response = await run_in_threadpool(
@@ -167,11 +165,10 @@ class LLMService:
                          self.deepseek_config['base_url'],
                          headers=headers,
                          json=payload,
-                         timeout=60 # Add a timeout
+                         timeout=60
                      )
-                     response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+                     response.raise_for_status()
                      response_data = response.json()
-                     # Assuming response structure like OpenAI chat completions
                      return response_data['choices'][0]['message']['content'] if response_data and 'choices' in response_data and len(response_data['choices']) > 0 else "No response from LLM."
                  except requests.exceptions.RequestException as req_err:
                      logger.error(f"DeepSeek API request failed: {req_err}")
@@ -180,10 +177,7 @@ class LLMService:
                      logger.error(f"DeepSeek API returned invalid JSON: {response.text}")
                      return f"Error from DeepSeek API: Invalid response format."
 
-
             else:
-                 # This case should ideally not be reached if initialization logic is correct
-                 # but provides a fallback.
                  error_msg = f"LLM service '{self.service_name}' is configured but client is not initialized or implemented."
                  logger.error(error_msg)
                  return error_msg
@@ -192,6 +186,7 @@ class LLMService:
             logger.error(f"Error calling {self.service_name} LLM 'ask' method: {e}")
             return f"Error generating response from LLM: {e}"
 
+    # Keep the summarize method as is
     async def summarize(self, text: str) -> str:
         """
         Sends text to the configured LLM for summarization.
@@ -247,7 +242,6 @@ class LLMService:
                      ],
                      "max_tokens": 4096 # Adjust as needed
                  }
-                 # Use run_in_threadpool for the synchronous requests call
                  from fastapi.concurrency import run_in_threadpool
                  try:
                      response = await run_in_threadpool(
@@ -286,16 +280,16 @@ llm_service = LLMService(
     ollama=ollama_client # Pass the AsyncClient instance
 )
 
-# Update the async wrapper functions to call the async methods directly
-async def ask_question(prompt: str, context: str) -> str:
+# Update the async wrapper function to match the new parameter name
+async def ask_question(question: str, context: Optional[str]) -> str:
     """
-    Sends a question to the configured LLM with provided context.
+    Sends a question to the configured LLM with optional provided context.
     Calls the async LLMService.ask method.
     """
-    logger.info(f"Calling LLM service 'ask' via wrapper with prompt length: {len(prompt)} and context length: {len(context)}...")
-    return await llm_service.ask(prompt, context)
+    logger.info(f"Calling LLM service 'ask' via wrapper with question length: {len(question)} and context length: {len(context) if context else 0}...")
+    return await llm_service.ask(question, context)
 
-
+# Keep the summarize_text wrapper function as is
 async def summarize_text(text: str) -> str:
     """
     Sends text to the configured LLM for summarization.
