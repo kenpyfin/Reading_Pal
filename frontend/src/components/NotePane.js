@@ -13,7 +13,8 @@ const NotePane = forwardRef(({ bookId, selectedBookText, selectedScrollPercentag
   const [llmLoading, setLlmLoading] = useState(false);
   const [llmQuestion, setLlmQuestion] = useState('');
   const [llmAskResponse, setLlmAskResponse] = useState(null);
-  const [llmSummarizeResponse, setLlmSummarizeResponse] = useState(null);
+  // --- REMOVE or COMMENT OUT this line ---
+  // const [llmSummarizeResponse, setLlmSummarizeResponse] = useState(null);
   const [llmError, setLlmError] = useState(null);
 
 
@@ -104,6 +105,8 @@ const NotePane = forwardRef(({ bookId, selectedBookText, selectedScrollPercentag
   };
 
 
+  // --- REMOVE or COMMENT OUT this entire function ---
+  /*
   // Add handleSummarizeBook function (keep as is)
   const handleSummarizeBook = async () => {
     if (!bookId) return;
@@ -136,8 +139,9 @@ const NotePane = forwardRef(({ bookId, selectedBookText, selectedScrollPercentag
       setLlmLoading(false);
     }
   };
+  */
 
-  // Add handleAskLLM function (keep as is)
+  // Add handleAskLLM function (modify as instructed previously)
   const handleAskLLM = async () => {
     if (!bookId || !llmQuestion.trim()) {
         setLlmError("Please enter a question.");
@@ -145,7 +149,8 @@ const NotePane = forwardRef(({ bookId, selectedBookText, selectedScrollPercentag
     }
     setLlmLoading(true);
     setLlmAskResponse(null);
-    setLlmSummarizeResponse(null);
+    // --- REMOVE or COMMENT OUT this line ---
+    // setLlmSummarizeResponse(null);
     setLlmError(null);
 
     try {
@@ -154,7 +159,13 @@ const NotePane = forwardRef(({ bookId, selectedBookText, selectedScrollPercentag
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ book_id: bookId, text: llmQuestion.trim() }),
+        body: JSON.stringify({
+          book_id: bookId, // Ensure book_id is included
+          // --- Change key from 'text' to 'question' ---
+          question: llmQuestion.trim(),
+          // --- Include selectedBookText as context ---
+          context: selectedBookText || null, // Pass selected text, or null if none
+        }),
       });
 
       const data = await response.json();
@@ -243,15 +254,21 @@ const NotePane = forwardRef(({ bookId, selectedBookText, selectedScrollPercentag
       {/* LLM Interaction section */}
       <div className="llm-interaction">
         <h3>LLM Reading Assistance</h3>
+        {/* --- REMOVE or COMMENT OUT this button --- */}
+        {/*
         <button onClick={handleSummarizeBook} disabled={llmLoading || !bookId} style={{ marginBottom: '15px' }}>
              {llmLoading ? 'Summarizing...' : 'Summarize Book'}
         </button>
+        */}
+        {/* --- REMOVE or COMMENT OUT this response display block --- */}
+        {/*
         {llmSummarizeResponse && (
             <div className="llm-response" style={{ marginTop: '10px', borderTop: '1px solid #eee', paddingTop: '10px' }}>
                 <h4>Summary:</h4>
                 <p>{llmSummarizeResponse}</p>
             </div>
         )}
+        */}
         <h4 style={{ marginTop: '20px' }}>Ask a Question</h4>
         <textarea
             value={llmQuestion}
