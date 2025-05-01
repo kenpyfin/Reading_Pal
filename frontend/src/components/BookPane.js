@@ -3,7 +3,20 @@ import ReactMarkdown from 'react-markdown'; // Import react-markdown
 import remarkGfm from 'remark-gfm'; // Import remark-gfm for GitHub Flavored Markdown
 
 // Wrap the component with forwardRef
+// --- REMOVE onScroll from the prop list ---
 const BookPane = forwardRef(({ markdownContent, imageUrls, onTextSelect }, ref) => { // Accept onTextSelect prop and ref
+
+  // --- REMOVE this unused handleScroll function ---
+  /*
+  const handleScroll = (event) => {
+    // This function is no longer needed as scrolling is handled in BookView
+    // console.log('BookPane scrolling');
+    // if (onScroll) {
+    //   onScroll(event);
+    // }
+  };
+  */
+
   // Function to handle text selection
   const handleMouseUp = () => {
     const selection = window.getSelection();
@@ -15,6 +28,7 @@ const BookPane = forwardRef(({ markdownContent, imageUrls, onTextSelect }, ref) 
   };
 
   return (
+    // --- REMOVE the onScroll attribute ---
     <div className="book-pane" ref={ref} onMouseUp={handleMouseUp}> {/* Attach ref and onMouseUp listener */}
       <h2>Book Content</h2>
       {markdownContent ? (
