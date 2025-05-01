@@ -23,9 +23,8 @@ logger.info(f"DEBUG: LLM_MODEL from os.getenv: '{os.getenv('LLM_MODEL')}'")
 
 
 LLM_SERVICE = os.getenv("LLM_SERVICE", "ollama")
-LLM_MODEL = os.getenv("LLM_MODEL", "deepseek-coder:v2") # Default model, adjust as needed
-# --- Read the specific Ollama URL env var into a dedicated variable ---
-ollama_env_base_url = os.getenv("OLLAMA_BASE_URL") # Use a clear variable name
+LLM_MODEL = os.getenv("LLM_MODEL", "deepseek-r2:14b")
+ollama_env_base_url = os.getenv("OLLAMA_API_BASE") 
 
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
