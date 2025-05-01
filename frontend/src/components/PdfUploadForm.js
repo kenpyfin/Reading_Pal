@@ -37,7 +37,7 @@ function PdfUploadForm() {
 
     try {
       // Call backend API for PDF upload
-      // CHANGE: Use /api/books/upload to match Nginx proxy configuration
+      // Use /api/books/upload to match Nginx proxy configuration
       const response = await fetch('/api/books/upload', {
         method: 'POST',
         body: formData,
@@ -57,10 +57,19 @@ function PdfUploadForm() {
         throw new Error(errorDetail);
       }
 
+      // CHANGE: The response now contains the initial book data with status and job_id
       const bookData = await response.json();
-      console.log('Upload successful:', bookData);
-      setSuccess("PDF uploaded and processing complete!");
-      navigate(`/book/${bookData._id}`); // Navigate to the new book's page
+      console.log('Upload successful, processing started:', bookData);
+
+      // CHANGE: Display a success message indicating processing has started
+      setSuccess(`PDF uploaded successfully. Processing started (Job ID: ${bookData.job_id}). You will be redirected to the book list.`);
+
+      // CHANGE: Navigate to the book list page instead of the book view page
+      // The user will see the book in the list with a 'processing' status
+      setTimeout(() => {
+          navigate('/'); // Navigate to the book list after a short delay
+      }, 2000); // Add a small delay so the user can read the success message
+
 
     } catch (err) {
       console.error('Upload failed:', err);
