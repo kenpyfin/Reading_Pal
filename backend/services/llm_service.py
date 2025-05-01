@@ -1,3 +1,5 @@
+print("DEBUG: Executing backend/services/llm_service.py module")
+
 import os
 from dotenv import load_dotenv
 import logging
@@ -14,9 +16,18 @@ import json # Import json for DeepSeek requests
 load_dotenv()
 logger = logging.getLogger(__name__)
 
+# --- Add these debug log statements ---
+logger.info(f"DEBUG: OLLAMA_BASE_URL from os.getenv: '{os.getenv('OLLAMA_BASE_URL')}'")
+logger.info(f"DEBUG: LLM_SERVICE from os.getenv: '{os.getenv('LLM_SERVICE')}'")
+logger.info(f"DEBUG: LLM_MODEL from os.getenv: '{os.getenv('LLM_MODEL')}'")
+
+
 LLM_SERVICE = os.getenv("LLM_SERVICE", "ollama")
 LLM_MODEL = os.getenv("LLM_MODEL", "deepseek-coder:v2") # Default model, adjust as needed
-OLLAMA_BASE_URL = os.getenv("OLLAMA_API_BASE")
+# --- Read the specific Ollama URL env var into a dedicated variable ---
+ollama_env_base_url = os.getenv("OLLAMA_BASE_URL") # Use a clear variable name
+
+
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -28,7 +39,22 @@ deepseek_config = None # For requests, this might just be the API key/URL
 gemini_model = None # Store the GenerativeModel instance
 ollama_client = None
 
-if LLM_SERVICE == "anthropic":
+# --- Use the dedicated variable for Ollama initialization ---
+if LLM_SERVICE == "ollama":
+     if ollama_env_base_url: # Check if the environment variable had a value
+         try:
+             # Use the async client with the value from the environment variable
+             ollama_client = AsyncClient(host=ollama_env_base_url)
+             logger.info(f"Ollama AsyncClient initialized for {ollama_env_base_url}. Model check pending.")
+
+         except Exception as e:
+             logger.error(f"Failed to initialize Ollama AsyncClient at {ollama_env_base_url}: {e}")
+             ollama_client = None # Explicitly set to None on failure
+     else:
+         # This warning will now fire if OLLAMA_BASE_URL env var is missing or empty
+         logger.warning("OLLAMA_BASE_URL environment variable not set. Ollama LLM service disabled.")
+
+elif LLM_SERVICE == "anthropic":
     if ANTHROPIC_API_KEY:
         try:
             anthropic_client = Anthropic(api_key=ANTHROPIC_API_KEY)
@@ -70,19 +96,6 @@ elif LLM_SERVICE == "gemini":
     else:
         logger.warning("GEMINI_API_KEY not set. Gemini LLM service disabled.")
 
-elif LLM_SERVICE == "ollama":
-     if OLLAMA_BASE_URL:
-         try:
-             # Use the async client
-             ollama_client = AsyncClient(host=OLLAMA_BASE_URL)
-             # Async check for model existence is better done during the actual call
-             logger.info(f"Ollama AsyncClient initialized for {OLLAMA_BASE_URL}. Model check pending.")
-
-         except Exception as e:
-             logger.error(f"Failed to initialize Ollama AsyncClient at {OLLAMA_BASE_URL}: {e}")
-             ollama_client = None
-     else:
-         logger.warning("OLLAMA_BASE_URL not set. Ollama LLM service disabled.")
 
 else:
     logger.warning(f"Unknown or unsupported LLM_SERVICE configured: {LLM_SERVICE}. LLM features may not work.")
