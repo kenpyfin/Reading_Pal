@@ -24,7 +24,7 @@ logger.info(f"DEBUG: LLM_MODEL from os.getenv: '{os.getenv('LLM_MODEL')}'")
 
 LLM_SERVICE = os.getenv("LLM_SERVICE", "ollama")
 LLM_MODEL = os.getenv("LLM_MODEL", "deepseek-r2:14b")
-ollama_env_base_url = os.getenv("OLLAMA_API_BASE") 
+ollama_env_base_url = os.getenv("OLLAMA_API_BASE")
 
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
@@ -114,6 +114,9 @@ class LLMService:
         """
         Sends a question to the configured LLM with optional provided context (selected text).
         """
+        # --- Add this log statement ---
+        logger.info(f"LLMService.ask received context: '{context}'")
+
         # --- Adjust prompt based on whether context is provided ---
         if context:
             # If context is provided (selected text), instruct the LLM to use it
@@ -124,6 +127,9 @@ class LLMService:
 
         # Log length instead of content
         logger.info(f"Sending 'ask' prompt to LLM ({self.service_name}/{self.model_name}). Prompt length: {len(full_prompt)}")
+        # --- Add this log statement to see the final prompt ---
+        logger.info(f"Final 'ask' prompt sent to LLM: '{full_prompt}'")
+
 
         try:
             if self.service_name == "anthropic" and self.anthropic_client:
@@ -306,6 +312,8 @@ async def ask_question(question: str, context: Optional[str]) -> str:
     Calls the async LLMService.ask method.
     """
     logger.info(f"Calling LLM service 'ask' via wrapper with question length: {len(question)} and context length: {len(context) if context else 0}...")
+    # --- Add this log statement to see context in the wrapper ---
+    logger.info(f"ask_question wrapper received context: '{context}'")
     return await llm_service.ask(question, context)
 
 # Keep the summarize_text wrapper function as is

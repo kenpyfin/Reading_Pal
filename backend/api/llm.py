@@ -47,6 +47,8 @@ async def ask_llm(request: LLMRequest):
     """
     # Log the received question and context length
     logger.info(f"Received 'ask' request for book ID: {request.book_id}. Question length: {len(request.question)}. Context length: {len(request.context) if request.context else 0}")
+    # --- Add this log statement ---
+    logger.info(f"Ask endpoint received context: '{request.context}'")
 
     # 1. Fetch book data (still useful to confirm book exists)
     book_data = await get_book(request.book_id)
