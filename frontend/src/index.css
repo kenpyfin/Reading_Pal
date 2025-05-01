@@ -31,3 +31,118 @@ code {
 }
 
 /* Add more styles as needed */
+
+/* === BookList Styles === */
+
+.book-list-container {
+  max-width: 900px; /* Limit width for better readability */
+  margin: 30px auto; /* Center the container with top/bottom margin */
+  padding: 25px;
+  background-color: #ffffff; /* White background */
+  border-radius: 8px; /* Rounded corners */
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05); /* Subtle shadow */
+}
+
+.book-list-container h2 {
+  margin-top: 0; /* Remove default top margin */
+  margin-bottom: 25px; /* Space below heading */
+  color: #333; /* Darker heading color */
+  text-align: center; /* Center heading */
+  border-bottom: 1px solid #eee; /* Separator line */
+  padding-bottom: 15px; /* Space above separator */
+}
+
+.book-list-container ul {
+  list-style: none; /* Remove default bullets */
+  padding: 0;
+  margin: 0;
+}
+
+.book-list-container li {
+  display: flex; /* Use flexbox for alignment */
+  justify-content: space-between; /* Space out title and status */
+  align-items: center; /* Vertically align items */
+  padding: 15px 10px; /* Padding inside list items */
+  margin-bottom: 10px; /* Space between list items */
+  border: 1px solid #e0e0e0; /* Light border for each item */
+  border-radius: 5px; /* Slightly rounded corners for items */
+  transition: background-color 0.2s ease-in-out, box-shadow 0.2s ease-in-out; /* Smooth transition */
+}
+
+.book-list-container li:hover {
+  background-color: #f8f9fa; /* Light background on hover */
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08); /* Slight shadow on hover */
+}
+
+.book-list-container li a {
+  text-decoration: none; /* Remove underline from links */
+  color: #0056b3; /* Link color */
+  font-weight: 500; /* Slightly bolder font */
+  flex-grow: 1; /* Allow link text to take available space */
+  margin-right: 15px; /* Space between link and status */
+  transition: color 0.2s ease-in-out;
+}
+
+.book-list-container li a:hover {
+  color: #003d80; /* Darker link color on hover */
+}
+
+/* Status Span Styling */
+.book-list-container li span {
+  font-size: 0.85em; /* Smaller font size for status */
+  color: #6c757d; /* Grey color for status */
+  background-color: #f1f3f5; /* Light grey background */
+  padding: 3px 8px; /* Padding around status text */
+  border-radius: 4px; /* Rounded corners for status badge */
+  white-space: nowrap; /* Prevent status text from wrapping */
+  flex-shrink: 0; /* Prevent status from shrinking */
+}
+
+/* Specific Status Colors (Optional but nice) */
+.book-list-container li span[data-status="processing"] {
+  color: #0056b3;
+  background-color: #cfe2ff;
+}
+
+.book-list-container li span[data-status="completed"] { /* Changed from 'processed' to 'completed' based on backend status */
+  color: #146c43;
+  background-color: #d1e7dd;
+}
+
+.book-list-container li span[data-status="failed"] {
+  color: #b02a37;
+  background-color: #f8d7da;
+}
+
+/* "No books found" message */
+.book-list-container p {
+  text-align: center;
+  color: #6c757d;
+  font-style: italic;
+  padding: 20px;
+}
+
+/* Upload Link Button */
+.book-list-container .upload-link-container { /* Target the container div */
+  text-align: center; /* Center the button */
+  margin-top: 30px; /* Space above the button */
+  padding-top: 20px; /* Space above the button */
+  border-top: 1px solid #eee; /* Separator line */
+}
+
+.book-list-container .upload-link-container a { /* Style the link itself */
+  display: inline-block; /* Allow padding and centering */
+  padding: 10px 20px;
+  background-color: #007bff; /* Primary button color */
+  color: white;
+  text-decoration: none;
+  border-radius: 5px;
+  font-weight: 500;
+  transition: background-color 0.2s ease-in-out;
+}
+
+.book-list-container .upload-link-container a:hover {
+  background-color: #0056b3; /* Darker shade on hover */
+}
+
+/* === End BookList Styles === */

@@ -105,7 +105,8 @@ function BookList() {
                       if (updatedBooksMap.has(book.id)) {
                           const updatedBook = updatedBooksMap.get(book.id);
                           // Only update if the status has actually changed or new data (like filenames) is available
-                          if (book.status !== updatedBook.status || updatedBook.markdown_filename || updatedBook.image_filenames.length > 0) {
+                          // Also check if the updated book data is valid (e.g., has an id)
+                          if (updatedBook && updatedBook.id && (book.status !== updatedBook.status || updatedBook.file_path || (updatedBook.images && updatedBook.images.length > 0))) {
                               console.log(`Updating book ${book.id} status from ${book.status} to ${updatedBook.status}`);
                               return updatedBook; // Use the full updated book object
                           }
@@ -118,7 +119,9 @@ function BookList() {
           }
 
           // Re-filter processing books after potential updates
-          const stillProcessing = successfulUpdates.filter(book => book && book.status === 'processing');
+          // Need to use the state variable 'books' directly here as 'successfulUpdates' only contains *new* data
+          const stillProcessing = books.filter(book => book.status === 'processing');
+
           if (stillProcessing.length === 0 && processingBooks.length > 0) {
               console.log("All processing books have finished or failed. Stopping polling.");
               // If no books are still processing among those we checked, clear the interval
@@ -146,7 +149,7 @@ function BookList() {
   }
 
   return (
-    <div className="book-list-container" style={{ padding: '20px' }}>
+    <div className="book-list-container"> {/* Use the class for styling */}
       <h2>Available Books</h2>
       {books.length === 0 ? (
         <p>No books found. <Link to="/upload">Upload a PDF</Link> to get started!</p>
@@ -159,16 +162,18 @@ function BookList() {
               {/* Always render the link, regardless of status */}
               <Link to={`/book/${book.id}`}>{book.title || book.original_filename}</Link>
               {/* Display the processing status */}
-              <span style={{ marginLeft: '10px', fontSize: '0.9em', color: '#555' }}>
-                  ({book.status || 'unknown'}) {/* Added fallback for status */}
+              {/* Add data-status attribute for CSS targeting */}
+              <span data-status={book.status || 'unknown'}>
+                  {book.status || 'unknown'} {/* Display status text */}
                   {book.status === 'processing' && '...'} {/* Add ellipsis for processing */}
-                  {book.status === 'failed' && ' - Check logs'} {/* Add message for failed */}
+                  {book.status === 'failed' && ' - Failed'} {/* Simplified failed message */}
               </span>
             </li>
           ))}
         </ul>
       )}
-      <div style={{ marginTop: '20px' }}>
+      {/* Wrap the Upload Link in a div with the specified class */}
+      <div className="upload-link-container">
          <Link to="/upload">Upload a New PDF</Link>
       </div>
     </div>
