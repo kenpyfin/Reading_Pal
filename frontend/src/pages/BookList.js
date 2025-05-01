@@ -41,6 +41,7 @@ function BookList() {
 
       try {
           // Call the new backend status endpoint
+          // Note: This endpoint returns status based on job_id, not book_id
           const response = await fetch(`/api/books/status/${jobId}`);
 
           if (!response.ok) {
@@ -49,19 +50,21 @@ function BookList() {
               // or the PDF service is down.
               const errorData = await response.json();
               console.error(`Failed to check status for job ${jobId} (Book ID: ${bookId}):`, errorData.detail || response.statusText);
-              // Return null or the existing book data if status check fails
+              // Return null if status check fails
               return null;
           }
 
           const updatedBookData = await response.json();
-          console.log(`Status update for job ${jobId} (Book ID: ${bookId}): ${updatedBookData.status}`);
+          console.log(`Status update received for job ${jobId} (Book ID: ${bookId}): ${updatedBookData.status}`);
 
-          // Return the updated book data
+          // The response from /api/books/status/{job_id} contains job_id, status, etc.
+          // It does NOT contain the MongoDB _id (which is book.id here).
+          // We need to return the data received from the status endpoint.
           return updatedBookData;
 
       } catch (err) {
           console.error(`Error during status check for job ${jobId} (Book ID: ${bookId}):`, err);
-          // Return null or the existing book data if status check fails
+          // Return null if status check fails
           return null;
       }
   };
@@ -74,13 +77,13 @@ function BookList() {
 
   // Polling effect for books that are 'processing'
   useEffect(() => {
-      // Find books that are currently processing
+      // Find books that are currently processing from the *current* state
       const processingBooks = books.filter(book => book.status === 'processing' && book.job_id);
 
       if (processingBooks.length === 0) {
           // No books are processing, no need to poll
           console.log("No books processing, stopping polling.");
-          return; // No interval needed
+          return; // No interval needed, or clear existing one
       }
 
       console.log(`Found ${processingBooks.length} books processing. Starting polling...`);
@@ -88,45 +91,58 @@ function BookList() {
       // Set up the polling interval
       const intervalId = setInterval(async () => {
           console.log("Polling for book status updates...");
-          const updatedBooks = await Promise.all(
-              processingBooks.map(book => checkBookStatus(book.id, book.job_id))
+
+          // Fetch status for all processing books concurrently
+          const statusUpdates = await Promise.all(
+              processingBooks.map(book => checkBookStatus(book.id, book.job_id)) // Pass book.id for logging, job_id for the fetch
           );
 
-          // Filter out null responses (failed status checks) and update state
-          const successfulUpdates = updatedBooks.filter(book => book !== null);
+          // Filter out failed status checks and create a map keyed by job_id
+          const updatesByJobId = new Map();
+          statusUpdates.filter(update => update && update.job_id).forEach(update => {
+              updatesByJobId.set(update.job_id, update);
+          });
 
-          if (successfulUpdates.length > 0) {
+          if (updatesByJobId.size > 0) {
               setBooks(currentBooks => {
-                  // Create a map of updated books by ID for easy lookup
-                  const updatedBooksMap = new Map(successfulUpdates.map(book => [book.id, book]));
-
-                  // Map over current books, replacing with updated data if available
                   const nextBooks = currentBooks.map(book => {
-                      if (updatedBooksMap.has(book.id)) {
-                          const updatedBook = updatedBooksMap.get(book.id);
-                          // Only update if the status has actually changed or new data (like filenames) is available
-                          // Also check if the updated book data is valid (e.g., has an id)
-                          if (updatedBook && updatedBook.id && (book.status !== updatedBook.status || updatedBook.file_path || (updatedBook.images && updatedBook.images.length > 0))) {
-                              console.log(`Updating book ${book.id} status from ${book.status} to ${updatedBook.status}`);
-                              return updatedBook; // Use the full updated book object
+                      // Find the update for this book using its job_id
+                      const update = updatesByJobId.get(book.job_id);
+
+                      // If there's an update for this book's job_id
+                      if (update) {
+                          // Merge the update data into the existing book object, preserving book.id
+                          // Only update status and message, and potentially title/filepath/images if completed
+                          // The /api/books/{book_id} endpoint is responsible for providing image_urls
+                          // Check if status has changed or if it's now completed
+                          if (book.status !== update.status || update.status === 'completed') {
+                               console.log(`Updating book ${book.id} (job ${book.job_id}) status from ${book.status} to ${update.status}`);
+                               return {
+                                   ...book, // Keep original book data, including the correct 'id'
+                                   status: update.status,
+                                   message: update.message, // Update message
+                                   // Only add/update these fields if they are present in the status response
+                                   // and the status is completed (or changing to completed)
+                                   // Use !== undefined to correctly handle empty strings or nulls if they were valid states
+                                   ...(update.title !== undefined && { title: update.title }),
+                                   ...(update.file_path !== undefined && { file_path: update.file_path }),
+                                   ...(update.images !== undefined && { images: update.images }),
+                               };
                           }
                       }
-                      return book; // Keep the current book data if no update or status hasn't changed
+                      return book; // Keep the current book data if no update for this job_id or status hasn't changed
                   });
+
+                  // The check for stopping polling is handled by the `processingBooks.length === 0` check
+                  // at the start of the *next* interval tick, after the state update has potentially occurred.
+                  // If setBooks caused all books to no longer be 'processing', the next interval tick
+                  // will see processingBooks.length === 0 and clear the interval.
 
                   return nextBooks;
               });
           }
-
-          // Re-filter processing books after potential updates
-          // Need to use the state variable 'books' directly here as 'successfulUpdates' only contains *new* data
-          const stillProcessing = books.filter(book => book.status === 'processing');
-
-          if (stillProcessing.length === 0 && processingBooks.length > 0) {
-              console.log("All processing books have finished or failed. Stopping polling.");
-              // If no books are still processing among those we checked, clear the interval
-              clearInterval(intervalId);
-          }
+          // If no successful updates were received, the interval continues if there are still processing books
+          // (checked at the start of the next tick).
 
       }, POLLING_INTERVAL); // Poll every POLLING_INTERVAL milliseconds
 
@@ -138,6 +154,8 @@ function BookList() {
       };
 
   }, [books]); // Dependency array includes 'books' so the effect re-runs if the book list changes
+  // This is necessary because the list of 'processingBooks' to poll needs to be
+  // re-evaluated whenever the 'books' state changes (e.g., a book finishes processing).
 
 
   if (loading) {
@@ -157,9 +175,10 @@ function BookList() {
         <ul>
           {books.map(book => (
             // Use Link to navigate to the BookView page for each book
-            // Use book.id for the key and the URL
+            // Use book.id for the key and the URL - this is the MongoDB _id
             <li key={book.id}>
               {/* Always render the link, regardless of status */}
+              {/* The BookView component handles displaying status if not processed */}
               <Link to={`/book/${book.id}`}>{book.title || book.original_filename}</Link>
               {/* Display the processing status */}
               {/* Add data-status attribute for CSS targeting */}
