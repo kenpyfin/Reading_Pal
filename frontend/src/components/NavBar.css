@@ -1,0 +1,43 @@
+.navbar {
+    background-color: #333; /* Dark background */
+    padding: 10px 20px; /* Vertical and horizontal padding */
+    color: white; /* White text color */
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); /* Subtle shadow */
+}
+
+.navbar-container {
+    display: flex; /* Use flexbox for layout */
+    justify-content: space-between; /* Space out brand and links */
+    align-items: center; /* Vertically align items */
+    max-width: 1200px; /* Optional: Limit max width */
+    margin: 0 auto; /* Center the container */
+}
+
+.navbar-brand {
+    color: white; /* White color for the brand link */
+    text-decoration: none; /* Remove underline */
+    font-size: 1.5em; /* Larger font size for brand */
+    font-weight: bold; /* Bold font */
+}
+
+.nav-links {
+    list-style: none; /* Remove bullet points */
+    margin: 0;
+    padding: 0;
+    display: flex; /* Use flexbox for links */
+}
+
+.nav-links li {
+    margin-left: 20px; /* Space between links */
+}
+
+.nav-link {
+    color: white; /* White color for links */
+    text-decoration: none; /* Remove underline */
+    font-size: 1em; /* Standard font size */
+    transition: color 0.3s ease; /* Smooth color transition on hover */
+}
+
+.nav-link:hover {
+    color: #ddd; /* Slightly lighter color on hover */
+}
