@@ -23,6 +23,7 @@ function BookList() {
          throw new Error(`HTTP error! status: ${response.status} - ${errorData.detail || response.statusText}`);
       }
       const data = await response.json();
+      console.log("Initial fetch /api/books/ data:", data); // ADDED LOG: Log initial data
       // The data now includes 'status' and 'job_id'
       setBooks(data);
 
@@ -55,7 +56,7 @@ function BookList() {
           }
 
           const updatedBookData = await response.json();
-          console.log(`Status update received for job ${jobId} (Book ID: ${bookId}): ${updatedBookData.status}`);
+          console.log(`Status update received for job ${jobId} (Book ID: ${bookId}):`, updatedBookData); // ADDED LOG: Log status update data
 
           // The response from /api/books/status/{job_id} contains job_id, status, etc.
           // It does NOT contain the MongoDB _id (which is book.id here).
@@ -106,18 +107,19 @@ function BookList() {
           if (updatesByJobId.size > 0) {
               setBooks(currentBooks => {
                   const nextBooks = currentBooks.map(book => {
-                      // Find the update for this book using its job_id
+                      console.log("Processing book in map (before update):", book); // ADDED LOG: Log book before update
                       const update = updatesByJobId.get(book.job_id);
 
                       // If there's an update for this book's job_id
                       if (update) {
+                          console.log("Found update for book's job_id:", update); // ADDED LOG: Log the update object
                           // Merge the update data into the existing book object, preserving book.id
                           // Only update status and message, and potentially title/filepath/images if completed
                           // The /api/books/{book_id} endpoint is responsible for providing image_urls
                           // Check if status has changed or if it's now completed
                           if (book.status !== update.status || update.status === 'completed') {
                                console.log(`Updating book ${book.id} (job ${book.job_id}) status from ${book.status} to ${update.status}`);
-                               return {
+                               const updatedBook = {
                                    ...book, // Keep original book data, including the correct 'id'
                                    status: update.status,
                                    message: update.message, // Update message
@@ -128,8 +130,11 @@ function BookList() {
                                    ...(update.file_path !== undefined && { file_path: update.file_path }),
                                    ...(update.images !== undefined && { images: update.images }),
                                };
+                               console.log("Resulting updated book object:", updatedBook); // ADDED LOG: Log the result of the merge
+                               return updatedBook;
                           }
                       }
+                      console.log("No update or status unchanged for book, keeping original:", book); // ADDED LOG: Log if no update applied
                       return book; // Keep the current book data if no update for this job_id or status hasn't changed
                   });
 
@@ -138,6 +143,7 @@ function BookList() {
                   // If setBooks caused all books to no longer be 'processing', the next interval tick
                   // will see processingBooks.length === 0 and clear the interval.
 
+                  console.log("Next books state array:", nextBooks); // ADDED LOG: Log the final array for the next state
                   return nextBooks;
               });
           }
@@ -176,6 +182,8 @@ function BookList() {
           {books.map(book => (
             // Use Link to navigate to the BookView page for each book
             // Use book.id for the key and the URL - this is the MongoDB _id
+            // ADDED LOG: Log book.id and book object before rendering list item
+            console.log("Rendering list item for book:", book, "ID:", book.id),
             <li key={book.id}>
               {/* Always render the link, regardless of status */}
               {/* The BookView component handles displaying status if not processed */}
