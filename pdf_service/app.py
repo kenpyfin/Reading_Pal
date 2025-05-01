@@ -1,8 +1,9 @@
 import os
 import logging
 import sys
-from typing import Optional, List
-from fastapi import FastAPI, UploadFile, File, HTTPException
+import uuid # Import uuid for generating job IDs
+from typing import Optional, List, Dict, Any # Import Dict and Any
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks # Import BackgroundTasks
 from pydantic import BaseModel
 import torch
 from dotenv import load_dotenv
@@ -13,6 +14,7 @@ from torch.cuda.amp import autocast
 import re # Import the regex module
 from contextlib import nullcontext # Import nullcontext for Python 3.7+
 import ollama # Import the ollama library
+import asyncio # Import asyncio for background tasks
 
 # Initialize FastAPI app
 app = FastAPI(title="PDF Processing Service")
@@ -43,6 +45,11 @@ OLLAMA_API_BASE = os.getenv('OLLAMA_API_BASE')
 # Use LLM_MODEL from .env for the reformatting model
 OLLAMA_REFORMAT_MODEL = os.getenv('OLLAMA_REFORMAT_MODEL') # Use the general LLM_MODEL setting
 
+
+# --- In-memory storage for job status and results ---
+# In a production system, this should be a persistent store (DB, Redis, etc.)
+# as restarting the service will lose job information.
+job_status: Dict[str, Dict[str, Any]] = {}
 
 # --- Helper function to sanitize filename ---
 def sanitize_filename(filename: str) -> str:
@@ -83,13 +90,23 @@ class ImageInfo(BaseModel):
     filename: str
     path: str
 
+# --- Updated ProcessResponse model for async initiation ---
 class ProcessResponse(BaseModel):
     success: bool
     message: str
-    title: str
-    markdown_content: Optional[str] = None
-    images: Optional[List[ImageInfo]] = None
-    file_path: str # This will be the path on the PDF service host
+    job_id: str
+    status: str # e.g., "pending", "processing"
+
+# --- New StatusResponse model for checking job status ---
+class StatusResponse(BaseModel):
+    success: bool
+    message: str
+    job_id: str
+    status: str # e.g., "pending", "processing", "completed", "failed"
+    title: Optional[str] = None
+    file_path: Optional[str] = None # Path to the saved markdown file
+    images: Optional[List[ImageInfo]] = None # List of image info
+
 
 # RENAME function and update logic to use Ollama
 def reformat_markdown_with_ollama(md_text):
@@ -213,12 +230,21 @@ def split_markdown_into_chunks(md_text: str, max_chunk_size: int = 10000, max_ch
     return [chunk for chunk in chunks if chunk]
 
 
-def process_pdf_to_markdown(file_path: str, title: str) -> Optional[str]:
-    """Process PDF using OCRPipe and convert to markdown format."""
+# --- Background task function for PDF processing ---
+async def perform_pdf_processing(job_id: str, temp_pdf_path: str, sanitized_title: str):
+    """
+    Performs the actual PDF processing in a background task.
+    Updates the global job_status dictionary upon completion or failure.
+    """
+    logger.info(f"Job {job_id}: Starting background PDF processing for {temp_pdf_path}")
+    job_status[job_id]["status"] = "processing"
+
     try:
         # Read PDF bytes
         reader = FileBasedDataReader("")
-        pdf_bytes = reader.read(file_path)
+        # Use sync file read in threadpool if needed, but magic_pdf might handle async internally
+        # For simplicity here, assuming magic_pdf can work with the file path directly or sync read is okay in background task
+        pdf_bytes = reader.read(temp_pdf_path)
 
         # Configure CUDA if available
         if torch.cuda.is_available():
@@ -228,9 +254,9 @@ def process_pdf_to_markdown(file_path: str, title: str) -> Optional[str]:
             torch.backends.cudnn.enabled = True
             torch.set_default_dtype(torch.float32)
             torch.set_default_tensor_type(torch.cuda.FloatTensor)
-            logger.info("CUDA available and configured.")
+            logger.info(f"Job {job_id}: CUDA available and configured.")
         else:
-            logger.warning("CUDA not available. Using CPU.")
+            logger.warning(f"Job {job_id}: CUDA not available. Using CPU.")
 
 
         # Initialize and run OCR pipeline
@@ -241,11 +267,11 @@ def process_pdf_to_markdown(file_path: str, title: str) -> Optional[str]:
             model_list = [] # Configure models if needed
             image_writer = FileBasedDataWriter(IMAGES_PATH)
             pipe = OCRPipe(pdf_bytes, model_list, image_writer)
-            logger.info("Running OCRPipe pipeline...")
+            logger.info(f"Job {job_id}: Running OCRPipe pipeline...")
             pipe.pipe_classify()
             pipe.pipe_analyze()
             pipe.pipe_parse()
-            logger.info("OCRPipe analysis complete.")
+            logger.info(f"Job {job_id}: OCRPipe analysis complete.")
 
             # Generate markdown content
             md_content = pipe.pipe_mk_markdown(
@@ -253,7 +279,7 @@ def process_pdf_to_markdown(file_path: str, title: str) -> Optional[str]:
                 drop_mode=DropMode.NONE,
                 md_make_mode=MakeMode.MM_MD
             )
-            logger.info("Initial markdown generated.")
+            logger.info(f"Job {job_id}: Initial markdown generated.")
 
         # Ensure md_content is a string
         if isinstance(md_content, list):
@@ -261,88 +287,22 @@ def process_pdf_to_markdown(file_path: str, title: str) -> Optional[str]:
         elif isinstance(md_content, str):
             md_text = md_content
         else:
-            logger.error(f"Unexpected markdown content type: {type(md_content)}")
+            logger.error(f"Job {job_id}: Unexpected markdown content type: {type(md_content)}")
             md_text = "" # Default to empty string on unexpected type
 
         # Reformat markdown using Ollama (UPDATED CALL)
-        logger.info("Reformatting markdown with Ollama...")
+        logger.info(f"Job {job_id}: Reformatting markdown with Ollama...")
         reformatted_md_text = reformat_markdown_with_ollama(md_text) # Call the new function
-        logger.info("Markdown reformatting complete.")
+        logger.info(f"Job {job_id}: Markdown reformatting complete.")
 
-        # The filename is now sanitized in the calling function (process_pdf)
         # Save markdown content to a file using the sanitized title
-        # The title passed here is already sanitized
-        markdown_file_path = os.path.join(MARKDOWN_PATH, f"{title}.md") # Use the sanitized title
-        logger.info(f"Saving reformatted markdown to: {markdown_file_path}")
+        markdown_file_path = os.path.join(MARKDOWN_PATH, f"{sanitized_title}.md") # Use the sanitized title
+        logger.info(f"Job {job_id}: Saving reformatted markdown to: {markdown_file_path}")
 
         with open(markdown_file_path, 'w', encoding='utf-8') as f:
             f.write(reformatted_md_text)
 
-        logger.info("PDF processed and converted to markdown successfully")
-        return reformatted_md_text
-    except Exception as e:
-        logger.error(f"Error in process_pdf_to_markdown: {e}", exc_info=True)
-        return None
-
-@app.post("/process-pdf", response_model=ProcessResponse)
-async def process_pdf(
-    file: UploadFile = File(...),
-    title: Optional[str] = None
-):
-    """
-    Process a PDF file and convert it to markdown format
-    """
-    logger.info(f"Received request to process PDF: {file.filename}")
-    try:
-        # Generate base title from filename if not provided
-        base_title = title if title else os.path.splitext(file.filename)[0]
-
-        # Sanitize the title for use in filenames
-        sanitized_title = sanitize_filename(base_title)
-        logger.info(f"Original title: '{base_title}', Sanitized title: '{sanitized_title}'")
-
-        # Save uploaded file temporarily using the original filename
-        # Use the original filename for the temporary file to avoid issues if the PDF library
-        # expects the original name or extension.
-        temp_path = os.path.join(PDF_STORAGE_PATH, file.filename)
-        logger.info(f"Saving temporary file to: {temp_path}")
-        try:
-            # Ensure the file pointer is at the beginning if it was read elsewhere
-            await file.seek(0)
-            with open(temp_path, "wb") as buffer:
-                content = await file.read()
-                buffer.write(content)
-            logger.info(f"Temporary file saved: {temp_path}")
-        except Exception as e:
-            logger.error(f"Failed to save temporary file {temp_path}: {e}")
-            raise HTTPException(status_code=500, detail=f"Failed to save temporary file: {e}")
-
-
-        # Process PDF and get markdown content
-        # Pass the sanitized title to the processing function
-        markdown_content = process_pdf_to_markdown(temp_path, sanitized_title) # Pass sanitized_title
-
-        if not markdown_content:
-            # Cleanup temp file even if processing fails
-            try:
-                if os.path.exists(temp_path):
-                    os.remove(temp_path)
-                    logger.info(f"Cleaned up temporary file: {temp_path}")
-            except Exception as e:
-                logger.error(f"Failed to cleanup temp file {temp_path} after processing error: {e}")
-            raise HTTPException(status_code=500, detail="Failed to process PDF into markdown")
-
-        # Markdown content is already saved to file inside process_pdf_to_markdown
-        # using the sanitized title. Get the final markdown file path.
-        markdown_file_path = os.path.join(MARKDOWN_PATH, f"{sanitized_title}.md") # Use sanitized_title again
-
-        # Cleanup temporary file
-        try:
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
-                logger.info(f"Cleaned up temporary file: {temp_path}")
-        except Exception as e:
-            logger.error(f"Failed to cleanup temp file {temp_path}: {e}")
+        logger.info(f"Job {job_id}: PDF processed and converted to markdown successfully")
 
         # Get list of generated images
         images = []
@@ -350,7 +310,7 @@ async def process_pdf(
             # Image files generated by OCRPipe use the base filename as a prefix
             # We need to look for files starting with the sanitized title
             image_prefix = sanitized_title
-            logger.info(f"Looking for images with prefix: {image_prefix} in {IMAGES_PATH}")
+            logger.info(f"Job {job_id}: Looking for images with prefix: {image_prefix} in {IMAGES_PATH}")
             try:
                 for img_file in os.listdir(IMAGES_PATH):
                     # Check if the file starts with the sanitized prefix and is a PNG
@@ -361,34 +321,117 @@ async def process_pdf(
                             filename=img_file,
                             path=full_img_path # This is the path on the PDF service host
                         ))
-                logger.info(f"Found {len(images)} image files matching prefix '{image_prefix}'.")
+                logger.info(f"Job {job_id}: Found {len(images)} image files matching prefix '{image_prefix}'.")
             except Exception as e:
-                 logger.error(f"Error listing images in {IMAGES_PATH}: {e}")
+                 logger.error(f"Job {job_id}: Error listing images in {IMAGES_PATH}: {e}")
 
 
-        return ProcessResponse(
-            success=True,
-            message="PDF processed successfully",
-            title=base_title, 
-            markdown_content=markdown_content, 
-            images=images, 
-            file_path=markdown_file_path 
-        )
+        # Update job status with completion details
+        job_status[job_id]["status"] = "completed"
+        job_status[job_id]["success"] = True
+        job_status[job_id]["message"] = "Processing complete"
+        job_status[job_id]["file_path"] = markdown_file_path
+        job_status[job_id]["images"] = images
+        job_status[job_id]["title"] = sanitized_title # Store sanitized title for status response
 
-    except HTTPException as e:
-        # Re-raise FastAPI HTTPExceptions
-        raise e
     except Exception as e:
-        logger.error(f"Error processing PDF: {str(e)}", exc_info=True)
-        # Cleanup temp file on unexpected errors too
+        logger.error(f"Job {job_id}: Error during background PDF processing: {e}", exc_info=True)
+        # Update job status with failure details
+        job_status[job_id]["status"] = "failed"
+        job_status[job_id]["success"] = False
+        job_status[job_id]["message"] = f"Processing failed: {e}"
+    finally:
+        # Cleanup temporary file regardless of success or failure
         try:
-            if 'temp_path' in locals() and os.path.exists(temp_path):
-                os.remove(temp_path)
-                logger.info(f"Cleaned up temporary file: {temp_path} after error.")
-        except Exception as cleanup_e:
-            logger.error(f"Failed to cleanup temp file {temp_path} after error: {cleanup_e}")
+            if os.path.exists(temp_pdf_path):
+                os.remove(temp_pdf_path)
+                logger.info(f"Job {job_id}: Cleaned up temporary file: {temp_pdf_path}")
+        except Exception as e:
+            logger.error(f"Job {job_id}: Failed to cleanup temp file {temp_pdf_path}: {e}")
 
-        raise HTTPException(status_code=500, detail=f"Internal server error during PDF processing: {e}")
+
+@app.post("/process-pdf", response_model=ProcessResponse)
+async def process_pdf(
+    background_tasks: BackgroundTasks, # Inject BackgroundTasks
+    file: UploadFile = File(...),
+    title: Optional[str] = None
+):
+    """
+    Receives a PDF file, saves it temporarily, starts a background processing task,
+    and immediately returns a job ID and status.
+    """
+    logger.info(f"Received request to process PDF: {file.filename}")
+    job_id = str(uuid.uuid4()) # Generate a unique job ID
+    base_title = title if title else os.path.splitext(file.filename)[0]
+    sanitized_title = sanitize_filename(base_title)
+
+    # Initialize job status
+    job_status[job_id] = {
+        "status": "pending",
+        "success": False, # Default to False
+        "message": "Job queued",
+        "title": base_title, # Store original title for response
+        "file_path": None,
+        "images": None,
+    }
+    logger.info(f"Created job {job_id} for file {file.filename}")
+
+    # Save uploaded file temporarily using the original filename
+    # Use the original filename for the temporary file to avoid issues if the PDF library
+    # expects the original name or extension.
+    temp_path = os.path.join(PDF_STORAGE_PATH, file.filename)
+    logger.info(f"Job {job_id}: Saving temporary file to: {temp_path}")
+    try:
+        # Ensure the file pointer is at the beginning if it was read elsewhere
+        await file.seek(0)
+        with open(temp_path, "wb") as buffer:
+            content = await file.read()
+            buffer.write(content)
+        logger.info(f"Job {job_id}: Temporary file saved: {temp_path}")
+    except Exception as e:
+        logger.error(f"Job {job_id}: Failed to save temporary file {temp_path}: {e}")
+        # Update job status to failed if saving fails
+        job_status[job_id]["status"] = "failed"
+        job_status[job_id]["message"] = f"Failed to save temporary file: {e}"
+        raise HTTPException(status_code=500, detail=f"Failed to save temporary file: {e}")
+
+    # Add the processing task to background tasks
+    # Pass the temporary file path and sanitized title to the background task
+    background_tasks.add_task(perform_pdf_processing, job_id, temp_path, sanitized_title)
+    logger.info(f"Job {job_id}: Added background task for processing.")
+
+    # Return immediate response with job ID
+    return ProcessResponse(
+        success=True,
+        message="Processing job started",
+        job_id=job_id,
+        status="pending" # Or "processing" if task starts immediately
+    )
+
+# --- New endpoint to check job status ---
+@app.get("/status/{job_id}", response_model=StatusResponse)
+async def get_job_status(job_id: str):
+    """
+    Checks the status of a PDF processing job.
+    """
+    logger.info(f"Received status request for job ID: {job_id}")
+    job_info = job_status.get(job_id)
+
+    if not job_info:
+        logger.warning(f"Status request for unknown job ID: {job_id}")
+        raise HTTPException(status_code=404, detail="Job ID not found")
+
+    # Return the current status and results (if available)
+    return StatusResponse(
+        success=job_info.get("success", False),
+        message=job_info.get("message", "Status available"),
+        job_id=job_id,
+        status=job_info.get("status", "unknown"),
+        title=job_info.get("title"),
+        file_path=job_info.get("file_path"),
+        images=job_info.get("images")
+    )
+
 
 if __name__ == "__main__":
     import uvicorn
