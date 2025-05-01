@@ -156,15 +156,11 @@ function BookList() {
             // Use Link to navigate to the BookView page for each book
             // Use book.id for the key and the URL
             <li key={book.id}>
-              {/* Only link to the book view if the status is 'processed' */}
-              {book.status === 'processed' ? (
-                  <Link to={`/book/${book.id}`}>{book.title || book.original_filename}</Link>
-              ) : (
-                  <span>{book.title || book.original_filename}</span>
-              )}
+              {/* Always render the link, regardless of status */}
+              <Link to={`/book/${book.id}`}>{book.title || book.original_filename}</Link>
               {/* Display the processing status */}
               <span style={{ marginLeft: '10px', fontSize: '0.9em', color: '#555' }}>
-                  ({book.status})
+                  ({book.status || 'unknown'}) {/* Added fallback for status */}
                   {book.status === 'processing' && '...'} {/* Add ellipsis for processing */}
                   {book.status === 'failed' && ' - Check logs'} {/* Add message for failed */}
               </span>
