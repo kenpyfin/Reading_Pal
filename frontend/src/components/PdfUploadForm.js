@@ -74,6 +74,10 @@ function PdfUploadForm() {
       // --- ADD Immediate Navigation ---
       // Optional: Add a non-blocking notification here (e.g., toast) if desired
       // alert(`Upload started for "${bookData.title || bookData.original_filename}". It will appear in the list shortly.`); // Example using alert
+
+      // ADDED: Simple alert to confirm initiation before navigating
+      alert(`Upload started for "${bookData.title || bookData.original_filename}". It will appear in the book list shortly with status "${bookData.status}".`);
+
       navigate('/'); // Navigate immediately to the book list
 
     } catch (err) {
