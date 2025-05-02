@@ -48,7 +48,7 @@ async def upload_pdf(
         processed_data = await run_in_threadpool(process_pdf_with_service, file, title)
 
         # Add logging for the initial response from PDF service
-        logger.info(f"Upload endpoint: Received initial response from PDF service: {processed_data}")
+        # logger.info(f"Upload endpoint: Received initial response from PDF service: {processed_data}")
 
         if not processed_data or not processed_data.get("success"):
              # Use the message from the PDF service if available
