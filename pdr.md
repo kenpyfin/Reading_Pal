@@ -2,13 +2,17 @@
 The Reading Pal application aims to provide users with an efficient and engaging way to read books, extract insights, and enhance their understanding through the use of Large Language Models (LLMs). The app will allow users to upload PDF files, process them into a readable format, and interact with LLM services to summarize, analyze, and annotate content. Additionally, the app will feature a user-friendly interface that enables seamless reading, note-taking, and synchronization between the book content and notes.
 
 # Key Features
-- PDF Upload and Processing: Users can upload PDF files from their device. The PDF is processed by a dedicated service and converted into a readable format (e.g., Markdown) for easy navigation and display in the app.
-  - The processing service extracts images from the PDF and saves them to a designated location.
+- PDF Upload and Processing: Users can upload PDF files from their device.
+  - Upon successful upload initiation, the user is immediately redirected to the book list page where the newly uploaded book appears with a status indicator (e.g., 'pending' or 'processing').
+  - The application periodically checks the processing status in the background.
+  - The PDF is processed **in the background** by a dedicated service and converted into a readable format (e.g., Markdown).
+  - The processing service extracts images from the PDF and saves them.
   - The processed Markdown content is saved **to a file** by the PDF service.
-  - The **path to the processed Markdown file** and the paths to the extracted images are returned to the backend.
-  - **The backend stores the path to the processed Markdown file and the image paths in the database.**
-  - **The backend reads the Markdown content from the file system using the stored path when needed.**
-  - **The backend serves the extracted images statically, providing URLs for the frontend to display them within the Markdown content.**
+  - Once processing is finished and the status updates to 'completed', the book title becomes a clickable link, allowing the user to navigate to the reading view.
+  - The **path to the processed Markdown file** and the paths to the extracted images are communicated **asynchronously** (via status checks) to the backend upon completion.
+  - **The backend stores these paths in the database upon processing completion.**
+  - **The backend reads the Markdown content from the file system using the stored path when needed for the reading view.**
+  - **The backend serves the extracted images statically.**
 - LLM-Powered Reading Assistance:
   - Integrated with LLM services to provide real-time insights, summaries, and interpretations of the book content.
   - Users can ask questions or request specific analyses of the text using natural language prompts.
