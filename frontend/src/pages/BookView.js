@@ -209,20 +209,19 @@ function BookView() {
   }
 
   // Check the book status before rendering content
-  if (bookData.status !== 'processed') {
+  // MODIFICATION: Change 'processed' to 'completed'
+  if (bookData.status !== 'completed') {
       return (
           <div style={{ padding: '20px', textAlign: 'center' }}>
               <h2>{bookData.title || bookData.original_filename}</h2>
-              <p>Status: {bookData.status}</p>
-              {bookData.status === 'processing' && (
-                  <p>Processing your book... This may take a few minutes for large files.</p>
+              <p>Status: {bookData.status || 'unknown'}</p> {/* Added fallback */}
+              {(bookData.status === 'processing' || bookData.status === 'pending') && ( // Check for pending too
+                  <p>Processing your book... This may take a few minutes (or longer) for large files.</p>
               )}
               {bookData.status === 'failed' && (
                   <p style={{ color: 'red' }}>Processing failed. Please try uploading again or check the backend logs.</p>
               )}
-              {bookData.status === 'uploaded' && (
-                   <p>Processing has not started yet. Please check the book list page.</p>
-              )}
+              {/* Removed 'uploaded' check as it's covered by 'pending' */}
               <div style={{ marginTop: '20px' }}>
                 <Link to="/">Go back to the Book List</Link>
                 <span style={{ margin: '0 10px' }}>|</span>
@@ -232,12 +231,13 @@ function BookView() {
       );
   }
 
-  // If status is 'processed' but content is missing (shouldn't happen if backend is correct)
-  if (!bookData.markdown_content) {
+  // MODIFICATION: Explicitly check for 'completed' status here as well
+  // If status is 'completed' but content is missing (shouldn't happen if backend is correct)
+  if (bookData.status === 'completed' && !bookData.markdown_content) {
        return (
            <div style={{ padding: '20px', color: 'orange', textAlign: 'center' }}>
                <h2>{bookData.title || bookData.original_filename}</h2>
-               <p>Status: Processed, but content could not be loaded.</p>
+               <p>Status: Completed, but content could not be loaded.</p>
                <p>The markdown file might be missing or unreadable on the server.</p>
                <div style={{ marginTop: '20px' }}>
                  <Link to="/">Go back to the Book List</Link>
@@ -247,7 +247,7 @@ function BookView() {
   }
 
 
-  // Render the dual pane view only if the book is processed and content is available
+  // Render the dual pane view only if the book is completed and content is available
   return (
     <div className="book-view-container"> {/* Use the CSS class for layout */}
       {/* Book Pane */}
