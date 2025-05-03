@@ -169,7 +169,6 @@ def reformat_markdown_with_ollama(md_text):
 
 def split_markdown_into_chunks(md_text: str, max_chunk_size: int = 10000, max_chunks: int = 10) -> List[str]:
     """Split markdown text into chunks based on max_chunk_size and limit to max_chunks."""
-    """Split markdown text into chunks based on max_chunk_size and limit to max_chunks."""
     # Initial splitting based on max_chunk_size
     chunks = []
     current_chunk = ''
