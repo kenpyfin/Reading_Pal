@@ -1,24 +1,36 @@
+# backend/api/books.py
+
+# Add necessary imports at the top
+import asyncio # Import asyncio
 import os
 import logging
-import requests # Import requests for the status check proxy
+import requests
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, status
-from typing import List
+from typing import List, Optional # Import Optional
 from bson import ObjectId
 from fastapi.concurrency import run_in_threadpool
+from datetime import datetime # Import datetime
 
-# Assuming pdf_client is correctly imported
-from backend.services.pdf_client import process_pdf_with_service
-# Assuming mongodb functions are correctly imported
-from backend.db.mongodb import save_book, get_book, get_database
-# Assuming Book model is correctly imported
+# Import models and db functions
 from backend.models.book import Book
+# Import specific DB functions needed
+from backend.db.mongodb import (
+    save_book,
+    get_book,
+    get_books, # Import get_books
+    get_book_by_job_id, # Import get_book_by_job_id
+    update_book, # Import update_book
+    get_database
+)
+# Assuming pdf_client service exists and is imported if needed directly
+# from backend.services.pdf_client import process_pdf_with_service # Keep if used
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# Retrieve container paths from environment variables
-CONTAINER_IMAGES_PATH = "/app/storage/images"
-CONTAINER_MARKDOWN_PATH = "/app/storage/markdown"
+# Define container paths (matching docker-compose volumes)
+CONTAINER_IMAGES_PATH = os.getenv("IMAGES_PATH", "/app/storage/images")
+CONTAINER_MARKDOWN_PATH = os.getenv("MARKDOWN_PATH", "/app/storage/markdown")
 
 logger.info(f"API Books: CONTAINER_IMAGES_PATH = {CONTAINER_IMAGES_PATH}")
 logger.info(f"API Books: CONTAINER_MARKDOWN_PATH = {CONTAINER_MARKDOWN_PATH}")
@@ -27,8 +39,43 @@ logger.info(f"API Books: CONTAINER_MARKDOWN_PATH = {CONTAINER_MARKDOWN_PATH}")
 PDF_CLIENT_URL = os.getenv("PDF_CLIENT_URL")
 if not PDF_CLIENT_URL:
     logger.error("PDF_CLIENT_URL environment variable is not set.")
-    # Depending on severity, you might want to raise an error here or handle it per request
-    # For now, log and handle per request.
+    # Handle as needed, maybe raise on startup or per request
+
+# --- Helper function (optional) for PDF service call ---
+async def call_pdf_service_upload(file: UploadFile, title: Optional[str]):
+    if not PDF_CLIENT_URL:
+        logger.error("PDF_CLIENT_URL environment variable is not set.")
+        raise HTTPException(status_code=500, detail="PDF processing service URL is not configured.")
+
+    pdf_service_upload_url = f"{PDF_CLIENT_URL}/process-pdf"
+    logger.info(f"Forwarding PDF to PDF service at {pdf_service_upload_url}")
+
+    # Read file content once
+    file_content = await file.read()
+    # Reset pointer if needed, though reading again shouldn't be necessary
+    # await file.seek(0)
+
+    # Prepare file data for the PDF service request
+    files = {'file': (file.filename, file_content, file.content_type)}
+    data = {'title': title} if title else {} # Pass title only if provided
+
+    try:
+        # Use run_in_threadpool for the synchronous requests call
+        def send_to_pdf_service():
+            response = requests.post(pdf_service_upload_url, files=files, data=data)
+            response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+            return response.json()
+
+        response_data = await run_in_threadpool(send_to_pdf_service)
+        logger.info(f"Received response from PDF service upload: {response_data}")
+        return response_data
+
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error connecting to PDF service during upload: {e}")
+        raise HTTPException(status_code=503, detail=f"Could not connect to PDF processing service: {e}")
+    except Exception as e:
+        logger.error(f"Error in PDF service call: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error calling PDF service: {e}")
 
 
 @router.post("/upload", response_model=Book)
@@ -42,68 +89,67 @@ async def upload_pdf(
     """
     logger.info(f"Received upload request for file: {file.filename}")
     try:
-        # process_pdf_with_service returns the *initial* response from the PDF service
-        # which includes job_id and initial status (e.g., 'pending')
-        # This call is synchronous, so run it in a threadpool
-        processed_data = await run_in_threadpool(process_pdf_with_service, file, title)
-
-        # Add logging for the initial response from PDF service
-        # logger.info(f"Upload endpoint: Received initial response from PDF service: {processed_data}")
+        # Call the PDF service to initiate processing
+        processed_data = await call_pdf_service_upload(file, title)
 
         if not processed_data or not processed_data.get("success"):
-             # Use the message from the PDF service if available
              error_detail = processed_data.get("message", "PDF processing initiation failed")
              logger.error(f"PDF service initiation failed: {error_detail}")
              raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=error_detail)
 
-        # --- Correctly extract initial data ---
         job_id = processed_data.get("job_id")
-        initial_status = processed_data.get("status", "pending") # Default to 'pending' if not provided
+        initial_status = processed_data.get("status", "pending")
 
         if not job_id:
             logger.error("PDF service did not return a job_id.")
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="PDF processing service failed to return a job ID.")
 
-        # Determine the title to save
         book_title = title if title else os.path.splitext(file.filename)[0]
 
-        # --- Prepare data for initial database save ---
-        # Store only the essential info needed to track the job initially
-        book_data = {
-            "title": book_title,
-            "original_filename": file.filename,
-            "job_id": job_id, # Store the job ID for status polling
-            "status": initial_status, # Store the initial status
-            # These will be populated later when processing is complete via the status check endpoint
-            "markdown_filename": None,
-            "image_filenames": [],
-        }
+        # --- Prepare data using the Book model structure ---
+        # Include all fields defined in the model, initializing appropriately
+        book_to_save = Book(
+            title=book_title,
+            original_filename=file.filename,
+            job_id=job_id,
+            status=initial_status,
+            markdown_filename=None, # Initialize as None
+            image_filenames=[], # Initialize as empty list
+            processing_error=None, # Initialize as None
+            # Timestamps will be added by default_factory or save_book
+            # Response-only fields are not included here
+            id=None # Explicitly set to None or omit if using default=None in model
+        )
 
-        logger.info(f"Upload endpoint: Data prepared for DB save: {book_data}")
+        # Convert model to dict for saving, excluding unset/None fields and handling alias
+        # Use exclude_none=True to avoid saving fields that are None initially
+        save_data = book_to_save.model_dump(by_alias=True, exclude_none=True)
+
+        logger.info(f"Upload endpoint: Data prepared for DB save: {save_data}")
 
         # Save the initial book record
-        book_id_obj = await save_book(book_data) # save_book should return the ObjectId
-        book_id_str = str(book_id_obj)
-        logger.info(f"Book saved with ID: {book_id_str}")
+        inserted_id_str = await save_book(save_data) # save_book returns string ID or None
+        if not inserted_id_str:
+             logger.error("Failed to save initial book record to database.")
+             raise HTTPException(status_code=500, detail="Failed to save initial book record.")
+
+        logger.info(f"Book saved with ID: {inserted_id_str}")
 
         # --- Return the newly created book record ---
-        # Construct the response based on the data we just saved
-        response_data = {
-            "_id": book_id_str,
-            "title": book_title,
-            "original_filename": file.filename,
-            "job_id": job_id,
-            "status": initial_status,
-            "markdown_content": None, # Not available yet
-            "image_urls": [] # Not available yet
-        }
+        # Fetch the created book data to ensure consistency and include generated _id/timestamps
+        created_book_doc = await get_book(inserted_id_str)
+        if not created_book_doc:
+             logger.error(f"Failed to retrieve created book record with ID: {inserted_id_str}")
+             raise HTTPException(status_code=500, detail="Failed to retrieve created book record.")
 
-        logger.info(f"Upload endpoint: Returning initial book data for ID {book_id_str}")
-        # Use the Book model to validate and structure the response
-        return Book(**response_data)
+        # Convert the retrieved document back to the Book model for response
+        # Pydantic should handle the _id alias automatically if configured
+        response_book = Book(**created_book_doc)
+
+        logger.info(f"Upload endpoint: Returning initial book data for ID {inserted_id_str}")
+        return response_book
 
     except HTTPException as e:
-        # Re-raise FastAPI HTTPExceptions
         raise e
     except Exception as e:
         logger.error(f"Error during PDF upload initiation: {e}", exc_info=True)
@@ -113,41 +159,40 @@ async def upload_pdf(
 @router.get("/", response_model=List[Book])
 async def list_books():
     """
-    Retrieves a list of all books from the database, including status and job_id.
-    Does NOT include full markdown content or image URLs in the list view.
+    Retrieves a list of all books from the database.
+    Response includes basic info, status, and job_id.
     """
     logger.info("Received request to list all books")
-    database = get_database()
-    if database is None:
-         logger.error("Database not initialized for list_books.")
-         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Database not initialized.")
-
     try:
-        # Fetch all book documents. Project necessary fields for the list view.
-        # Include _id, title, original_filename, status, job_id
-        books_cursor = database.books.find({}, {
+        # Define projection for list view (optional, but good practice)
+        projection = {
             "title": 1,
             "original_filename": 1,
-            "status": 1, # Include status
-            "job_id": 1 # Include job_id
-        })
-        books_list = await books_cursor.to_list(length=1000) # Adjust length as needed
+            "status": 1,
+            "job_id": 1,
+            "created_at": 1, # Include timestamps if desired
+            "updated_at": 1,
+            "processing_error": 1 # Include error status in list view
+            # Exclude large fields like markdown_filename, image_filenames
+        }
+        # Use the new get_books function
+        books_docs = await get_books(projection=projection)
 
         response_list = []
-        for book_doc in books_list:
-             # Ensure default values if fields are missing, though they should exist
-             response_data = {
-                 "_id": str(book_doc["_id"]), # Convert ObjectId to string
-                 "title": book_doc.get("title", "Untitled"),
-                 "original_filename": book_doc.get("original_filename", "N/A"),
-                 "status": book_doc.get("status"), # Get status
-                 "job_id": book_doc.get("job_id"), # Get job_id
-                 # These fields are not needed/available for the list view
-                 "markdown_content": None,
-                 "image_urls": []
-             }
-             # Validate with the Pydantic model before appending
-             response_list.append(Book(**response_data))
+        for book_doc in books_docs:
+             # Convert the document to the Book model
+             # Pydantic handles the _id alias and default values for missing fields
+             try:
+                 # Ensure _id is stringified if needed (get_books returns dicts)
+                 if '_id' in book_doc and not isinstance(book_doc['_id'], str):
+                      book_doc['_id'] = str(book_doc['_id'])
+                 # Set response-only fields to default for list view
+                 book_doc['markdown_content'] = None
+                 book_doc['image_urls'] = []
+                 response_list.append(Book(**book_doc))
+             except Exception as validation_error:
+                 logger.warning(f"Skipping book due to validation error: {validation_error}. Data: {book_doc}")
+
 
         logger.info(f"Returning list of {len(response_list)} books.")
         return response_list
@@ -157,104 +202,85 @@ async def list_books():
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error retrieving books: {e}")
 
 
-# --- get_book_by_id remains largely the same, but ensure it handles cases ---
-# --- where markdown_filename might still be None if processing failed ---
 @router.get("/{book_id}", response_model=Book)
 async def get_book_by_id(book_id: str):
     """
     Retrieves book data by its ID, reads markdown content from file if available.
     """
     logger.info(f"Received request for book ID: {book_id}")
-    if not ObjectId.is_valid(book_id):
-        logger.warning(f"Invalid book ID format received: {book_id}")
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid book ID format")
+    # Validation happens implicitly in get_book when converting to ObjectId
 
-    # get_book should fetch the full document
-    book_data_doc = await get_book(book_id)
+    book_data_doc = await get_book(book_id) # Fetches the raw document (dict)
 
-    logger.info(f"Get endpoint: Retrieved book document from DB: {book_data_doc}")
-
-    if book_data_doc:
-        logger.info(f"Get endpoint: Book found in DB for ID: {book_id}")
-
-        # Retrieve filenames, status, and job_id from the DB document
-        stored_markdown_filename = book_data_doc.get("markdown_filename")
-        stored_image_filenames = book_data_doc.get("image_filenames", [])
-        book_status = book_data_doc.get("status") # Get the status
-        job_id = book_data_doc.get("job_id") # Get the job_id
-
-        logger.info(f"Get endpoint: Retrieved markdown_filename from DB: {stored_markdown_filename}")
-        logger.info(f"Get endpoint: Retrieved image_filenames from DB: {stored_image_filenames}")
-        logger.info(f"Get endpoint: Retrieved status from DB: {book_status}")
-        logger.info(f"Get endpoint: Retrieved job_id from DB: {job_id}")
-
-
-        markdown_content = None # Default to None
-        image_urls = [] # Default to empty list
-
-        # Only attempt to read markdown and generate URLs if processing is completed
-        # And the markdown filename exists (it should if status is completed)
-        if book_status == 'completed' and stored_markdown_filename:
-            container_markdown_path = None
-            if CONTAINER_MARKDOWN_PATH: # Ensure base path is set
-                container_markdown_path = os.path.join(CONTAINER_MARKDOWN_PATH, stored_markdown_filename)
-
-            logger.info(f"Get endpoint: Constructed container markdown path: {container_markdown_path}")
-
-            if container_markdown_path and os.path.exists(container_markdown_path):
-                logger.info(f"Get endpoint: Markdown file found at container path: {container_markdown_path}. Attempting to read...")
-                try:
-                    # Use run_in_threadpool for file I/O
-                    markdown_content = await run_in_threadpool(lambda p: open(p, 'r', encoding='utf-8').read(), container_markdown_path)
-                    logger.info(f"Get endpoint: Successfully read markdown content (length: {len(markdown_content)}) from {container_markdown_path}")
-                    if not markdown_content.strip():
-                         logger.warning(f"Get endpoint: Markdown content read from {container_markdown_path} is empty or only whitespace.")
-                except Exception as file_read_error:
-                    logger.error(f"Get endpoint: Failed to read markdown file {container_markdown_path} for book ID {book_id}: {file_read_error}", exc_info=True)
-                    markdown_content = f"Error: Could not read processed content. {file_read_error}" # Provide error in content
-            else:
-                 logger.error(f"Get endpoint: Markdown file path missing or file not found: {container_markdown_path} for completed book ID {book_id}.")
-                 markdown_content = "Error: Processed content file not found." # Provide error in content
-
-            # Generate image URLs only if processing completed and image filenames are stored
-            if stored_image_filenames:
-                 image_urls = [f"/images/{filename}" for filename in stored_image_filenames]
-                 logger.info(f"Get endpoint: Generated {len(image_urls)} image URLs: {image_urls}")
-            else:
-                 logger.info(f"Get endpoint: No image filenames stored for completed book ID {book_id}.")
-
-
-        elif book_status != 'completed':
-             logger.info(f"Get endpoint: Book status is '{book_status}'. Not attempting to read markdown or generate image URLs.")
-             # Optionally set markdown_content to a message indicating status
-             # markdown_content = f"Book status: {book_status}. Content not available yet."
-
-
-        # Construct the response model including status and job_id
-        response_data = {
-            "_id": str(book_data_doc["_id"]),
-            "title": book_data_doc.get("title"),
-            "original_filename": book_data_doc.get("original_filename"),
-            "job_id": job_id, # Include job_id
-            "status": book_status, # Include status
-            "markdown_content": markdown_content, # Include content (read from file) or error/status message
-            "image_urls": image_urls # Include generated URLs or empty list
-        }
-        logger.info(f"Get endpoint: Returning book data for ID {book_id}")
-
-        # Validate response with the model
-        return Book(**response_data)
-    else:
+    if not book_data_doc:
         logger.warning(f"Get endpoint: Book not found in DB for ID: {book_id}")
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found")
 
+    logger.info(f"Get endpoint: Book found in DB for ID: {book_id}")
 
-# --- Add the status endpoint ---
+    # Convert raw doc to Book model to work with typed fields
+    # Ensure _id is handled correctly for Pydantic model instantiation
+    if '_id' in book_data_doc:
+         book_data_doc['_id'] = str(book_data_doc['_id']) # Ensure ID is string for model
+
+    try:
+        book = Book(**book_data_doc)
+    except Exception as validation_error:
+         logger.error(f"Failed to validate book data from DB for ID {book_id}: {validation_error}", exc_info=True)
+         raise HTTPException(status_code=500, detail="Invalid book data found in database.")
+
+
+    markdown_content = None
+    image_urls = []
+
+    # Only attempt to read/generate if processing is completed and filenames exist
+    if book.status == 'completed' and book.markdown_filename:
+        container_markdown_path = os.path.join(CONTAINER_MARKDOWN_PATH, book.markdown_filename)
+        logger.info(f"Get endpoint: Constructed container markdown path: {container_markdown_path}")
+
+        # Use run_in_threadpool for synchronous os.path.exists and file read
+        def check_and_read_markdown(path):
+            if os.path.exists(path):
+                logger.info(f"Get endpoint: Markdown file found at {path}. Reading...")
+                try:
+                    with open(path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                        logger.info(f"Get endpoint: Successfully read markdown (length: {len(content)}) from {path}")
+                        return content
+                except Exception as file_read_error:
+                    logger.error(f"Get endpoint: Failed to read markdown file {path}: {file_read_error}", exc_info=True)
+                    return f"Error: Could not read processed content. {file_read_error}"
+            else:
+                logger.error(f"Get endpoint: Markdown file not found at container path: {path}")
+                return "Error: Processed content file not found."
+
+        markdown_content = await run_in_threadpool(check_and_read_markdown, container_markdown_path)
+
+        # Generate image URLs from stored filenames
+        if book.image_filenames:
+             image_urls = [f"/images/{filename}" for filename in book.image_filenames]
+             logger.info(f"Get endpoint: Generated {len(image_urls)} image URLs.")
+        else:
+             logger.info(f"Get endpoint: No image filenames stored for completed book ID {book_id}.")
+
+    elif book.status != 'completed':
+         logger.info(f"Get endpoint: Book status is '{book.status}'. Not reading markdown or generating image URLs.")
+         # Optionally provide status message in content
+         # markdown_content = f"Book status: {book.status}. Content not available."
+
+    # Populate the response-only fields in the model instance
+    book.markdown_content = markdown_content
+    book.image_urls = image_urls
+
+    logger.info(f"Get endpoint: Returning book data for ID {book_id}")
+    return book # Return the populated Book model instance
+
+
 @router.get("/status/{job_id}")
 async def get_book_status_by_job_id(job_id: str):
     """
     Proxies the status request to the PDF processing service and updates the DB
-    if the job is completed or failed.
+    if the job is completed or failed, storing the final filenames and error message.
     Returns the PDF service's status format.
     """
     logger.info(f"Received status check request for job_id: {job_id}")
@@ -268,61 +294,90 @@ async def get_book_status_by_job_id(job_id: str):
         # Use run_in_threadpool for the synchronous requests call
         def fetch_status():
             response = requests.get(pdf_service_status_url)
-            response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+            # Check specifically for 404 before raising for other errors
+            if response.status_code == 404:
+                 return {"status": "not_found", "job_id": job_id, "message": "Job ID not found in processing service."} # Simulate a not found response
+            response.raise_for_status() # Raise HTTPError for other bad responses (4xx or 5xx)
             return response.json()
 
         status_data = await run_in_threadpool(fetch_status)
+
+        # Handle the simulated 'not_found' case
+        if status_data.get("status") == "not_found":
+             logger.warning(f"Job ID {job_id} not found in PDF service.")
+             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=status_data.get("message", "Job ID not found in processing service."))
+
         logger.info(f"Received status data from PDF service for job_id {job_id}: {status_data}")
 
-        # --- IMPORTANT: Update DB if status is completed or failed ---
-        # This is where the backend learns about the final filenames and status
         current_status = status_data.get("status")
+        message = status_data.get("message") # Get potential message/error message
+
+        # Update DB if status is completed or failed
         if current_status in ["completed", "failed"]:
-            database = get_database()
-            if database:
-                # Find the book by job_id
-                book_doc = await database.books.find_one({"job_id": job_id})
-                if book_doc:
-                    # Only update if the status in the DB is different
-                    if book_doc.get("status") != current_status:
-                        update_fields = {"status": current_status}
-                        if current_status == "completed":
-                            # Extract filenames from the PDF service response
-                            markdown_host_path = status_data.get("file_path")
-                            images_info = status_data.get("images", []) # List of {'filename': '...', 'path': '...'}
+            # Find the book associated with this job_id
+            book_doc = await get_book_by_job_id(job_id) # Use the new DB function
+            if book_doc:
+                book_id_str = str(book_doc["_id"]) # Get the string ID for update function
+                # Only update if the status in the DB is different (or not yet set)
+                if book_doc.get("status") != current_status:
+                    update_fields = {
+                        "status": current_status,
+                        "processing_error": message if current_status == "failed" else None,
+                        # Reset filenames initially on status change
+                        "markdown_filename": None,
+                        "image_filenames": []
+                    }
 
-                            if markdown_host_path:
-                                update_fields["markdown_filename"] = os.path.basename(markdown_host_path)
-                            if images_info:
-                                update_fields["image_filenames"] = [img.get("filename") for img in images_info if img.get("filename")]
+                    if current_status == "completed":
+                        # Extract filenames from the PDF service response paths
+                        markdown_host_path = status_data.get("file_path")
+                        images_info = status_data.get("images", []) # List of {'filename': '...', 'path': '...'}
 
-                            logger.info(f"Updating book record for completed job {job_id} with fields: {update_fields}")
-                            await database.books.update_one({"job_id": job_id}, {"$set": update_fields})
-                        elif current_status == "failed":
-                             logger.info(f"Updating book record for failed job {job_id} with status: failed")
-                             await database.books.update_one({"job_id": job_id}, {"$set": update_fields})
+                        if markdown_host_path:
+                            update_fields["markdown_filename"] = os.path.basename(markdown_host_path)
+                        if images_info:
+                            # Ensure we only store valid filenames
+                            valid_filenames = [img.get("filename") for img in images_info if img.get("filename")]
+                            update_fields["image_filenames"] = valid_filenames
+
+                    logger.info(f"Updating book record {book_id_str} for job {job_id} with fields: {update_fields}")
+                    # Use the new update_book function
+                    updated = await update_book(book_id_str, update_fields)
+                    if not updated:
+                         logger.error(f"Failed to update book {book_id_str} status for job {job_id} in DB.")
                     else:
-                         logger.info(f"Book record for job {job_id} already has status '{current_status}'. No DB update needed.")
+                         logger.info(f"Successfully updated book {book_id_str} status to {current_status}.")
                 else:
-                    logger.warning(f"Book record with job_id {job_id} not found in DB for status update.")
+                     logger.info(f"Book record {book_id_str} for job {job_id} already has status '{current_status}'. No DB update needed.")
             else:
-                 logger.error(f"Database not available to update status for job_id {job_id}")
+                logger.warning(f"Book record with job_id {job_id} not found in DB for status update.")
 
-
-        # Return the raw status data from the PDF service
+        # Return the raw status data received from the PDF service
         return status_data
 
+    # Specific handling for HTTP errors after the initial 404 check
     except requests.exceptions.HTTPError as e:
-        if e.response.status_code == 404:
-            logger.warning(f"Job ID {job_id} not found in PDF service.")
-            # Return a 404 response matching the PDF service's likely behavior
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job ID {job_id} not found in processing service.")
-        else:
-            logger.error(f"HTTP error fetching status for job_id {job_id} from PDF service: {e}", exc_info=True)
-            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Error fetching status from PDF service: {e}")
+        logger.error(f"HTTP error fetching status for job_id {job_id} from PDF service: {e}", exc_info=True)
+        # Provide more context from the response if possible
+        error_detail = f"Error fetching status from PDF service: {e}"
+        if e.response is not None:
+             error_detail += f" - Status Code: {e.response.status_code}"
+             try:
+                 # Attempt to get JSON detail first, fallback to text
+                 response_json = e.response.json()
+                 error_detail += f" - Response: {response_json.get('detail', response_json)}"
+             except Exception:
+                 try:
+                     error_detail += f" - Response: {e.response.text}"
+                 except Exception:
+                     pass # Ignore if response body is not readable
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=error_detail)
     except requests.exceptions.RequestException as e:
         logger.error(f"Connection error fetching status for job_id {job_id} from PDF service: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail=f"Could not connect to PDF processing service: {e}")
+    except HTTPException as e:
+         # Re-raise HTTPExceptions raised internally (like the 404)
+         raise e
     except Exception as e:
         logger.error(f"Unexpected error fetching status for job_id {job_id}: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An unexpected error occurred: {e}")
