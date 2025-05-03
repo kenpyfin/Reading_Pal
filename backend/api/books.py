@@ -190,8 +190,9 @@ async def list_books():
     """
     logger.info("Received request to list all books")
     try:
-        # Define projection for list view (optional, but good practice)
+        # --- FIX: Explicitly include _id in the projection ---
         projection = {
+            "_id": 1, # <<< ADD THIS LINE TO ENSURE _id IS FETCHED
             "title": 1,
             "original_filename": 1,
             "status": 1,
@@ -201,8 +202,11 @@ async def list_books():
             "processing_error": 1 # Include error status in list view
             # Exclude large fields like markdown_filename, image_filenames
         }
+        # --- END FIX ---
+
         # Use the new get_books function
         books_docs = await get_books(projection=projection)
+        logger.info(f"Fetched {len(books_docs)} book documents from DB.") # Log how many docs fetched
 
         response_list = []
         for book_doc in books_docs:
@@ -212,15 +216,33 @@ async def list_books():
                  # Ensure _id is stringified if needed (get_books returns dicts)
                  if '_id' in book_doc and not isinstance(book_doc['_id'], str):
                       book_doc['_id'] = str(book_doc['_id'])
+                 elif '_id' not in book_doc:
+                      # Log if _id is missing even after projection (shouldn't happen now)
+                      logger.error(f"Book document missing '_id' despite projection: {book_doc}")
+                      continue # Skip this document if _id is somehow missing
+
                  # Set response-only fields to default for list view
                  book_doc['markdown_content'] = None
                  book_doc['image_urls'] = []
-                 response_list.append(Book(**book_doc))
+
+                 # Instantiate the model
+                 book_instance = Book(**book_doc)
+
+                 # --- Add Logging (Keep this from previous step for verification) ---
+                 logger.debug(f"Instantiated Book model: id='{book_instance.id}', title='{book_instance.title}'")
+                 if book_instance.id is None:
+                      logger.warning(f"Instantiated Book model has None id! Original doc had _id: {book_doc.get('_id')}")
+                 # --- End Logging ---
+
+                 response_list.append(book_instance)
+
              except Exception as validation_error:
-                 logger.warning(f"Skipping book due to validation error: {validation_error}. Data: {book_doc}")
+                 # Log the raw document that failed validation
+                 logger.warning(f"Skipping book due to validation error: {validation_error}. Raw Data: {book_doc}", exc_info=True)
 
 
-        logger.info(f"Returning list of {len(response_list)} books.")
+        logger.info(f"Returning list of {len(response_list)} validated books.")
+        # FastAPI will automatically serialize the list of Pydantic models
         return response_list
 
     except Exception as e:
