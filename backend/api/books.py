@@ -266,7 +266,7 @@ async def get_book_status_by_job_id(job_id: str):
 
     try:
         # Use run_in_threadpool for the synchronous requests call
-        async def fetch_status():
+        def fetch_status():
             response = requests.get(pdf_service_status_url)
             response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
             return response.json()
