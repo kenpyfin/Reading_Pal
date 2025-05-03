@@ -1,20 +1,19 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom'; // Import useNavigate
 
+// Define timeout duration for upload in milliseconds
+const UPLOAD_TIMEOUT_MS = 60000; // 60 seconds
+
 function PdfUploadForm() {
   const [selectedFile, setSelectedFile] = useState(null);
   const [title, setTitle] = useState('');
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState(null);
-  // --- REMOVE success state ---
-  // const [success, setSuccess] = useState(null);
   const navigate = useNavigate(); // Get the navigate function
 
   const handleFileChange = (event) => {
     setSelectedFile(event.target.files[0]);
     setError(null);
-    // --- REMOVE success state update ---
-    // setSuccess(null);
   };
 
   const handleTitleChange = (event) => {
@@ -29,8 +28,6 @@ function PdfUploadForm() {
 
     setUploading(true);
     setError(null);
-    // --- REMOVE success state update ---
-    // setSuccess(null);
 
     const formData = new FormData();
     formData.append('file', selectedFile);
@@ -38,13 +35,32 @@ function PdfUploadForm() {
       formData.append('title', title);
     }
 
+    // --- Add AbortController and timeout ---
+    const controller = new AbortController();
+    const signal = controller.signal;
+    let timeoutId = null;
+
     try {
+      // Start the timeout timer
+      timeoutId = setTimeout(() => {
+          console.log(`Upload timed out after ${UPLOAD_TIMEOUT_MS}ms`);
+          controller.abort(); // Abort the fetch request
+      }, UPLOAD_TIMEOUT_MS);
+
       // Call backend API for PDF upload
       // Use /api/books/upload to match Nginx proxy configuration
       const response = await fetch('/api/books/upload', {
         method: 'POST',
         body: formData,
+        signal: signal, // Pass the abort signal to fetch
       });
+
+      // Clear the timeout if the fetch completes before the timeout
+      if (timeoutId) {
+          clearTimeout(timeoutId);
+          timeoutId = null; // Reset timeoutId
+      }
+
 
       if (!response.ok) {
         // Attempt to parse error response if it's JSON, otherwise use generic message
@@ -64,32 +80,31 @@ function PdfUploadForm() {
       const bookData = await response.json();
       console.log('Upload initiated successfully, processing started:', bookData);
 
-      // --- REMOVE success message state update ---
-      // setSuccess(`PDF uploaded successfully. Processing started (Job ID: ${bookData.job_id}). You will be redirected to the book list.`);
-
-      // --- REMOVE setTimeout and navigate immediately ---
-      // setTimeout(() => {
-      //     navigate('/'); // Navigate to the book list after a short delay
-      // }, 2000);
-      // --- ADD Immediate Navigation ---
-      // Optional: Add a non-blocking notification here (e.g., toast) if desired
-      // alert(`Upload started for "${bookData.title || bookData.original_filename}". It will appear in the list shortly.`); // Example using alert
-
       // ADDED: Simple alert to confirm initiation before navigating
       alert(`Upload started for "${bookData.title || bookData.original_filename}". It will appear in the book list shortly with status "${bookData.status}".`);
 
       navigate('/'); // Navigate immediately to the book list
 
     } catch (err) {
-      console.error('Upload failed:', err);
-      setError(`Upload failed: ${err.message || 'Unknown error'}`);
-      // Reset uploading state only if there was an error
+      // Clear the timeout if an error occurred before the timeout
+      if (timeoutId) {
+          clearTimeout(timeoutId);
+          timeoutId = null; // Reset timeoutId
+      }
+
+      // Check if the error is an AbortError (due to timeout)
+      if (err.name === 'AbortError') {
+          console.error('Upload aborted due to timeout:', err);
+          setError(`Upload timed out after ${UPLOAD_TIMEOUT_MS / 1000} seconds. Please check your connection and try again.`);
+      } else {
+          console.error('Upload failed:', err);
+          setError(`Upload failed: ${err.message || 'Unknown error'}`);
+      }
+      // Reset uploading state only if there was an error (including abort)
       setUploading(false);
     } finally {
-      // --- REMOVE setUploading(false) here ---
-      // If successful, navigation happens and component unmounts.
-      // If error, it's reset in the catch block.
-      // setUploading(false);
+      // The timeout is cleared in both the try and catch blocks now.
+      // No need to clear it again here.
     }
   };
 
@@ -98,8 +113,6 @@ function PdfUploadForm() {
     <div className="book-list-container"> {/* Reuse container style */}
       <h2>Upload New PDF</h2>
       {error && <p style={{ color: 'red', textAlign: 'center', marginBottom: '15px' }}>{error}</p>}
-      {/* Remove success message display */}
-      {/* {success && <p style={{ color: 'green' }}>{success}</p>} */}
 
       {/* Form Fields Styling */}
       <div style={{ marginBottom: '15px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
