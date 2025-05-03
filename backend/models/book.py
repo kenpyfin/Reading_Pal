@@ -11,6 +11,7 @@ class Book(BaseModel):
     original_filename: str
     # --- Fields for job tracking and results ---
     job_id: Optional[str] = None # Store the ID from the PDF processing service
+    sanitized_title: Optional[str] = None # <<< ADD THIS FIELD
     status: Optional[str] = "pending" # Store the processing status (e.g., pending, processing, completed, failed)
     markdown_filename: Optional[str] = None # Store the name of the generated markdown file
     image_filenames: List[str] = [] # Store the names of the generated image files
@@ -35,15 +36,16 @@ class Book(BaseModel):
                 "title": "Sample Book",
                 "original_filename": "sample.pdf",
                 "job_id": "some-uuid-string",
+                "sanitized_title": "Sample_Book", # <<< ADD EXAMPLE
                 "status": "completed",
-                "markdown_filename": "Sample Book.md", # Added example
-                "image_filenames": ["Sample Book_img_001.png"], # Added example
+                "markdown_filename": "Sample_Book.md", # Added example
+                "image_filenames": ["Sample_Book_img_001.png"], # Added example
                 "processing_error": None,
                 "created_at": "2023-10-27T10:00:00Z",
                 "updated_at": "2023-10-27T10:05:00Z",
                 # Response-only fields:
                 "markdown_content": "# Sample Book\n\nThis is the content...",
-                "image_urls": ["/images/Sample Book_img_001.png"]
+                "image_urls": ["/images/Sample_Book_img_001.png"]
             }
         },
     )

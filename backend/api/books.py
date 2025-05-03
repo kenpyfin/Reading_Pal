@@ -6,10 +6,11 @@ import os
 import logging
 import requests
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, status
-from typing import List, Optional # Import Optional
+from typing import List, Optional, Dict, Any # Import Optional, Dict, Any
 from bson import ObjectId
 from fastapi.concurrency import run_in_threadpool
 from datetime import datetime # Import datetime
+import re # Import re for sanitization
 
 # Import models and db functions
 from backend.models.book import Book
@@ -40,6 +41,23 @@ PDF_CLIENT_URL = os.getenv("PDF_CLIENT_URL")
 if not PDF_CLIENT_URL:
     logger.error("PDF_CLIENT_URL environment variable is not set.")
     # Handle as needed, maybe raise on startup or per request
+
+# --- Add helper function for sanitizing filenames ---
+def sanitize_filename(filename: str) -> str:
+    """Replaces spaces with underscores and removes potentially problematic characters."""
+    # Replace spaces with underscores
+    sanitized = filename.replace(' ', '_')
+    # Remove characters that are not alphanumeric, underscores, hyphens, or periods
+    # Keep periods for file extensions
+    sanitized = re.sub(r'[^\w.-]', '', sanitized)
+    # Optional: Limit length or handle leading/trailing periods/underscores
+    # Remove leading/trailing periods/underscores that might cause issues
+    sanitized = sanitized.strip('._-')
+    # Ensure filename is not empty after sanitization
+    if not sanitized:
+        # Fallback to a generic name if sanitization results in empty string
+        sanitized = "sanitized_file"
+    return sanitized
 
 # --- Helper function (optional) for PDF service call ---
 async def call_pdf_service_upload(file: UploadFile, title: Optional[str]):
@@ -105,6 +123,8 @@ async def upload_pdf(
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="PDF processing service failed to return a job ID.")
 
         book_title = title if title else os.path.splitext(file.filename)[0]
+        # --- Generate sanitized title ---
+        sanitized_book_title = sanitize_filename(book_title) # <<< ADD THIS LINE
 
         # --- Prepare data using the Book model structure ---
         # Include all fields defined in the model, initializing appropriately
@@ -112,6 +132,7 @@ async def upload_pdf(
             title=book_title,
             original_filename=file.filename,
             job_id=job_id,
+            sanitized_title=sanitized_book_title, # <<< ADD THIS FIELD
             status=initial_status,
             markdown_filename=None, # Initialize as None
             image_filenames=[], # Initialize as empty list
@@ -282,107 +303,154 @@ async def get_book_by_id(book_id: str):
 
 
 @router.get("/status/{job_id}")
-async def get_book_status_by_job_id(job_id: str):
+# Remove response_model=StatusResponse if it exists, return dict directly
+async def get_book_status_by_job_id(job_id: str) -> Dict[str, Any]:
     """
-    Proxies the status request to the PDF processing service and updates the DB
-    if the job is completed or failed, storing the final filenames and error message.
-    Returns the PDF service's status format.
+    Checks processing status by looking for the expected output markdown file
+    based on the sanitized title stored in the database. Updates DB if file found.
+    Returns a dictionary simulating the PDF service status response.
     """
-    logger.info(f"Received status check request for job_id: {job_id}")
-    if not PDF_CLIENT_URL:
-        logger.error("PDF_CLIENT_URL is not set for status check.")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="PDF processing service URL is not configured.")
+    logger.info(f"Received status check request for job_id: {job_id} (using file check)")
 
-    pdf_service_status_url = f"{PDF_CLIENT_URL}/status/{job_id}"
+    # --- Get Book Record ---
+    book_doc = await get_book_by_job_id(job_id)
+    if not book_doc:
+        logger.warning(f"File Check Status: Book record with job_id {job_id} not found in DB.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job ID {job_id} not associated with any known book.")
+
+    # Convert raw doc to Book model to work with typed fields (optional, but good for type safety)
+    # Ensure _id is stringified if needed (get_book_by_job_id returns dict)
+    if '_id' in book_doc and not isinstance(book_doc['_id'], str):
+         book_doc['_id'] = str(book_doc['_id'])
+    try:
+        book = Book(**book_doc)
+    except Exception as validation_error:
+         logger.error(f"Failed to validate book data from DB for job ID {job_id}: {validation_error}", exc_info=True)
+         # Log error but continue with raw doc if validation fails
+         book = None # Indicate model validation failed
+
+    current_db_status = book_doc.get("status", "unknown")
+    book_id_str = str(book_doc["_id"])
+    book_title = book_doc.get("title", "Unknown Title") # Get title for response
+
+    logger.info(f"File Check Status: Found book {book_id_str}, current DB status: '{current_db_status}'")
+
+    # --- If already completed or failed, return status from DB ---
+    if current_db_status in ["completed", "failed"]:
+        logger.info(f"File Check Status: Status for job {job_id} is already '{current_db_status}'. Returning stored status.")
+        # Simulate the PDF service response structure
+        return {
+            "success": current_db_status == "completed",
+            "message": book_doc.get("processing_error") if current_db_status == "failed" else "Processing complete (retrieved from DB)",
+            "job_id": job_id,
+            "status": current_db_status,
+            "title": book_title,
+            # Include filenames if completed
+            "file_path": os.path.join(CONTAINER_MARKDOWN_PATH, book_doc.get("markdown_filename")) if current_db_status == "completed" and book_doc.get("markdown_filename") else None,
+            "images": [{"filename": fname, "path": os.path.join(CONTAINER_IMAGES_PATH, fname)} for fname in book_doc.get("image_filenames", [])] if current_db_status == "completed" else []
+        }
+
+    # --- If pending/processing, check for the output file ---
+    sanitized_title_from_db = book_doc.get("sanitized_title")
+    if not sanitized_title_from_db:
+        logger.error(f"File Check Status: Cannot check file for job {job_id} because 'sanitized_title' is missing in the database record.")
+        # Return current status, cannot proceed with file check
+        return {
+            "success": False,
+            "message": "Cannot determine completion status: sanitized title missing.",
+            "job_id": job_id,
+            "status": current_db_status,
+            "title": book_title,
+            "file_path": None,
+            "images": []
+        }
+
+    expected_md_filename = f"{sanitized_title_from_db}.md"
+    expected_md_path = os.path.join(CONTAINER_MARKDOWN_PATH, expected_md_filename)
+    image_prefix = sanitized_title_from_db # Images start with the sanitized title
+
+    logger.info(f"File Check Status: Checking for markdown file: {expected_md_path}")
+    logger.info(f"File Check Status: Checking for images with prefix '{image_prefix}' in {CONTAINER_IMAGES_PATH}")
+
+    # --- Perform file system checks in threadpool ---
+    def check_files_exist(md_path_to_check, img_dir_to_check, img_prefix_to_check):
+        md_exists = os.path.exists(md_path_to_check)
+        found_images = []
+        if md_exists: # Only look for images if markdown exists (assumption: md is written last or concurrently)
+             try:
+                 if os.path.exists(img_dir_to_check) and os.path.isdir(img_dir_to_check):
+                     for item in os.listdir(img_dir_to_check):
+                         # Check prefix and common image extensions (adjust as needed)
+                         if item.startswith(img_prefix_to_check) and item.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp')):
+                             found_images.append(item)
+             except Exception as list_dir_error:
+                 logger.error(f"File Check Status: Error listing image directory {img_dir_to_check}: {list_dir_error}", exc_info=True)
+                 # Continue without images if listing fails
+        return md_exists, found_images
 
     try:
-        # Use run_in_threadpool for the synchronous requests call
-        def fetch_status():
-            response = requests.get(pdf_service_status_url)
-            # Check specifically for 404 before raising for other errors
-            if response.status_code == 404:
-                 return {"status": "not_found", "job_id": job_id, "message": "Job ID not found in processing service."} # Simulate a not found response
-            response.raise_for_status() # Raise HTTPError for other bad responses (4xx or 5xx)
-            return response.json()
+        markdown_exists, image_filenames_found = await run_in_threadpool(
+            check_files_exist, expected_md_path, CONTAINER_IMAGES_PATH, image_prefix
+        )
+    except Exception as check_error:
+        logger.error(f"File Check Status: Error during file system check for job {job_id}: {check_error}", exc_info=True)
+        # Return current status if check fails
+        return {
+            "success": False,
+            "message": f"Error checking file status: {check_error}",
+            "job_id": job_id,
+            "status": current_db_status,
+            "title": book_title,
+            "file_path": None,
+            "images": []
+        }
 
-        status_data = await run_in_threadpool(fetch_status)
+    # --- Process check results ---
+    if markdown_exists:
+        logger.info(f"File Check Status: Markdown file found for job {job_id}. Found {len(image_filenames_found)} associated image(s). Marking as completed.")
+        # Update DB to completed status
+        update_data = {
+            "status": "completed",
+            "markdown_filename": expected_md_filename,
+            "image_filenames": image_filenames_found,
+            "processing_error": None # Clear any previous potential error
+        }
+        updated = await update_book(book_id_str, update_data)
+        if not updated:
+            logger.error(f"File Check Status: Found markdown file, but failed to update book status in DB for {book_id_str}.")
+            # Return 'completed' status anyway, but log the DB error
+            return {
+                "success": True, # File exists, so processing likely succeeded
+                "message": "Processing complete (file found), but DB update failed.",
+                "job_id": job_id,
+                "status": "completed",
+                "title": book_title,
+                "file_path": expected_md_path, # Return container path
+                "images": [{"filename": fname, "path": os.path.join(CONTAINER_IMAGES_PATH, fname)} for fname in image_filenames_found]
+            }
+        else:
+             logger.info(f"File Check Status: Successfully updated book {book_id_str} status to completed.")
+             # Return 'completed' status
+             return {
+                "success": True,
+                "message": "Processing complete (file found).",
+                "job_id": job_id,
+                "status": "completed",
+                "title": book_title,
+                "file_path": expected_md_path, # Return container path
+                "images": [{"filename": fname, "path": os.path.join(CONTAINER_IMAGES_PATH, fname)} for fname in image_filenames_found]
+            }
+    else:
+        # Markdown file not found, assume still processing (or failed, which we can't detect)
+        logger.info(f"File Check Status: Markdown file not found for job {job_id}. Assuming status is still '{current_db_status}'.")
+        return {
+            "success": False,
+            "message": f"Processing status is '{current_db_status}'. Output file not found yet.",
+            "job_id": job_id,
+            "status": current_db_status, # Return the status currently in the DB
+            "title": book_title,
+            "file_path": None,
+            "images": []
+        }
 
-        # Handle the simulated 'not_found' case
-        if status_data.get("status") == "not_found":
-             logger.warning(f"Job ID {job_id} not found in PDF service.")
-             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=status_data.get("message", "Job ID not found in processing service."))
-
-        logger.info(f"Received status data from PDF service for job_id {job_id}: {status_data}")
-
-        current_status = status_data.get("status")
-        message = status_data.get("message") # Get potential message/error message
-
-        # Update DB if status is completed or failed
-        if current_status in ["completed", "failed"]:
-            # Find the book associated with this job_id
-            book_doc = await get_book_by_job_id(job_id) # Use the new DB function
-            if book_doc:
-                book_id_str = str(book_doc["_id"]) # Get the string ID for update function
-                # Only update if the status in the DB is different (or not yet set)
-                if book_doc.get("status") != current_status:
-                    update_fields = {
-                        "status": current_status,
-                        "processing_error": message if current_status == "failed" else None,
-                        # Reset filenames initially on status change
-                        "markdown_filename": None,
-                        "image_filenames": []
-                    }
-
-                    if current_status == "completed":
-                        # Extract filenames from the PDF service response paths
-                        markdown_host_path = status_data.get("file_path")
-                        images_info = status_data.get("images", []) # List of {'filename': '...', 'path': '...'}
-
-                        if markdown_host_path:
-                            update_fields["markdown_filename"] = os.path.basename(markdown_host_path)
-                        if images_info:
-                            # Ensure we only store valid filenames
-                            valid_filenames = [img.get("filename") for img in images_info if img.get("filename")]
-                            update_fields["image_filenames"] = valid_filenames
-
-                    logger.info(f"Updating book record {book_id_str} for job {job_id} with fields: {update_fields}")
-                    # Use the new update_book function
-                    updated = await update_book(book_id_str, update_fields)
-                    if not updated:
-                         logger.error(f"Failed to update book {book_id_str} status for job {job_id} in DB.")
-                    else:
-                         logger.info(f"Successfully updated book {book_id_str} status to {current_status}.")
-                else:
-                     logger.info(f"Book record {book_id_str} for job {job_id} already has status '{current_status}'. No DB update needed.")
-            else:
-                logger.warning(f"Book record with job_id {job_id} not found in DB for status update.")
-
-        # Return the raw status data received from the PDF service
-        return status_data
-
-    # Specific handling for HTTP errors after the initial 404 check
-    except requests.exceptions.HTTPError as e:
-        logger.error(f"HTTP error fetching status for job_id {job_id} from PDF service: {e}", exc_info=True)
-        # Provide more context from the response if possible
-        error_detail = f"Error fetching status from PDF service: {e}"
-        if e.response is not None:
-             error_detail += f" - Status Code: {e.response.status_code}"
-             try:
-                 # Attempt to get JSON detail first, fallback to text
-                 response_json = e.response.json()
-                 error_detail += f" - Response: {response_json.get('detail', response_json)}"
-             except Exception:
-                 try:
-                     error_detail += f" - Response: {e.response.text}"
-                 except Exception:
-                     pass # Ignore if response body is not readable
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=error_detail)
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Connection error fetching status for job_id {job_id} from PDF service: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail=f"Could not connect to PDF processing service: {e}")
-    except HTTPException as e:
-         # Re-raise HTTPExceptions raised internally (like the 404)
-         raise e
-    except Exception as e:
-        logger.error(f"Unexpected error fetching status for job_id {job_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An unexpected error occurred: {e}")
+# ... (rest of the file: list_books, get_book_by_id) ...
