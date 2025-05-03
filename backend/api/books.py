@@ -142,8 +142,13 @@ async def upload_pdf(
              logger.error(f"Failed to retrieve created book record with ID: {inserted_id_str}")
              raise HTTPException(status_code=500, detail="Failed to retrieve created book record.")
 
+        # --- FIX: Convert ObjectId to string before Pydantic validation ---
+        if '_id' in created_book_doc:
+            created_book_doc['_id'] = str(created_book_doc['_id'])
+        # --- END FIX ---
+
         # Convert the retrieved document back to the Book model for response
-        # Pydantic should handle the _id alias automatically if configured
+        # Pydantic should now handle the string _id alias correctly
         response_book = Book(**created_book_doc)
 
         logger.info(f"Upload endpoint: Returning initial book data for ID {inserted_id_str}")
