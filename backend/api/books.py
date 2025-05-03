@@ -186,64 +186,71 @@ async def upload_pdf(
 async def list_books():
     """
     Retrieves a list of all books from the database.
-    Response includes basic info, status, and job_id.
+    Explicitly constructs response dictionaries with 'id' as string.
     """
     logger.info("Received request to list all books")
     try:
-        # --- FIX: Explicitly include _id in the projection ---
+        # Projection remains the same
         projection = {
-            "_id": 1, # <<< ADD THIS LINE TO ENSURE _id IS FETCHED
+            "_id": 1,
             "title": 1,
             "original_filename": 1,
             "status": 1,
             "job_id": 1,
-            "created_at": 1, # Include timestamps if desired
+            "created_at": 1,
             "updated_at": 1,
-            "processing_error": 1 # Include error status in list view
-            # Exclude large fields like markdown_filename, image_filenames
+            "processing_error": 1
         }
-        # --- END FIX ---
 
-        # Use the new get_books function
         books_docs = await get_books(projection=projection)
-        logger.info(f"Fetched {len(books_docs)} book documents from DB.") # Log how many docs fetched
+        logger.info(f"Fetched {len(books_docs)} book documents from DB.")
 
+        # --- START CHANGE ---
         response_list = []
         for book_doc in books_docs:
-             # Convert the document to the Book model
-             # Pydantic handles the _id alias and default values for missing fields
-             try:
-                 # Ensure _id is stringified if needed (get_books returns dicts)
-                 if '_id' in book_doc and not isinstance(book_doc['_id'], str):
-                      book_doc['_id'] = str(book_doc['_id'])
-                 elif '_id' not in book_doc:
-                      # Log if _id is missing even after projection (shouldn't happen now)
-                      logger.error(f"Book document missing '_id' despite projection: {book_doc}")
-                      continue # Skip this document if _id is somehow missing
+            # Ensure _id exists and convert it
+            if '_id' in book_doc and isinstance(book_doc['_id'], ObjectId):
+                book_id_str = str(book_doc['_id'])
+            elif '_id' in book_doc and isinstance(book_doc['_id'], str):
+                 # If it's already a string for some reason, use it
+                 book_id_str = book_doc['_id']
+            else:
+                logger.warning(f"Skipping book document due to missing or invalid _id: {book_doc}")
+                continue
 
-                 # Set response-only fields to default for list view
-                 book_doc['markdown_content'] = None
-                 book_doc['image_urls'] = []
+            # Explicitly create the dictionary for the response
+            # Map fields from book_doc to the structure expected by the Book model (and frontend)
+            response_item = {
+                "id": book_id_str, # Use the string ID here
+                "title": book_doc.get("title"),
+                "original_filename": book_doc.get("original_filename"),
+                "status": book_doc.get("status"),
+                "job_id": book_doc.get("job_id"),
+                "created_at": book_doc.get("created_at"),
+                "updated_at": book_doc.get("updated_at"),
+                "processing_error": book_doc.get("processing_error"),
+                # Add other fields included in projection if needed by Book model defaults
+                # Ensure fields expected by the Book model (even if Optional) are present or None
+                "sanitized_title": book_doc.get("sanitized_title"), # Include if projected/needed
+                "markdown_filename": book_doc.get("markdown_filename"), # Include if projected/needed
+                "image_filenames": book_doc.get("image_filenames", []), # Include if projected/needed
+                # Response-only fields are not needed here, set to defaults
+                "markdown_content": None,
+                "image_urls": []
+            }
+            # Optional: Validate this dictionary against the Book model if desired
+            # try:
+            #     Book.model_validate(response_item)
+            # except Exception as validation_error:
+            #     logger.warning(f"Skipping book due to validation error on constructed dict: {validation_error}. Data: {response_item}", exc_info=True)
+            #     continue
 
-                 # Instantiate the model
-                 book_instance = Book(**book_doc)
+            response_list.append(response_item)
 
-                 # --- Add Logging (Keep this from previous step for verification) ---
-                 logger.debug(f"Instantiated Book model: id='{book_instance.id}', title='{book_instance.title}'")
-                 if book_instance.id is None:
-                      logger.warning(f"Instantiated Book model has None id! Original doc had _id: {book_doc.get('_id')}")
-                 # --- End Logging ---
-
-                 response_list.append(book_instance)
-
-             except Exception as validation_error:
-                 # Log the raw document that failed validation
-                 logger.warning(f"Skipping book due to validation error: {validation_error}. Raw Data: {book_doc}", exc_info=True)
-
-
-        logger.info(f"Returning list of {len(response_list)} validated books.")
-        # FastAPI will automatically serialize the list of Pydantic models
+        logger.info(f"Returning list of {len(response_list)} processed book dictionaries.")
+        # Return the list of dictionaries. FastAPI still uses response_model=List[Book] to validate that each dictionary in the list conforms to the Book model structure (including the presence of the `id` field) and for generating OpenAPI docs, but it serializes the list of dictionaries directly, avoiding potential issues with serializing aliased model fields.
         return response_list
+        # --- END CHANGE ---
 
     except Exception as e:
         logger.error(f"Error listing books: {e}", exc_info=True)
