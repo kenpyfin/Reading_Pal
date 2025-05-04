@@ -98,7 +98,8 @@ function BookList() {
           // checkBookStatus fetches from /api/books/status/{job_id}
           // which returns the PDF service status format: { success, message, job_id, status, title?, file_path?, images? }
           const statusUpdates = await Promise.all(
-              pollableBooks.map(book => checkBookStatus(book.id, book.job_id)) // Pass book.id for logging, job_id for the fetch
+              // Pass book._id for logging, job_id for the fetch
+              pollableBooks.map(book => checkBookStatus(book._id, book.job_id))
           );
 
           // Filter out failed status checks (null results from checkBookStatus)
@@ -116,13 +117,13 @@ function BookList() {
 
                       // If there's an update for this book's job_id AND the status is different
                       if (update && book.status !== update.status) {
-                          console.log(`Updating book ${book.id} (job ${book.job_id}) status from ${book.status} to ${update.status}`);
+                          console.log(`Updating book ${book._id} (job ${book.job_id}) status from ${book.status} to ${update.status}`);
                           changed = true;
                           // Update ONLY the status. Other details (filenames) are updated
                           // in the DB by the backend /status endpoint. A subsequent fetch
                           // or page navigation will get the updated details.
                           return {
-                              ...book, // Keep original book data (id, title, original_filename, job_id)
+                              ...book, // Keep original book data (_id, title, original_filename, job_id)
                               status: update.status, // Update the status
                               // Optionally update message if available in status response
                               ...(update.message && { message: update.message }),
@@ -172,23 +173,27 @@ function BookList() {
         <ul>
           {books.map(book => (
             // Use Link to navigate to the BookView page for each book
-            // Use book.id for the key and the URL - this is the MongoDB _id
-            // ADDED LOG: Log book.id and book object before rendering list item
-            console.log("Rendering list item for book:", book, "ID:", book.id),
-            <li key={book.id}>
+            // Use book._id for the key and the URL - this is the MongoDB _id
+            // ADDED LOG: Log book._id and book object before rendering list item
+            console.log("Rendering list item for book:", book, "ID:", book._id),
+            <li key={book._id}> {/* Changed book.id to book._id */}
               {/* Only make the link clickable if the book is completed */}
               {book.status === 'completed' ? (
-                 <Link to={`/book/${book.id}`}>{book.title || book.original_filename}</Link>
+                 <Link to={`/book/${book._id}`}> {/* Changed book.id to book._id */}
+                    {book.title || book.original_filename}
+                 </Link>
               ) : (
-                 <span>{book.title || book.original_filename}</span>
+                 <span>
+                     {book.title || book.original_filename}
+                     {/* Display the processing status */}
+                     {/* Add data-status attribute for CSS targeting */}
+                     <span data-status={book.status || 'unknown'}>
+                         {book.status || 'unknown'} {/* Display status text */}
+                         {(book.status === 'processing' || book.status === 'pending') && '...'} {/* Add ellipsis for processing/pending */}
+                         {book.status === 'failed' && ' - Failed'} {/* Simplified failed message */}
+                     </span>
+                 </span>
               )}
-              {/* Display the processing status */}
-              {/* Add data-status attribute for CSS targeting */}
-              <span data-status={book.status || 'unknown'}>
-                  {book.status || 'unknown'} {/* Display status text */}
-                  {(book.status === 'processing' || book.status === 'pending') && '...'} {/* Add ellipsis for processing/pending */}
-                  {book.status === 'failed' && ' - Failed'} {/* Simplified failed message */}
-              </span>
             </li>
           ))}
         </ul>
