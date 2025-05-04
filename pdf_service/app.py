@@ -117,10 +117,11 @@ def reformat_markdown_with_ollama(md_text):
 
     try:
         # Use the synchronous Ollama client
+        logger.info(f"Attempting to initialize Ollama client at {OLLAMA_API_BASE}...")
         client = ollama.Client(host=OLLAMA_API_BASE)
         # Optional: Check if the model exists (can add overhead)
         # client.show(OLLAMA_REFORMAT_MODEL) # This would raise an error if model doesn't exist
-        logger.info(f"Ollama client initialized for reformatting at {OLLAMA_API_BASE} using model {OLLAMA_REFORMAT_MODEL}.")
+        logger.info(f"Ollama client initialized successfully for reformatting at {OLLAMA_API_BASE} using model {OLLAMA_REFORMAT_MODEL}.")
     except Exception as e:
         logger.error(f"Failed to initialize Ollama client or check model: {e}. Skipping markdown reformatting.")
         return md_text # Return original text if client initialization fails
@@ -135,14 +136,18 @@ def reformat_markdown_with_ollama(md_text):
     # Assuming a model with at least 8192 context, leave ~6000 for the chunk.
     MAX_CHUNK_CHARS = int(6000 / TOKENS_PER_CHAR) # Roughly 24000 characters per chunk
 
+    logger.info(f"Splitting markdown into chunks for Ollama reformatting (max_chunk_size={MAX_CHUNK_CHARS})...")
     chunks = split_markdown_into_chunks(md_text, max_chunk_size=MAX_CHUNK_CHARS)
+    logger.info(f"Markdown split into {len(chunks)} chunks.")
+
     reformatted_chunks = []
     # Adjust prompt for a general Ollama model
     system_prompt = "You are a helpful assistant that reformats markdown text to be more readable and consistent. Preserve all original content, including text, headings, lists, code blocks, and image links. Only output the reformatted markdown without any conversational filler."
 
+    logger.info(f"Starting reformatting loop for {len(chunks)} chunks...")
     for i, chunk in enumerate(chunks):
         try:
-            logger.info(f"Reformatting markdown chunk {i+1}/{len(chunks)} using Ollama...")
+            logger.info(f"Sending chunk {i+1}/{len(chunks)} to Ollama for reformatting...")
             # Use the chat endpoint
             response = client.chat(
                 model=OLLAMA_REFORMAT_MODEL,
@@ -153,18 +158,22 @@ def reformat_markdown_with_ollama(md_text):
                 options={
                     'temperature': 0.1, # Keep temperature low for consistent reformatting
                     'num_predict': -1 # Generate until the model stops (within context limits)
-                }
+                },
+                timeout=300 # Add a timeout of 300 seconds (5 minutes)
             )
             reformatted_chunk = response['message']['content'] if response and 'message' in response else ""
             reformatted_chunks.append(reformatted_chunk)
-            logger.info(f"Finished reformatting chunk {i+1}.")
+            logger.info(f"Received response for chunk {i+1}.")
         except Exception as e:
-            logger.error(f"Error reformatting chunk {i+1} with Ollama: {e}")
+            logger.error(f"Error reformatting chunk {i+1} with Ollama: {e}", exc_info=True)
             # Fallback: return the original chunk if reformatting fails
             reformatted_chunks.append(chunk)
 
+    logger.info(f"Finished reformatting loop. Combining reformatted chunks...")
     # Combine all reformatted chunks
-    return "\n\n".join(reformatted_chunks)
+    combined_text = "\n\n".join(reformatted_chunks)
+    logger.info(f"Reformatting complete.")
+    return combined_text
 
 
 def split_markdown_into_chunks(md_text: str, max_chunk_size: int = 10000, max_chunks: int = 10) -> List[str]:
@@ -240,12 +249,13 @@ async def perform_pdf_processing(job_id: str, temp_pdf_path: str, sanitized_titl
 
     try:
         # Read PDF bytes
+        logger.info(f"Job {job_id}: Reading PDF bytes from {temp_pdf_path}...")
         reader = FileBasedDataReader("")
-        # Use sync file read in threadpool if needed, but magic_pdf might handle async internally
-        # For simplicity here, assuming magic_pdf can work with the file path directly or sync read is okay in background task
         pdf_bytes = reader.read(temp_pdf_path)
+        logger.info(f"Job {job_id}: PDF bytes read successfully.")
 
         # Configure CUDA if available
+        logger.info(f"Job {job_id}: Checking CUDA availability...")
         if torch.cuda.is_available():
             torch.backends.cuda.matmul.allow_tf32 = False
             torch.backends.cudnn.allow_tf32 = False
@@ -256,29 +266,40 @@ async def perform_pdf_processing(job_id: str, temp_pdf_path: str, sanitized_titl
             logger.info(f"Job {job_id}: CUDA available and configured.")
         else:
             logger.warning(f"Job {job_id}: CUDA not available. Using CPU.")
+        logger.info(f"Job {job_id}: CUDA setup complete.")
 
 
         # Initialize and run OCR pipeline
         # Use autocast only if CUDA is available
         context_manager = autocast(dtype=torch.float16) if torch.cuda.is_available() else nullcontext() # Need nullcontext from contextlib
 
+        logger.info(f"Job {job_id}: Initializing OCRPipe...")
         with context_manager:
             model_list = [] # Configure models if needed
             image_writer = FileBasedDataWriter(IMAGES_PATH)
             pipe = OCRPipe(pdf_bytes, model_list, image_writer)
-            logger.info(f"Job {job_id}: Running OCRPipe pipeline...")
+            logger.info(f"Job {job_id}: OCRPipe initialized.")
+
+            logger.info(f"Job {job_id}: Running pipe_classify...")
             pipe.pipe_classify()
+            logger.info(f"Job {job_id}: pipe_classify complete.")
+
+            logger.info(f"Job {job_id}: Running pipe_analyze...")
             pipe.pipe_analyze()
+            logger.info(f"Job {job_id}: pipe_analyze complete.")
+
+            logger.info(f"Job {job_id}: Running pipe_parse...")
             pipe.pipe_parse()
-            logger.info(f"Job {job_id}: OCRPipe analysis complete.")
+            logger.info(f"Job {job_id}: pipe_parse complete.")
 
             # Generate markdown content
+            logger.info(f"Job {job_id}: Running pipe_mk_markdown...")
             md_content = pipe.pipe_mk_markdown(
                 IMAGES_PATH, # Pass the image directory path
                 drop_mode=DropMode.NONE,
                 md_make_mode=MakeMode.MM_MD
             )
-            logger.info(f"Job {job_id}: Initial markdown generated.")
+            logger.info(f"Job {job_id}: pipe_mk_markdown complete. Initial markdown generated.")
 
         # Ensure md_content is a string
         if isinstance(md_content, list):
@@ -288,19 +309,22 @@ async def perform_pdf_processing(job_id: str, temp_pdf_path: str, sanitized_titl
         else:
             logger.error(f"Job {job_id}: Unexpected markdown content type: {type(md_content)}")
             md_text = "" # Default to empty string on unexpected type
+        logger.info(f"Job {job_id}: Markdown content prepared for reformatting.")
+
 
         # Reformat markdown using Ollama (UPDATED CALL)
-        logger.info(f"Job {job_id}: Reformatting markdown with Ollama...")
+        logger.info(f"Job {job_id}: Calling reformat_markdown_with_ollama...")
         reformatted_md_text = reformat_markdown_with_ollama(md_text) # Call the new function
         logger.info(f"Job {job_id}: Markdown reformatting complete.")
 
         # Save markdown content to a file using the sanitized title
         markdown_file_path = os.path.join(MARKDOWN_PATH, f"{sanitized_title}.md") # Use the sanitized title
-        logger.info(f"Job {job_id}: Saving reformatted markdown to: {markdown_file_path}")
+        logger.info(f"Job {job_id}: Preparing to save reformatted markdown to: {markdown_file_path}")
 
         with open(markdown_file_path, 'w', encoding='utf-8') as f:
             f.write(reformatted_md_text)
 
+        logger.info(f"Job {job_id}: Reformatted markdown saved.")
         logger.info(f"Job {job_id}: PDF processed and converted to markdown successfully")
 
         # Get list of generated images
@@ -309,7 +333,7 @@ async def perform_pdf_processing(job_id: str, temp_pdf_path: str, sanitized_titl
             # Image files generated by OCRPipe use the base filename as a prefix
             # We need to look for files starting with the sanitized title
             image_prefix = sanitized_title
-            logger.info(f"Job {job_id}: Looking for images with prefix: {image_prefix} in {IMAGES_PATH}")
+            logger.info(f"Job {job_id}: Looking for images with prefix: '{image_prefix}' in {IMAGES_PATH}")
             try:
                 for img_file in os.listdir(IMAGES_PATH):
                     # Check if the file starts with the sanitized prefix and is a PNG
@@ -323,9 +347,12 @@ async def perform_pdf_processing(job_id: str, temp_pdf_path: str, sanitized_titl
                 logger.info(f"Job {job_id}: Found {len(images)} image files matching prefix '{image_prefix}'.")
             except Exception as e:
                  logger.error(f"Job {job_id}: Error listing images in {IMAGES_PATH}: {e}")
+        else:
+             logger.warning(f"Job {job_id}: Images directory not found: {IMAGES_PATH}")
 
 
         # Update job status with completion details
+        logger.info(f"Job {job_id}: Updating job status to completed.")
         job_status[job_id]["status"] = "completed"
         job_status[job_id]["success"] = True
         job_status[job_id]["message"] = "Processing complete"
