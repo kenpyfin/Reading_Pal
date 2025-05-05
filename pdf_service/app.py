@@ -157,9 +157,8 @@ def reformat_markdown_with_ollama(md_text):
                 ],
                 options={
                     'temperature': 0.1, # Keep temperature low for consistent reformatting
-                    'num_predict': -1 # Generate until the model stops (within context limits)
-                },
-                timeout=300 # Add a timeout of 300 seconds (5 minutes)
+                    # 'num_predict': -1 # Generate until the model stops (within context limits)
+                }
             )
             reformatted_chunk = response['message']['content'] if response and 'message' in response else ""
             reformatted_chunks.append(reformatted_chunk)
