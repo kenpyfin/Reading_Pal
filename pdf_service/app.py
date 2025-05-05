@@ -19,21 +19,24 @@ import asyncio # Import asyncio for background tasks
 # Initialize FastAPI app
 app = FastAPI(title="PDF Processing Service")
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
 # Load environment variables
 # Only load dotenv if running directly, not when imported by uvicorn
-if __name__ == "__main__":
-    load_dotenv()
-else:
-    # When run by uvicorn, env vars are typically set externally (e.g., docker-compose)
-    # Ensure they are available, but don't re-load from .env file
-    pass # Assume env vars are already loaded
+# When run by uvicorn, env vars are typically set externally (e.g., docker-compose)
+# Ensure they are available, but don't re-load from .env file
+# The check below is for the __main__ block, env vars should be available when uvicorn runs
+# load_dotenv() # REMOVE or COMMENT OUT this line here
+
+# Configure logging using the LOG_LEVEL environment variable
+# Ensure this block is right after imports and app initialization
+log_level_str = os.getenv("LOG_LEVEL", "INFO").upper()
+log_level = getattr(logging, log_level_str, logging.INFO)
+
+logging.basicConfig(
+    level=log_level,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
+logger = logging.getLogger(__name__) # Keep this line as it is
 
 # Get paths from environment variables
 PDF_STORAGE_PATH = os.getenv('PDF_STORAGE_PATH')
@@ -460,13 +463,19 @@ async def get_job_status(job_id: str):
 
 if __name__ == "__main__":
     import uvicorn
-    # Ensure env vars are loaded before running uvicorn
-    load_dotenv()
+    # Ensure env vars are loaded before running uvicorn when running directly
+    load_dotenv() # KEEP this line here inside __main__
     # Re-ensure paths in case running directly
     try:
         ensure_storage_paths()
     except Exception as e:
         logger.critical(f"Failed to initialize storage paths before running server: {e}")
         sys.exit(1)
+
+    # When running with uvicorn from __main__, basicConfig might be called twice
+    # once at the top level, once here. This is generally okay because basicConfig
+    # only configures the root logger if it doesn't have handlers.
+    # However, relying on the top-level call is better when run by an external uvicorn process.
+    # The key is that the LOG_LEVEL env var is used.
 
     uvicorn.run(app, host="0.0.0.0", port=8502)
