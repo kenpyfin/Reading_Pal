@@ -9,14 +9,14 @@ The Reading Pal application aims to provide users with an efficient and engaging
   - The processing service extracts images from the PDF and saves them.
   - The processed Markdown content is saved **to a file** by the PDF service.
   - Once processing is finished and the status updates to 'completed', the book title becomes a clickable link, allowing the user to navigate to the reading view.
-  - The **path to the processed Markdown file** and the paths to the extracted images are communicated **asynchronously** (via status checks) to the backend upon completion.
-  - **The backend stores these paths in the database upon processing completion.**
-  - **The backend reads the Markdown content from the file system using the stored path when needed for the reading view.**
-  - **The backend serves the extracted images statically.**
+  - The **filename** of the processed Markdown file and the **filenames** of the extracted images are communicated **asynchronously** (via status checks) to the backend upon completion.
+  - **The backend stores these filenames in the database upon processing completion.**
+  - **The backend reads the Markdown content from the file system using the stored filename and a configured base path (via volume mounts) when needed for the reading view.**
+  - **The application serves the extracted images statically.**
 - LLM-Powered Reading Assistance:
   - Integrated with LLM services to provide real-time insights, summaries, and interpretations of the book content.
   - Users can ask questions or request specific analyses of the text using natural language prompts.
-  - **The backend provides context to the LLM by reading relevant sections from the Markdown file.**
+  - **The backend provides context to the LLM by reading relevant sections from the Markdown file (using the stored filename and a configured base path).**
 - Dual-Pane UI:
   - Book Component: Displays the processed PDF content (Markdown read from file, and Images) in a clean, readable format with options for zooming, searching, and navigating through pages.
   - Note Component: A synchronized pane where users can:
@@ -36,10 +36,10 @@ The Reading Pal application aims to provide users with an efficient and engaging
 
 # Implementation Requirements
 - Use Python for backend and React for frontend.
-- Use MongoDB to store notes and any metadata needed, including the **path to the processed Markdown file** and image file paths for each book.
-- **Do not store the full markdown content string in the database; store only the file path.**
+- Use MongoDB to store notes and any metadata needed, including the **filename** of the processed Markdown file and **filenames** of the extracted images for each book.
+- **Do not store the full markdown content string in the database; store only the filename.**
 - Only use env files for global variable or configuration settings. Do not use a config file layer.
 - The pdf_service folder contains a pdf processing service that needs to run separately and integrate with this app. The backend of this app needs to connect with this service correctly, send the PDF, and receive the processed data (**Markdown file path**, image paths).
-- **The backend must implement logic to read the Markdown content from the file system using the stored path.**
-- **The backend must implement a static file server route to serve images from the designated storage path to the frontend.**
+- **The backend must implement logic to read the Markdown content from the file system using the stored filename and a configured base path (via volume mounts).**
+- **The application must implement a static file server route to serve images from the designated storage path (handled by Nginx).**
 
