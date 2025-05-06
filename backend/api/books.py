@@ -30,8 +30,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # Define container paths (matching docker-compose volumes)
-CONTAINER_IMAGES_PATH = os.getenv("IMAGES_PATH", "/app/storage/images")
-CONTAINER_MARKDOWN_PATH = os.getenv("MARKDOWN_PATH", "/app/storage/markdown")
+CONTAINER_IMAGES_PATH = os.getenv("IMAGES_PATH")
+CONTAINER_MARKDOWN_PATH = os.getenv("MARKDOWN_PATH")
 
 logger.info(f"API Books: CONTAINER_IMAGES_PATH = {CONTAINER_IMAGES_PATH}")
 logger.info(f"API Books: CONTAINER_MARKDOWN_PATH = {CONTAINER_MARKDOWN_PATH}")
@@ -300,11 +300,11 @@ async def get_book_by_id(book_id: str):
 
     # Only attempt to read/generate if processing is completed and filepaths exist
     # FIX: Use book.markdown_filepath
-    if book.status == 'completed' and book.markdown_filepath:
+    if book.status == 'completed' and book.original_filename:
         # Construct the full path to the markdown file on the container's filesystem
         # Use os.path.basename() to get just the filename part from the stored path
         # FIX: Use book.markdown_filepath
-        container_markdown_path = os.path.join(CONTAINER_MARKDOWN_PATH, os.path.basename(book.markdown_filepath))
+        container_markdown_path = os.path.join(CONTAINER_MARKDOWN_PATH, os.path.basename(book.original_filename))
         logger.info(f"Get endpoint: Constructed container markdown path: {container_markdown_path}")
 
         # Use run_in_threadpool for synchronous os.path.exists and file read
