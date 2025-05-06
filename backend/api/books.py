@@ -183,6 +183,14 @@ async def upload_pdf(
         logger.info(f"Upload endpoint: Returning initial book data for ID {inserted_id_str}")
         return response_book # Return the validated Book model instance
 
+    except HTTPException as http_exc:
+        # Re-raise HTTPExceptions so FastAPI handles them correctly
+        raise http_exc
+    except Exception as e:
+        # Catch any other unexpected errors during the upload process
+        logger.error(f"Unexpected error during PDF upload: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An unexpected error occurred during upload: {e}")
+
 
 @router.get("/", response_model=List[Book])
 async def list_books():
