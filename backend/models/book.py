@@ -1,51 +1,73 @@
 # backend/models/book.py
 
-from pydantic import BaseModel, Field, ConfigDict
-from typing import List, Optional
-from datetime import datetime # Import datetime
+# ... existing imports ...
+from pydantic import BaseModel, Field, BeforeValidator, ConfigDict
+from typing import Optional, List, Any, Annotated
+from datetime import datetime
+from bson import ObjectId # Ensure ObjectId is imported
+
+# Custom validator for ObjectId
+def validate_objectid(v: Any) -> ObjectId:
+    if isinstance(v, ObjectId):
+        return v
+    if isinstance(v, str):
+        try:
+            return ObjectId(v)
+        except Exception:
+            pass
+    raise ValueError('Invalid ObjectId')
+
+# Custom serializer for ObjectId to string
+def serialize_objectid(v: ObjectId) -> str:
+    return str(v)
 
 class Book(BaseModel):
-    # Use Field alias for MongoDB's _id, ensure it's Optional for creation before ID exists
-    id: Optional[str] = Field(default=None, alias='_id')
+    # Use Annotated and BeforeValidator for Pydantic v2 ObjectId handling
+    # Use Field alias for MongoDB's _id, default_factory=ObjectId for new documents
+    id: Annotated[ObjectId, BeforeValidator(validate_objectid)] = Field(alias="_id", default_factory=ObjectId)
+
+    job_id: Optional[str] = None # Store the ID from the PDF processing service
     title: str
     original_filename: str
-    # --- Fields for job tracking and results ---
-    job_id: Optional[str] = None # Store the ID from the PDF processing service
-    sanitized_title: Optional[str] = None # <<< ADD THIS FIELD
-    status: Optional[str] = "pending" # Store the processing status (e.g., pending, processing, completed, failed)
-    markdown_filename: Optional[str] = None # Store the name of the generated markdown file
-    image_filenames: List[str] = [] # Store the names of the generated image files
-    processing_error: Optional[str] = None # Store error message if processing fails
-    # Optional: Timestamps
-    created_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
-    updated_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
+    sanitized_title: Optional[str] = None # Store the sanitized title used for filenames
+    status: str = "pending" # Store the processing status (e.g., pending, processing, completed, failed)
+    # Use 'filepath' to indicate server-side path
+    markdown_filepath: Optional[str] = None # Store the server-side path to the generated markdown file
+    image_filepaths: List[str] = [] # Store the server-side paths to the generated image files
+    upload_timestamp: datetime = Field(default_factory=datetime.utcnow) # Timestamp when uploaded
+    completion_timestamp: Optional[datetime] = None # Timestamp when processing completed
+    error_message: Optional[str] = None # Store error message if processing fails
 
     # --- Fields populated on retrieval for response, not stored directly ---
-    markdown_content: Optional[str] = None # Populated when fetching a single book
-    image_urls: List[str] = [] # Populated when fetching a single book
+    markdown_content: Optional[str] = None # Populated when fetching a single book by reading the file
+    image_urls: List[str] = [] # Populated when fetching a single book by converting filepaths to URLs
 
-    # Use model_config for Pydantic v2
+    # --- Pydantic V2 Configuration ---
     model_config = ConfigDict(
         populate_by_name=True, # Allow mapping _id to id
-        arbitrary_types_allowed=True, # Needed if using datetime or ObjectId directly
-        json_encoders={datetime: lambda dt: dt.isoformat()}, # Example encoder for datetime
+        arbitrary_types_allowed=True, # Needed for ObjectId and datetime
+        # Add json_encoders to handle custom types during JSON serialization
+        json_encoders={
+            ObjectId: serialize_objectid, # Add this line to serialize ObjectId to string
+            datetime: lambda dt: dt.isoformat() # Keep the existing datetime encoder
+        },
         json_schema_extra={
             "example": {
-                "_id": "60f1b0b3b3f3f3f3f3f3f3f3", # Note: Pydantic expects 'id' here if alias is used effectively
-                "id": "60f1b0b3b3f3f3f3f3f3f3f3",
+                "_id": "60f1b0b3b3f3f3f3f3f3f3f3", # Example MongoDB _id
+                "id": "60f1b0b3b3f3f3f3f3f3f3f3", # Example Pydantic id (string representation)
                 "title": "Sample Book",
                 "original_filename": "sample.pdf",
                 "job_id": "some-uuid-string",
-                "sanitized_title": "Sample_Book", # <<< ADD EXAMPLE
+                "sanitized_title": "Sample_Book",
                 "status": "completed",
-                "markdown_filename": "Sample_Book.md", # Added example
-                "image_filenames": ["Sample_Book_img_001.png"], # Added example
-                "processing_error": None,
-                "created_at": "2023-10-27T10:00:00Z",
-                "updated_at": "2023-10-27T10:05:00Z",
+                "markdown_filepath": "/path/to/storage/output/Sample_Book.md", # Example server path
+                "image_filepaths": ["/path/to/storage/images/Sample_Book_img_001.png"], # Example server paths
+                "upload_timestamp": "2023-10-27T10:00:00Z",
+                "completion_timestamp": "2023-10-27T10:05:00Z",
+                "error_message": None,
                 # Response-only fields:
                 "markdown_content": "# Sample Book\n\nThis is the content...",
-                "image_urls": ["/images/Sample_Book_img_001.png"]
+                "image_urls": ["/images/Sample_Book_img_001.png"] # Example public URLs
             }
         },
     )
