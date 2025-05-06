@@ -6,7 +6,7 @@ from typing import Optional, List, Dict, Any # Import Dict and Any
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks # Import BackgroundTasks
 from pydantic import BaseModel
 import torch
-from dotenv import load_dotenv
+from dotenv import load_dotenv # Keep this import
 from magic_pdf.data.data_reader_writer import FileBasedDataWriter, FileBasedDataReader
 from magic_pdf.config.make_content_config import DropMode, MakeMode
 from magic_pdf.pipe.OCRPipe import OCRPipe
@@ -19,13 +19,6 @@ import asyncio # Import asyncio for background tasks
 # Initialize FastAPI app
 app = FastAPI(title="PDF Processing Service")
 
-# Load environment variables
-# Only load dotenv if running directly, not when imported by uvicorn
-# When run by uvicorn, env vars are typically set externally (e.g., docker-compose)
-# Ensure they are available, but don't re-load from .env file
-# The check below is for the __main__ block, env vars should be available when uvicorn runs
-# load_dotenv() # REMOVE or COMMENT OUT this line here
-
 # Configure logging using the LOG_LEVEL environment variable
 # Ensure this block is right after imports and app initialization
 log_level_str = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -37,6 +30,10 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__) # Keep this line as it is
+
+# --- Load environment variables here, outside of __main__ ---
+# This ensures they are loaded when the module is imported by uvicorn
+load_dotenv() # ADD this line here
 
 # Get paths from environment variables
 PDF_STORAGE_PATH = os.getenv('PDF_STORAGE_PATH')
@@ -464,7 +461,7 @@ async def get_job_status(job_id: str):
 if __name__ == "__main__":
     import uvicorn
     # Ensure env vars are loaded before running uvicorn when running directly
-    load_dotenv() # KEEP this line here inside __main__
+    # load_dotenv() # REMOVE this line from here - it's now at the top level
     # Re-ensure paths in case running directly
     try:
         ensure_storage_paths()
