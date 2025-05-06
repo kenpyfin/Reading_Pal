@@ -31,17 +31,22 @@ class Book(BaseModel):
     original_filename: str
     sanitized_title: Optional[str] = None # Store the sanitized title used for filenames
     status: str = "pending" # Store the processing status (e.g., pending, processing, completed, failed)
-    # Use 'filepath' to indicate server-side path
-    markdown_filepath: Optional[str] = None # Store the server-side path to the generated markdown file
-    image_filepaths: List[str] = [] # Store the server-side paths to the generated image files
-    # CHANGE THIS LINE: Make upload_timestamp Optional
-    upload_timestamp: Optional[datetime] = Field(default_factory=datetime.utcnow) # Allow None, but still provide a default for new objects
-    completion_timestamp: Optional[datetime] = None # Timestamp when processing completed
-    error_message: Optional[str] = None # Store error message if processing fails
+
+    # --- Fields matching the actual DB schema ---
+    # Use 'filename' as per DB schema
+    markdown_filename: Optional[str] = None # Store the server-side filename of the generated markdown file
+    image_filenames: List[str] = [] # Store the server-side filenames of the generated image files
+
+    # Use 'created_at' and 'updated_at' as per DB schema
+    created_at: Optional[datetime] = Field(default_factory=datetime.utcnow) # Allow None, provide default
+    updated_at: Optional[datetime] = Field(default_factory=datetime.utcnow) # Allow None, provide default
+
+    # Use 'processing_error' as per DB schema
+    processing_error: Optional[str] = None # Store error message if processing fails
 
     # --- Fields populated on retrieval for response, not stored directly ---
     markdown_content: Optional[str] = None # Populated when fetching a single book by reading the file
-    image_urls: List[str] = [] # Populated when fetching a single book by converting filepaths to URLs
+    image_urls: List[str] = [] # Populated when fetching a single book by converting filenames to URLs
 
     # --- Pydantic V2 Configuration ---
     model_config = ConfigDict(
@@ -49,8 +54,8 @@ class Book(BaseModel):
         arbitrary_types_allowed=True, # Needed for ObjectId and datetime
         # Add json_encoders to handle custom types during JSON serialization
         json_encoders={
-            ObjectId: serialize_objectid, # Add this line to serialize ObjectId to string
-            datetime: lambda dt: dt.isoformat() # Keep the existing datetime encoder
+            ObjectId: serialize_objectid, # Serialize ObjectId to string
+            datetime: lambda dt: dt.isoformat() # Serialize datetime to ISO string
         },
         json_schema_extra={
             "example": {
@@ -61,12 +66,11 @@ class Book(BaseModel):
                 "job_id": "some-uuid-string",
                 "sanitized_title": "Sample_Book",
                 "status": "completed",
-                "markdown_filepath": "/path/to/storage/output/Sample_Book.md", # Example server path
-                "image_filepaths": ["/path/to/storage/images/Sample_Book_img_001.png"], # Example server paths
-                # Example showing it can be None or a string
-                "upload_timestamp": "2023-10-27T10:00:00Z", # Or null
-                "completion_timestamp": "2023-10-27T10:05:00Z",
-                "error_message": None,
+                "markdown_filename": "Sample_Book.md", # Example server filename
+                "image_filenames": ["Sample_Book_img_001.png"], # Example server filenames
+                "created_at": "2023-10-27T10:00:00Z", # Example timestamp
+                "updated_at": "2023-10-27T10:05:00Z", # Example timestamp
+                "processing_error": None,
                 "markdown_content": "# Sample Book\n\nThis is the content...",
                 "image_urls": ["/images/Sample_Book_img_001.png"]
             }
