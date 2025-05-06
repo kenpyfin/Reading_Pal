@@ -123,26 +123,28 @@ async def upload_pdf(
         sanitized_book_title = sanitize_filename(book_title)
 
         # --- Prepare data using the Book model structure, matching DB schema ---
+        # REMOVE id=None from the constructor
         book_to_save = Book(
             title=book_title,
             original_filename=file.filename,
             job_id=job_id,
             sanitized_title=sanitized_book_title,
             status=initial_status,
-            # Use field names matching DB schema
-            markdown_filename=None, # Initialize as None
-            image_filenames=[], # Initialize as empty list
-            processing_error=None, # Use processing_error as per DB schema
-            # created_at and updated_at will be set by default_factory or DB
-            id=None # Explicitly set to None or omit if using default=None in model
+            markdown_filename=None,
+            image_filenames=[],
+            processing_error=None,
+            # REMOVE THIS LINE: id=None
         )
 
         # Convert model to dict for saving, excluding unset/None fields and handling alias
+        # model_dump(by_alias=True, exclude_none=True) will produce a dict without _id
+        # since id was not explicitly set and exclude_none=True is used.
         save_data = book_to_save.model_dump(by_alias=True, exclude_none=True)
 
         logger.info(f"Upload endpoint: Data prepared for DB save: {save_data}")
 
         # Save the initial book record
+        # save_book should insert the document and MongoDB will add the _id
         inserted_id_str = await save_book(save_data)
         if not inserted_id_str:
              logger.error("Failed to save initial book record to database.")
@@ -152,12 +154,14 @@ async def upload_pdf(
 
         # --- Return the newly created book record ---
         # Fetch the created book data to ensure consistency and include generated _id/timestamps
+        # get_book will retrieve the document *with* the _id
         created_book_doc = await get_book(inserted_id_str)
         if not created_book_doc:
              logger.error(f"Failed to retrieve created book record with ID: {inserted_id_str}")
              raise HTTPException(status_code=500, detail="Failed to retrieve created book record.")
 
         # Convert the retrieved document back to the Book model for response
+        # model_validate will handle the _id alias and ObjectId conversion correctly now
         try:
             response_book = Book.model_validate(created_book_doc)
         except Exception as validation_error:
