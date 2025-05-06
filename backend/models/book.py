@@ -2,7 +2,7 @@
 
 # ... existing imports ...
 from pydantic import BaseModel, Field, BeforeValidator, ConfigDict
-from typing import Optional, List, Any, Annotated
+from typing import Optional, List, Any, Annotated # Ensure Optional is imported
 from datetime import datetime
 from bson import ObjectId # Ensure ObjectId is imported
 
@@ -34,7 +34,8 @@ class Book(BaseModel):
     # Use 'filepath' to indicate server-side path
     markdown_filepath: Optional[str] = None # Store the server-side path to the generated markdown file
     image_filepaths: List[str] = [] # Store the server-side paths to the generated image files
-    upload_timestamp: datetime = Field(default_factory=datetime.utcnow) # Timestamp when uploaded
+    # CHANGE THIS LINE: Make upload_timestamp Optional
+    upload_timestamp: Optional[datetime] = Field(default_factory=datetime.utcnow) # Allow None, but still provide a default for new objects
     completion_timestamp: Optional[datetime] = None # Timestamp when processing completed
     error_message: Optional[str] = None # Store error message if processing fails
 
@@ -62,12 +63,12 @@ class Book(BaseModel):
                 "status": "completed",
                 "markdown_filepath": "/path/to/storage/output/Sample_Book.md", # Example server path
                 "image_filepaths": ["/path/to/storage/images/Sample_Book_img_001.png"], # Example server paths
-                "upload_timestamp": "2023-10-27T10:00:00Z",
+                # Example showing it can be None or a string
+                "upload_timestamp": "2023-10-27T10:00:00Z", # Or null
                 "completion_timestamp": "2023-10-27T10:05:00Z",
                 "error_message": None,
-                # Response-only fields:
                 "markdown_content": "# Sample Book\n\nThis is the content...",
-                "image_urls": ["/images/Sample_Book_img_001.png"] # Example public URLs
+                "image_urls": ["/images/Sample_Book_img_001.png"]
             }
         },
     )
