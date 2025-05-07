@@ -42,4 +42,5 @@ The Reading Pal application aims to provide users with an efficient and engaging
 - The pdf_service folder contains a pdf processing service that needs to run separately and integrate with this app. The backend of this app needs to connect with this service correctly, send the PDF, and receive the processed data (**Markdown file path**, image paths).
 - **The backend must implement logic to read the Markdown content from the file system using the stored filename and a configured base path (via volume mounts).**
 - **The application must implement a static file server route to serve images from the designated storage path (handled by Nginx).**
+- **The Docker Compose setup uses `host` network mode, meaning services communicate via `localhost` or the host's IP and exposed ports, not internal Docker service names.**
 
