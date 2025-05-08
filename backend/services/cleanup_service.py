@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 # Configuration for the cleanup task
 # Read from environment variables, provide defaults
 CLEANUP_INTERVAL_SECONDS = int(os.getenv("CLEANUP_INTERVAL_SECONDS", 3600)) # Default: 1 hour
-STUCK_JOB_THRESHOLD_SECONDS = int(os.getenv("STUCK_JOB_THRESHOLD_SECONDS", 86400)) # Default: 24 hours
+STUCK_JOB_THRESHOLD_SECONDS = int(os.getenv("STUCK_JOB_THRESHOLD_SECONDS", 16400)) # Default: 24 hours
 
 async def run_cleanup_task():
     """
