@@ -5,6 +5,7 @@ from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 import logging
 import uvicorn # Import uvicorn
+import asyncio # Import asyncio for background tasks
 
 # Load environment variables
 load_dotenv()
@@ -70,6 +71,8 @@ async def health_check():
 from backend.api import books # Import the books router
 from backend.api import notes # Import the notes router
 from backend.api import llm # Import the llm router
+from backend.services.cleanup_service import run_cleanup_task # Import the cleanup task
+
 app.include_router(books.router, prefix="/api/books", tags=["books"]) # Add /api prefix here
 app.include_router(notes.router, prefix="/api/notes", tags=["notes"]) # Add /api prefix here
 app.include_router(llm.router, prefix="/api/llm", tags=["llm"]) # Add /api prefix here
@@ -80,10 +83,17 @@ from backend.db.mongodb import connect_to_mongo, close_mongo_connection
 @app.on_event("startup")
 async def startup_db_client():
     await connect_to_mongo()
+    # Start the background cleanup task
+    asyncio.create_task(run_cleanup_task())
+    logger.info("Background cleanup task started.")
+
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
     await close_mongo_connection()
+    # Note: Background tasks are typically cancelled automatically on shutdown,
+    # but explicit handling might be needed for graceful shutdown in complex cases.
+    logger.info("Database connection closed.")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=BACKEND_PORT) # Use the BACKEND_PORT variable
