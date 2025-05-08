@@ -142,7 +142,9 @@ def reformat_markdown_with_ollama(md_text):
 
     reformatted_chunks = []
     # Adjust prompt for a general Ollama model
-    system_prompt = "You are a helpful assistant that reformats markdown text to be more readable and consistent. Preserve all original content, including text, headings, lists, code blocks, and image links. Only output the reformatted markdown without any conversational filler."
+    system_prompt = "You are a helpful assistant that reformats markdown text to be more readable and \
+        consistent. Preserve all original content, including text, headings, lists, code blocks, and image \
+            links. Only output the reformatted markdown without any conversational filler."
 
     logger.info(f"Starting reformatting loop for {len(chunks)} chunks...")
     for i, chunk in enumerate(chunks):
@@ -157,7 +159,7 @@ def reformat_markdown_with_ollama(md_text):
                 ],
                 options={
                     'temperature': 0.1, # Keep temperature low for consistent reformatting
-                    # 'num_predict': -1 # Generate until the model stops (within context limits)
+                    'num_predict': -1 # Generate until the model stops (within context limits)
                 }
             )
             reformatted_chunk = response['message']['content'] if response and 'message' in response else ""
