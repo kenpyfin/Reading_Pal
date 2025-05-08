@@ -86,14 +86,15 @@ async def get_book(book_id: str):
         logger.error(f"Error fetching book {book_id}: {e}", exc_info=True)
         return None
 
-async def get_books(projection: Optional[dict] = None):
-    """Retrieves all books with optional projection."""
+async def get_books(filter: Optional[dict] = None, projection: Optional[dict] = None):
+    """Retrieves all books with optional filter and projection."""
     database = get_database()
     if database is None:
         logger.error("Database not initialized for get_books.")
         return [] # Return empty list on error
     try:
-        books_cursor = database.books.find({}, projection)
+        # Use the provided filter, or an empty dictionary if no filter is provided
+        books_cursor = database.books.find(filter or {}, projection)
         books_list = await books_cursor.to_list(length=1000) # Adjust length as needed
         return books_list # Returns list of dicts
     except Exception as e:
