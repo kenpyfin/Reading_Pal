@@ -1,276 +1,359 @@
-import React, { useEffect, useState, useRef, useCallback } from 'react'; // Import useCallback
-import { useParams, Link } from 'react-router-dom'; // Import Link for navigation
-import BookPane from '../components/BookPane'; // Import the updated BookPane
-import NotePane from '../components/NotePane'; // Keep import for future phase
-import { debounce } from 'lodash'; // Import debounce
-import './BookView.css'; // Assuming you have a CSS file for BookView layout
+import React, { useEffect, useState, useRef, useCallback } from 'react';
+import { useParams, Link } from 'react-router-dom';
+import BookPane from '../components/BookPane';
+import NotePane from '../components/NotePane';
+import { debounce } from 'lodash';
+import './BookView.css';
+
+const CHARACTERS_PER_PAGE = 5000; // Define characters per page
 
 function BookView() {
-  const { bookId } = useParams(); // Get bookId from URL
+  const { bookId } = useParams();
   const [bookData, setBookData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Refs for scroll synchronization and direct element access
   const bookPaneRef = useRef(null);
   const notePaneRef = useRef(null);
+  const isProgrammaticScroll = useRef(false);
+  const fullMarkdownContent = useRef(''); // To store the full markdown
 
-  // Ref to track if the scroll was programmatic (from clicking a note)
-  const isProgrammaticScroll = useRef(false); // ADD THIS REF
-
-  // State to hold the currently selected text from the book pane
   const [selectedBookText, setSelectedBookText] = useState(null);
-  // Add state to hold the scroll percentage when text is selected
+  // selectedScrollPercentage is relative to the current page view
   const [selectedScrollPercentage, setSelectedScrollPercentage] = useState(null);
+  // selectedGlobalCharOffset is relative to the full document
+  const [selectedGlobalCharOffset, setSelectedGlobalCharOffset] = useState(null);
 
-  // Add state to trigger scrolling in the book pane from NotePane clicks
-  const [scrollToPercentage, setScrollToPercentage] = useState(null);
 
+  // State for pagination
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [currentPageContent, setCurrentPageContent] = useState('');
 
-  // Function to fetch book data
+  // State for scrolling to a note's location
+  const [scrollToGlobalOffset, setScrollToGlobalOffset] = useState(null);
+  const [pendingScrollOffsetInPage, setPendingScrollOffsetInPage] = useState(null);
+
   const fetchBook = async () => {
     setLoading(true);
     setError(null);
     try {
-      // Call backend API to fetch book data
-      // Added /api prefix based on backend routing
-      const response = await fetch(`/api/books/${bookId}`); // Use relative path with /api
-
+      const response = await fetch(`/api/books/${bookId}`);
       if (!response.ok) {
-         const errorData = await response.json();
-         // Check if the error is specifically 404 Not Found
-         if (response.status === 404) {
-             // Set bookData to null explicitly for the "not found" state
-             setBookData(null);
-             // No need to set a specific error message here, the !bookData check handles it
-             return; // Stop processing
-         }
-         // For other errors, throw the error
-         throw new Error(`HTTP error! status: ${response.status} - ${errorData.detail || response.statusText}`);
+        const errorData = await response.json();
+        if (response.status === 404) {
+          setBookData(null);
+          return;
+        }
+        throw new Error(`HTTP error! status: ${response.status} - ${errorData.detail || response.statusText}`);
       }
       const data = await response.json();
       setBookData(data);
-      console.log("Fetched book data:", data); // Log fetched data
-
+      if (data && data.markdown_content) {
+        fullMarkdownContent.current = data.markdown_content;
+        const totalChars = fullMarkdownContent.current.length;
+        const numPages = Math.max(1, Math.ceil(totalChars / CHARACTERS_PER_PAGE));
+        setTotalPages(numPages);
+        // setCurrentPage(1); // Reset to page 1 on new book load - handled by effect
+      } else {
+        fullMarkdownContent.current = '';
+        setTotalPages(1);
+        // setCurrentPage(1); // Reset to page 1
+      }
     } catch (err) {
       console.error('Failed to fetch book:', err);
       setError(`Failed to load book: ${err.message || 'Unknown error'}`);
-      setBookData(null); // Ensure bookData is null on error
+      setBookData(null);
+      fullMarkdownContent.current = '';
     } finally {
       setLoading(false);
     }
   };
 
-  // Initial fetch when bookId changes
   useEffect(() => {
     if (bookId) {
       fetchBook();
     }
   }, [bookId]);
 
-  // Handler for text selection in BookPane
-  const handleTextSelect = (text) => {
-      setSelectedBookText(text);
-      // Capture the current scroll percentage of the book pane when text is selected
-      if (bookPaneRef.current) {
-          const element = bookPaneRef.current;
-          // Calculate percentage: current scroll / (total scrollable height)
-          // total scrollable height = scrollHeight - clientHeight
-          const percentage = element.scrollTop / (element.scrollHeight - element.clientHeight);
-          setSelectedScrollPercentage(percentage); // CAPTURE THE PERCENTAGE
-      } else {
-          setSelectedScrollPercentage(null); // Reset if ref is not available
-      }
-  };
-
-  // Add handler for clicking a note in the NotePane
-  const handleNoteClick = (percentage) => {
-      // This function is called by NotePane when a note is clicked
-      if (percentage !== null && percentage !== undefined) {
-          setScrollToPercentage(percentage); // Set state to trigger scroll effect in BookPane
-      }
-  };
-
-  // Add useEffect to scroll the book pane when scrollToPercentage changes
+  // Effect for handling pagination logic when bookData or currentPage changes
   useEffect(() => {
-      if (scrollToPercentage !== null && bookPaneRef.current) {
-          const bookElement = bookPaneRef.current;
-          // Calculate the target scroll position from the percentage
-          const targetScrollTop = scrollToPercentage * (bookElement.scrollHeight - bookElement.clientHeight);
+    if (fullMarkdownContent.current) {
+      const totalChars = fullMarkdownContent.current.length;
+      const numPages = Math.max(1, Math.ceil(totalChars / CHARACTERS_PER_PAGE));
+      setTotalPages(numPages); // Update total pages
 
-          // Set the programmatic scroll flag BEFORE scrolling
-          isProgrammaticScroll.current = true;
-
-          // Use INSTANT scrolling for direct jump
-          bookElement.scrollTo({
-              top: targetScrollTop,
-              behavior: 'instant'
-          });
-
-          // Reset the state AFTER scrolling so it can be triggered again
-          // Keep this line so clicking the same note after scrolling away works
-          setScrollToPercentage(null);
-
-          // Reset the programmatic scroll flag AFTER a short delay
-          // This delay should be longer than the scroll duration (instant is very short)
-          // but allows the scroll event handler to run first and see the flag.
-          setTimeout(() => {
-              isProgrammaticScroll.current = false;
-          }, 100); // A small delay (e.g., 100ms) should be sufficient
-
+      // Ensure currentPage is within valid bounds
+      const validCurrentPage = Math.max(1, Math.min(currentPage, numPages));
+      if (currentPage !== validCurrentPage) {
+        setCurrentPage(validCurrentPage); // Adjust if out of bounds
+        return; // Let the effect re-run with the corrected currentPage
       }
-  }, [scrollToPercentage]); // Depend on scrollToPercentage
+      
+      const start = (validCurrentPage - 1) * CHARACTERS_PER_PAGE;
+      const end = start + CHARACTERS_PER_PAGE;
+      setCurrentPageContent(fullMarkdownContent.current.substring(start, end));
+      
+      if (bookPaneRef.current) {
+        // Reset scroll position when page content changes, unless a pending scroll is active
+        if (pendingScrollOffsetInPage === null) {
+            isProgrammaticScroll.current = true;
+            bookPaneRef.current.scrollTop = 0;
+            setTimeout(() => { isProgrammaticScroll.current = false; }, 100);
+        }
+      }
+    } else {
+      setCurrentPageContent('');
+      setTotalPages(1);
+      setCurrentPage(1);
+    }
+  }, [bookData, currentPage, fullMarkdownContent.current]); // fullMarkdownContent.current won't trigger re-render, bookData dependency is key
 
 
-  // Debounced scroll synchronization function
+  const handleTextSelect = (text) => {
+    setSelectedBookText(text);
+    if (bookPaneRef.current && text) {
+      const selection = window.getSelection();
+      if (selection && selection.rangeCount > 0) {
+        const range = selection.getRangeAt(0);
+        
+        // Calculate character offset within the current page
+        const preSelectionRange = range.cloneRange();
+        // Ensure preSelectionRange considers only the content of BookPane
+        // Assuming BookPane's direct child is where markdown is rendered.
+        // If BookPane has multiple children, this might need adjustment or a specific target div.
+        const contentContainer = bookPaneRef.current.querySelector('.book-pane'); // Or more specific if BookPane wraps content
+        if (contentContainer) {
+            preSelectionRange.selectNodeContents(contentContainer);
+            preSelectionRange.setEnd(range.startContainer, range.startOffset);
+            const startInPage = preSelectionRange.toString().length;
+            
+            const globalOffset = (currentPage - 1) * CHARACTERS_PER_PAGE + startInPage;
+            setSelectedGlobalCharOffset(globalOffset);
+        } else {
+            setSelectedGlobalCharOffset(null); // Fallback if container not found
+        }
+
+        // Calculate scroll percentage relative to current page view
+        const element = bookPaneRef.current;
+        if (element.scrollHeight > element.clientHeight) {
+            const pageScrollPercentage = element.scrollTop / (element.scrollHeight - element.clientHeight);
+            setSelectedScrollPercentage(pageScrollPercentage);
+        } else {
+            setSelectedScrollPercentage(0); // Or null if no scrollbar
+        }
+
+      } else {
+        setSelectedGlobalCharOffset(null);
+        setSelectedScrollPercentage(null);
+      }
+    } else {
+      setSelectedBookText(null);
+      setSelectedGlobalCharOffset(null);
+      setSelectedScrollPercentage(null);
+    }
+  };
+
+  // onNoteClick now receives a globalCharacterOffset from NotePane
+  const handleNoteClick = (globalOffset) => {
+    if (globalOffset !== null && globalOffset !== undefined) {
+      setScrollToGlobalOffset(globalOffset);
+    }
+  };
+
+  // useEffect to handle scrolling when scrollToGlobalOffset changes (e.g., note clicked)
+  useEffect(() => {
+    if (scrollToGlobalOffset === null || !fullMarkdownContent.current) return;
+
+    const targetGlobalOffset = scrollToGlobalOffset;
+    const targetPage = Math.floor(targetGlobalOffset / CHARACTERS_PER_PAGE) + 1;
+    const offsetWithinPage = targetGlobalOffset % CHARACTERS_PER_PAGE;
+
+    if (targetPage !== currentPage) {
+      // Navigate to the target page
+      setCurrentPage(targetPage);
+      // Store the intended offset for when the new page loads
+      setPendingScrollOffsetInPage(offsetWithinPage);
+    } else {
+      // Already on the correct page, scroll directly
+      if (bookPaneRef.current && currentPageContent.length > 0) {
+        const bookElement = bookPaneRef.current;
+        // Ensure scrollHeight is greater than clientHeight to avoid division by zero or NaN
+        if (bookElement.scrollHeight > bookElement.clientHeight) {
+            const scrollRatio = offsetWithinPage / currentPageContent.length;
+            const targetScrollTop = scrollRatio * (bookElement.scrollHeight - bookElement.clientHeight);
+            
+            isProgrammaticScroll.current = true;
+            bookElement.scrollTo({ top: targetScrollTop, behavior: 'instant' });
+            setTimeout(() => { isProgrammaticScroll.current = false; }, 100);
+        } else { // If no scrollbar, content is fully visible, effectively at scrollTop 0
+            isProgrammaticScroll.current = true;
+            bookElement.scrollTo({ top: 0, behavior: 'instant' });
+            setTimeout(() => { isProgrammaticScroll.current = false; }, 100);
+        }
+      }
+    }
+    setScrollToGlobalOffset(null); // Reset trigger
+  }, [scrollToGlobalOffset]); // Only trigger on scrollToGlobalOffset
+
+  // New useEffect to handle scrolling AFTER page content has updated due to currentPage change
+  useEffect(() => {
+    if (pendingScrollOffsetInPage !== null && bookPaneRef.current && currentPageContent.length > 0) {
+      const bookElement = bookPaneRef.current;
+      // Ensure the content for the currentPage is now reflected in currentPageContent
+      if (bookElement.scrollHeight > bookElement.clientHeight) {
+        const scrollRatio = pendingScrollOffsetInPage / currentPageContent.length;
+        const targetScrollTop = scrollRatio * (bookElement.scrollHeight - bookElement.clientHeight);
+
+        isProgrammaticScroll.current = true;
+        bookElement.scrollTo({ top: targetScrollTop, behavior: 'instant' });
+        setTimeout(() => { isProgrammaticScroll.current = false; }, 100);
+      } else {
+        isProgrammaticScroll.current = true;
+        bookElement.scrollTo({ top: 0, behavior: 'instant' });
+        setTimeout(() => { isProgrammaticScroll.current = false; }, 100);
+      }
+      setPendingScrollOffsetInPage(null); // Clear pending scroll
+    }
+  }, [currentPageContent, pendingScrollOffsetInPage]); // Trigger when page content or pending offset changes
+
+
   const syncScroll = useCallback(
-      debounce((scrollingPaneRef, targetPaneRef) => {
-          // Check the programmatic scroll flag
-          if (isProgrammaticScroll.current) {
-              // If this scroll was initiated programmatically, do NOT sync the other pane
-              // The flag will be reset shortly after the programmatic scroll completes.
-              return;
-          }
+    debounce((scrollingPaneRef, targetPaneRef) => {
+      if (isProgrammaticScroll.current) {
+        return;
+      }
+      if (!scrollingPaneRef.current || !targetPaneRef.current) return;
 
-          if (!scrollingPaneRef.current || !targetPaneRef.current) return;
+      const scrollingElement = scrollingPaneRef.current;
+      const targetElement = targetPaneRef.current;
 
-          const scrollingElement = scrollingPaneRef.current;
-          const targetElement = targetPaneRef.current;
+      // Ensure scrollHeight is greater than clientHeight to avoid division by zero
+      if (scrollingElement.scrollHeight <= scrollingElement.clientHeight) return;
+      if (targetElement.scrollHeight <= targetElement.clientHeight) return;
 
-          const scrollPercentage = scrollingElement.scrollTop / (scrollingElement.scrollHeight - scrollingElement.clientHeight);
 
-          const targetScrollTop = scrollPercentage * (targetElement.scrollHeight - targetElement.clientHeight);
+      const scrollPercentage = scrollingElement.scrollTop / (scrollingElement.scrollHeight - scrollingElement.clientHeight);
+      const targetScrollTop = scrollPercentage * (targetElement.scrollHeight - targetElement.clientHeight);
 
-          // Only update if the difference is significant to avoid infinite loops
-          // and allow for slight variations in scrollable height calculation
-          if (Math.abs(targetElement.scrollTop - targetScrollTop) > 5) { // Threshold of 5 pixels
-               // Set the programmatic scroll flag BEFORE updating the target pane's scroll
-               // This prevents the target pane's scroll handler from syncing back
-               isProgrammaticScroll.current = true;
-               targetElement.scrollTop = targetScrollTop;
-               // Reset the flag immediately after setting scrollTop for the target pane
-               // The target pane's scroll event handler will see this flag set.
-               // A very short timeout might be safer if setting scrollTop is async,
-               // but typically it's synchronous. Let's stick to immediate reset for now.
-               isProgrammaticScroll.current = false; // Reset immediately after setting
-          }
-      }, 50), // Debounce delay (e.g., 50ms)
-      [] // Empty dependency array for useCallback
+      if (Math.abs(targetElement.scrollTop - targetScrollTop) > 5) {
+        isProgrammaticScroll.current = true;
+        targetElement.scrollTop = targetScrollTop;
+        setTimeout(() => { isProgrammaticScroll.current = false; }, 50); // Reset after a short delay
+      }
+    }, 50),
+    []
   );
 
-  // Attach scroll listeners using useEffect and refs
   useEffect(() => {
-      const bookElement = bookPaneRef.current;
-      const noteElement = notePaneRef.current;
+    const bookElement = bookPaneRef.current;
+    const noteElement = notePaneRef.current;
 
-      if (bookElement && noteElement) {
-          // Create debounced handlers that call the shared syncScroll logic
-          const debouncedBookScroll = () => syncScroll(bookPaneRef, notePaneRef);
-          const debouncedNoteScroll = () => syncScroll(notePaneRef, bookPaneRef);
+    if (bookElement && noteElement) {
+      const debouncedBookScroll = () => syncScroll(bookPaneRef, notePaneRef);
+      const debouncedNoteScroll = () => syncScroll(notePaneRef, bookPaneRef);
 
-          // Add event listeners
-          bookElement.addEventListener('scroll', debouncedBookScroll);
-          noteElement.addEventListener('scroll', debouncedNoteScroll);
+      bookElement.addEventListener('scroll', debouncedBookScroll);
+      noteElement.addEventListener('scroll', debouncedNoteScroll);
 
-          // Cleanup function to remove listeners
-          return () => {
-              bookElement.removeEventListener('scroll', debouncedBookScroll);
-              noteElement.removeEventListener('scroll', debouncedNoteScroll);
-              // Also cancel any pending debounced calls
-              debouncedBookScroll.cancel();
-              debouncedNoteScroll.cancel();
-          };
-      }
-      // Re-run effect if refs change (though they shouldn't after initial render)
-  }, [syncScroll]); // Dependency on syncScroll memoized function
+      return () => {
+        bookElement.removeEventListener('scroll', debouncedBookScroll);
+        noteElement.removeEventListener('scroll', debouncedNoteScroll);
+        debouncedBookScroll.cancel();
+        debouncedNoteScroll.cancel();
+      };
+    }
+  }, [syncScroll]);
 
+  const handlePreviousPage = () => {
+    setCurrentPage((prev) => Math.max(1, prev - 1));
+  };
 
-  if (loading) {
-    return <div style={{ padding: '20px' }}>Loading book...</div>;
-  }
+  const handleNextPage = () => {
+    setCurrentPage((prev) => Math.min(totalPages, prev + 1));
+  };
 
-  if (error) {
-    return <div style={{ padding: '20px', color: 'red' }}>Error loading book: {error}</div>;
-  }
-
+  if (loading) return <div style={{ padding: '20px' }}>Loading book...</div>;
+  if (error) return <div style={{ padding: '20px', color: 'red' }}>Error loading book: {error}</div>;
   if (!bookData) {
     return (
       <div style={{ padding: '20px', textAlign: 'center' }}>
         <h2>Book Not Found</h2>
         <p>The book with ID "{bookId}" could not be found.</p>
-        <p>It might have been deleted or the link is incorrect.</p>
+        <div style={{ marginTop: '20px' }}>
+          <Link to="/">Go back to the Book List</Link> | <Link to="/upload">Upload a New PDF</Link>
+        </div>
+      </div>
+    );
+  }
+  if (bookData.status !== 'completed') {
+    return (
+      <div style={{ padding: '20px', textAlign: 'center' }}>
+        <h2>{bookData.title || bookData.original_filename}</h2>
+        <p>Status: {bookData.status || 'unknown'}</p>
+        {(bookData.status === 'processing' || bookData.status === 'pending') && (
+          <p>Processing your book...</p>
+        )}
+        {bookData.status === 'failed' && (
+          <p style={{ color: 'red' }}>Processing failed.</p>
+        )}
+        <div style={{ marginTop: '20px' }}>
+          <Link to="/">Go back to the Book List</Link> | <Link to="/upload">Upload a New PDF</Link>
+        </div>
+      </div>
+    );
+  }
+  if (bookData.status === 'completed' && !fullMarkdownContent.current) { // Check fullMarkdownContent ref
+    return (
+      <div style={{ padding: '20px', color: 'orange', textAlign: 'center' }}>
+        <h2>{bookData.title || bookData.original_filename}</h2>
+        <p>Status: Completed, but content could not be loaded.</p>
         <div style={{ marginTop: '20px' }}>
           <Link to="/">Go back to the Book List</Link>
-          <span style={{ margin: '0 10px' }}>|</span>
-          <Link to="/upload">Upload a New PDF</Link>
         </div>
       </div>
     );
   }
 
-  // Check the book status before rendering content
-  // MODIFICATION: Change 'processed' to 'completed'
-  if (bookData.status !== 'completed') {
-      return (
-          <div style={{ padding: '20px', textAlign: 'center' }}>
-              <h2>{bookData.title || bookData.original_filename}</h2>
-              <p>Status: {bookData.status || 'unknown'}</p> {/* Added fallback */}
-              {(bookData.status === 'processing' || bookData.status === 'pending') && ( // Check for pending too
-                  <p>Processing your book... This may take a few minutes (or longer) for large files.</p>
-              )}
-              {bookData.status === 'failed' && (
-                  <p style={{ color: 'red' }}>Processing failed. Please try uploading again or check the backend logs.</p>
-              )}
-              {/* Removed 'uploaded' check as it's covered by 'pending' */}
-              <div style={{ marginTop: '20px' }}>
-                <Link to="/">Go back to the Book List</Link>
-                <span style={{ margin: '0 10px' }}>|</span>
-                <Link to="/upload">Upload a New PDF</Link>
-              </div>
-          </div>
-      );
-  }
-
-  // MODIFICATION: Explicitly check for 'completed' status here as well
-  // If status is 'completed' but content is missing (shouldn't happen if backend is correct)
-  if (bookData.status === 'completed' && !bookData.markdown_content) {
-       return (
-           <div style={{ padding: '20px', color: 'orange', textAlign: 'center' }}>
-               <h2>{bookData.title || bookData.original_filename}</h2>
-               <p>Status: Completed, but content could not be loaded.</p>
-               <p>The markdown file might be missing or unreadable on the server.</p>
-               <div style={{ marginTop: '20px' }}>
-                 <Link to="/">Go back to the Book List</Link>
-               </div>
-           </div>
-       );
-  }
-
-
-  // Render the dual pane view only if the book is completed and content is available
   return (
-    <div className="book-view-container"> {/* Use the CSS class for layout */}
-      {/* Book Pane */}
-      <div className="book-pane-container" ref={bookPaneRef}> {/* Use CSS class and attach ref */}
-         <BookPane
-           markdownContent={bookData.markdown_content}
-           imageUrls={bookData.image_urls}
-           onTextSelect={handleTextSelect} // Pass the text selection handler
-         />
-      </div>
-      {/* Note Pane */}
-      <div className="note-pane-container" ref={notePaneRef}> {/* Use CSS class and attach ref */}
-         <NotePane
-           bookId={bookId}
-           selectedBookText={selectedBookText} // Pass the selected text
-           selectedScrollPercentage={selectedScrollPercentage} // PASS THE CAPTURED PERCENTAGE
-           onNoteClick={handleNoteClick} // PASS THE NOTE CLICK HANDLER
-           // NotePane now uses forwardRef, so we pass the ref prop directly
-           ref={notePaneRef}
-         />
-      </div>
+    <div className="book-view-container">
+      {/* <div className="main-content-area"> This div might be useful if you have sidebars outside book/note panes */}
+        <div className="book-pane-wrapper"> {/* Wrapper for BookPane and its controls */}
+          <div className="book-pane-container" ref={bookPaneRef}>
+            <BookPane
+              // Pass current page's content to BookPane
+              markdownContent={currentPageContent} 
+              imageUrls={bookData.image_urls} // Image URLs are global, not per page
+              onTextSelect={handleTextSelect}
+              // ref={bookPaneRef} // forwardRef handles this
+            />
+          </div>
+          <div className="pagination-controls">
+            <button onClick={handlePreviousPage} disabled={currentPage === 1}>
+              Previous
+            </button>
+            <span> Page {currentPage} of {totalPages} </span>
+            <button onClick={handleNextPage} disabled={currentPage === totalPages}>
+              Next
+            </button>
+          </div>
+        </div>
+        <div className="note-pane-wrapper"> {/* Wrapper for NotePane */}
+          <div className="note-pane-container" ref={notePaneRef}>
+            <NotePane
+              bookId={bookId}
+              selectedBookText={selectedBookText}
+              selectedScrollPercentage={selectedScrollPercentage} // Relative to current page
+              selectedGlobalCharOffset={selectedGlobalCharOffset} // Absolute offset
+              onNoteClick={handleNoteClick} // Expects globalCharOffset
+              // ref={notePaneRef} // forwardRef handles this
+            />
+          </div>
+        </div>
+      {/* </div> */}
     </div>
   );
 }
 
 export default BookView;
+
