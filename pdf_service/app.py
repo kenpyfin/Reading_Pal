@@ -15,6 +15,7 @@ import re # Import the regex module
 from contextlib import nullcontext # Import nullcontext for Python 3.7+
 import ollama # Import the ollama library
 import asyncio # Import asyncio for background tasks
+import requests # Import requests for sending callback
 
 # Initialize FastAPI app
 app = FastAPI(title="PDF Processing Service")
@@ -39,6 +40,9 @@ load_dotenv() # ADD this line here
 PDF_STORAGE_PATH = os.getenv('PDF_STORAGE_PATH')
 MARKDOWN_PATH = os.getenv('MARKDOWN_PATH')
 IMAGES_PATH = os.getenv('IMAGES_PATH')
+
+# Get backend callback URL from environment variables
+BACKEND_CALLBACK_URL = os.getenv('BACKEND_CALLBACK_URL')
 
 # Get Ollama configuration from environment variables
 OLLAMA_API_BASE = os.getenv('OLLAMA_API_BASE')
@@ -375,6 +379,42 @@ async def perform_pdf_processing(job_id: str, temp_pdf_path: str, sanitized_titl
                 logger.info(f"Job {job_id}: Cleaned up temporary file: {temp_pdf_path}")
         except Exception as e:
             logger.error(f"Job {job_id}: Failed to cleanup temp file {temp_pdf_path}: {e}")
+
+    # Add this block after the job_status[job_id] is updated locally
+    logger.info(f"Job {job_id}: Attempting to send callback to backend...")
+    if not BACKEND_CALLBACK_URL:
+        logger.error(f"Job {job_id}: BACKEND_CALLBACK_URL is not set. Cannot send callback.")
+        # Continue without sending callback, but log the error
+    else:
+        callback_url = f"{BACKEND_CALLBACK_URL}" # Use the full URL from env var
+
+        # Prepare data for the callback, matching the ProcessCallbackRequest model in the backend
+        callback_data = {
+            "job_id": job_status[job_id].get("job_id", job_id), # Use job_id from status if available, else the passed one
+            "status": job_status[job_id].get("status", "unknown"),
+            "message": job_status[job_id].get("message", ""),
+            "processing_error": job_status[job_id].get("message", "") if job_status[job_id].get("status") == "failed" else None,
+        }
+
+        if callback_data["status"] == "completed":
+            callback_data["file_path"] = job_status[job_id].get("file_path")
+            # The images list in job_status contains ImageInfo objects. Convert them to dicts.
+            callback_data["images"] = [img.model_dump() for img in job_status[job_id].get("images", [])] # Use model_dump() for Pydantic v2+
+
+        try:
+            # Make the POST request to the backend callback endpoint
+            # Use requests (synchronous is fine in a background task)
+            response = requests.post(callback_url, json=callback_data, timeout=10) # Add a timeout
+            response.raise_for_status() # Raise an exception for bad status codes
+
+            logger.info(f"Job {job_id}: Callback sent successfully to {callback_url}. Backend response status: {response.status_code}")
+
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Job {job_id}: Failed to send callback to backend {callback_url}: {e}")
+        except Exception as e:
+            logger.error(f"Job {job_id}: An unexpected error occurred while sending callback: {e}", exc_info=True)
+
+    # The background task function ends here after attempting the callback
 
 
 @app.post("/process-pdf", response_model=ProcessResponse)
