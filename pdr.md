@@ -4,21 +4,24 @@ The Reading Pal application aims to provide users with an efficient and engaging
 # Key Features
 - PDF Upload and Processing: Users can upload PDF files from their device.
   - Upon successful upload initiation, the user is immediately redirected to the book list page where the newly uploaded book appears with a status indicator (e.g., 'pending' or 'processing').
-  - The application periodically checks the processing status in the background.
+  - The application periodically checks the processing status in the background by polling a backend endpoint (`/api/books/status/{job_id}`).
   - The PDF is processed **in the background** by a dedicated service and converted into a readable format (e.g., Markdown).
   - The processing service extracts images from the PDF and saves them.
   - The processed Markdown content is saved **to a file** by the PDF service.
+  - **The PDF service returns the server-side path to the saved Markdown file and a list of server-side image info (including filenames and paths) to the backend upon processing completion or failure.**
+  - **The backend receives this information and updates the book's record in the database, storing only the filename of the processed Markdown file and the filenames of the extracted images.**
   - Once processing is finished and the status updates to 'completed', the book title becomes a clickable link, allowing the user to navigate to the reading view.
-  - The **filename** of the processed Markdown file and the **filenames** of the extracted images are communicated **asynchronously** (via status checks) to the backend upon completion.
+  - **Books with a 'failed' status are automatically excluded from the book list displayed to the user.**
+  - **A background cleanup service runs periodically in the backend to mark 'processing' jobs as 'failed' if they appear stuck (no status update for a defined period) and to delete book records (with 'pending' or 'failed' status) that are older than a defined threshold (e.g., 6 hours).**
   - **The backend stores these filenames in the database upon processing completion.**
   - **The backend reads the Markdown content from the file system using the stored filename and a configured base path (via volume mounts) when needed for the reading view.**
-  - **The application serves the extracted images statically.**
+  - **The application serves the extracted images statically via a dedicated route (handled by Nginx in the frontend container) using the stored image filenames and a configured base path (via volume mounts).**
 - LLM-Powered Reading Assistance:
   - Integrated with LLM services to provide real-time insights, summaries, and interpretations of the book content.
   - Users can ask questions or request specific analyses of the text using natural language prompts.
   - **The backend provides context to the LLM by reading relevant sections from the Markdown file (using the stored filename and a configured base path).**
 - Dual-Pane UI:
-  - Book Component: Displays the processed PDF content (Markdown read from file, and Images) in a clean, readable format with options for zooming, searching, and navigating through pages.
+  - Book Component: Displays the processed PDF content (Markdown read from file, and Images served statically) in a clean, readable format with options for zooming, searching, and navigating through pages.
   - Note Component: A synchronized pane where users can:
     - Take notes directly while reading.
     - **Notes can optionally be linked to selected text from the book pane, saving the source text along with the note.**
