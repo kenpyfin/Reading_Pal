@@ -181,12 +181,11 @@ async def upload_pdf(
 @router.get("/", response_model=List[Book])
 async def list_books():
     """
-    Retrieves a list of all books from the database.
-    Explicitly constructs response dictionaries with 'id' as string.
+    Retrieves a list of all books, excluding those with 'failed' status.
     """
-    logger.info("Received request to list all books")
+    logger.info("Fetching list of books (excluding failed)...")
     try:
-        # Update projection to match DB schema field names
+        # Define the projection to fetch only necessary fields
         projection = {
             "_id": 1,
             "title": 1,
@@ -194,25 +193,25 @@ async def list_books():
             "status": 1,
             "job_id": 1,
             "sanitized_title": 1,
-            # Use field names matching DB schema
             "markdown_filename": 1,
             "image_filenames": 1,
-            "created_at": 1, # Use created_at
-            "updated_at": 1, # Use updated_at
-            "processing_error": 1 # Use processing_error
+            "created_at": 1,
+            "updated_at": 1,
+            "processing_error": 1
         }
 
-        books_docs = await get_books(projection=projection)
-        logger.info(f"Fetched {len(books_docs)} book documents from DB.")
+        # Call get_books with a filter to exclude status 'failed' and include the projection
+        books_docs = await get_books(filter={"status": {"$ne": "failed"}}, projection=projection)
+
+        logger.info(f"Fetched {len(books_docs)} book documents from DB (excluding failed).")
 
         response_list = []
         for book_doc in books_docs:
-            if '_id' in book_doc and isinstance(book_doc['_id'], ObjectId):
+            # Ensure _id is present and convert ObjectId to string for the 'id' field in the response
+            if '_id' in book_doc:
                 book_id_str = str(book_doc['_id'])
-            elif '_id' in book_doc and isinstance(book_doc['_id'], str):
-                 book_id_str = book_doc['_id']
             else:
-                logger.warning(f"Skipping book document due to missing or invalid _id: {book_doc}")
+                logger.warning(f"Skipping book document due to missing _id: {book_doc}")
                 continue
 
             # Explicitly create the dictionary for the response
