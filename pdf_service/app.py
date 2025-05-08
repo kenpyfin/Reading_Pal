@@ -126,7 +126,7 @@ def reformat_markdown_with_ollama(md_text):
     MAX_CHUNK_CHARS = int(6000 / TOKENS_PER_CHAR) # Roughly 24000 characters per chunk
 
     logger.info(f"Splitting markdown into chunks for Ollama reformatting (max_chunk_size={MAX_CHUNK_CHARS})...")
-    chunks = split_markdown_into_chunks(md_text, max_chunk_size=MAX_CHUNK_CHARS)
+    chunks = split_markdown_into_chunks(md_text, max_chunk_size=MAX_CHUNK_CHARS, max_chunks=10) # max_chunks default is 10
     logger.info(f"Markdown split into {len(chunks)} chunks.")
 
     reformatted_chunks = []
@@ -138,7 +138,7 @@ def reformat_markdown_with_ollama(md_text):
     logger.info(f"Starting reformatting loop for {len(chunks)} chunks...")
     for i, chunk in enumerate(chunks):
         try:
-            logger.info(f"Sending chunk {i+1}/{len(chunks)} to Ollama for reformatting...")
+            logger.info(f"Sending chunk {i+1}/{len(chunks)} to Ollama. Length: {len(chunk)} characters.")
             # Use the chat endpoint
             response = client.chat(
                 model=OLLAMA_REFORMAT_MODEL,
@@ -152,11 +152,15 @@ def reformat_markdown_with_ollama(md_text):
                 }
             )
             reformatted_chunk = response['message']['content'] if response and 'message' in response else ""
+            logger.info(f"Received response for chunk {i+1}. Reformatted length: {len(reformatted_chunk)} characters.")
+            # Log if chunk significantly shrunk (e.g., by more than 50%)
+            if len(reformatted_chunk) < len(chunk) * 0.5 and len(chunk) > 100: # Avoid noise for tiny chunks
+                logger.warning(f"Chunk {i+1} significantly shrunk after reformatting. Original: {len(chunk)}, Reformatted: {len(reformatted_chunk)}")
             reformatted_chunks.append(reformatted_chunk)
-            logger.info(f"Received response for chunk {i+1}.")
         except Exception as e:
             logger.error(f"Error reformatting chunk {i+1} with Ollama: {e}", exc_info=True)
             # Fallback: return the original chunk if reformatting fails
+            logger.info(f"Appending original chunk {i+1} due to error. Length: {len(chunk)} characters.")
             reformatted_chunks.append(chunk)
 
     logger.info(f"Finished reformatting loop. Combining reformatted chunks...")
@@ -168,6 +172,7 @@ def reformat_markdown_with_ollama(md_text):
 
 def split_markdown_into_chunks(md_text: str, max_chunk_size: int = 10000, max_chunks: int = 10) -> List[str]:
     """Split markdown text into chunks based on max_chunk_size and limit to max_chunks."""
+    logger.info(f"Original md_text length: {len(md_text)} characters.")
     # Initial splitting based on max_chunk_size
     chunks = []
     current_chunk = ''
@@ -188,6 +193,10 @@ def split_markdown_into_chunks(md_text: str, max_chunk_size: int = 10000, max_ch
     # Add the last chunk if it's not empty
     if current_chunk:
         chunks.append(current_chunk.strip())
+    
+    logger.info(f"Initial split resulted in {len(chunks)} chunks.")
+    for i, chunk_item in enumerate(chunks):
+        logger.info(f"  Initial chunk {i} length: {len(chunk_item)} characters.")
 
     # If the number of chunks exceeds max_chunks, recombine them
     # This part aims to merge smaller chunks if the initial split was too granular
@@ -200,6 +209,7 @@ def split_markdown_into_chunks(md_text: str, max_chunk_size: int = 10000, max_ch
         # Calculate an approximate target length per chunk after combining
         total_length = sum(len(chunk) for chunk in chunks)
         avg_length = total_length // max_chunks if max_chunks > 0 else total_length # Avoid division by zero
+        logger.info(f"Recombining: total_length={total_length}, avg_length_target_per_chunk={avg_length}")
 
         for chunk in chunks:
              # Check if adding the current chunk exceeds the average length AND we haven't reached the max chunk count yet
@@ -219,13 +229,19 @@ def split_markdown_into_chunks(md_text: str, max_chunk_size: int = 10000, max_ch
         # or if the combining logic resulted in fewer than max_chunks, just use the combined list.
         # If combined_chunks is empty but original chunks wasn't, add the original text as a single chunk.
         if not combined_chunks and chunks:
+             logger.warning("Recombination resulted in empty combined_chunks, falling back to single chunk of original text.")
              return [md_text] # Fallback to single chunk if combining failed
 
         chunks = combined_chunks
         logger.warning(f"Recombined into {len(chunks)} chunks.")
+        for i, chunk_item in enumerate(chunks):
+            logger.info(f"  Recombined chunk {i} length: {len(chunk_item)} characters.")
+
 
     # Final check to ensure no empty chunks are returned
-    return [chunk for chunk in chunks if chunk]
+    final_chunks = [chunk for chunk in chunks if chunk]
+    logger.info(f"Returning {len(final_chunks)} final chunks.")
+    return final_chunks
 
 
 # --- Background task function for PDF processing ---
@@ -304,13 +320,24 @@ async def perform_pdf_processing(job_id: str, temp_pdf_path: str, sanitized_titl
         else:
             logger.error(f"Job {job_id}: Unexpected markdown content type: {type(md_content)}")
             md_text = "" # Default to empty string on unexpected type
-        logger.info(f"Job {job_id}: Markdown content prepared for reformatting.")
+        
+        logger.info(f"Job {job_id}: Markdown content prepared for reformatting. Length: {len(md_text)} chars.")
 
+        # --- TEMPORARY DEBUGGING: Save raw markdown from magic_pdf ---
+        raw_markdown_path = os.path.join(MARKDOWN_PATH, f"{sanitized_title}_raw_magic_pdf.md")
+        try:
+            with open(raw_markdown_path, 'w', encoding='utf-8') as raw_f:
+                raw_f.write(md_text)
+            logger.info(f"Job {job_id}: Saved raw markdown from magic_pdf to {raw_markdown_path}")
+        except Exception as e_raw_save:
+            logger.error(f"Job {job_id}: Failed to save raw markdown: {e_raw_save}")
+        # --- END TEMPORARY DEBUGGING ---
 
         # Reformat markdown using Ollama
         logger.info(f"Job {job_id}: Calling reformat_markdown_with_ollama...")
         reformatted_md_text = reformat_markdown_with_ollama(md_text)
-        logger.info(f"Job {job_id}: Markdown reformatting complete.")
+        logger.info(f"Job {job_id}: Markdown reformatting complete. Length: {len(reformatted_md_text)} chars.")
+
 
         # Save markdown content to a file using the sanitized title
         markdown_file_path = os.path.join(MARKDOWN_PATH, f"{sanitized_title}.md")
