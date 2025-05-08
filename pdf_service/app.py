@@ -15,7 +15,6 @@ import re # Import the regex module
 from contextlib import nullcontext # Import nullcontext for Python 3.7+
 import ollama # Import the ollama library
 import asyncio # Import asyncio for background tasks
-import requests # Import requests for sending callback
 
 # Initialize FastAPI app
 app = FastAPI(title="PDF Processing Service")
@@ -41,19 +40,11 @@ PDF_STORAGE_PATH = os.getenv('PDF_STORAGE_PATH')
 MARKDOWN_PATH = os.getenv('MARKDOWN_PATH')
 IMAGES_PATH = os.getenv('IMAGES_PATH')
 
-# Get backend callback URL from environment variables
-BACKEND_CALLBACK_URL = os.getenv('BACKEND_CALLBACK_URL')
-
 # Get Ollama configuration from environment variables
 OLLAMA_API_BASE = os.getenv('OLLAMA_API_BASE')
 # Use LLM_MODEL from .env for the reformatting model
 OLLAMA_REFORMAT_MODEL = os.getenv('OLLAMA_REFORMAT_MODEL') # Use the general LLM_MODEL setting
 
-
-# --- In-memory storage for job status and results ---
-# In a production system, this should be a persistent store (DB, Redis, etc.)
-# as restarting the service will lose job information.
-job_status: Dict[str, Dict[str, Any]] = {}
 
 # --- Helper function to sanitize filename ---
 def sanitize_filename(filename: str) -> str:
@@ -100,16 +91,6 @@ class ProcessResponse(BaseModel):
     message: str
     job_id: str
     status: str # e.g., "pending", "processing"
-
-# --- New StatusResponse model for checking job status ---
-class StatusResponse(BaseModel):
-    success: bool
-    message: str
-    job_id: str
-    status: str # e.g., "pending", "processing", "completed", "failed"
-    title: Optional[str] = None
-    file_path: Optional[str] = None # Path to the saved markdown file
-    images: Optional[List[ImageInfo]] = None # List of image info
 
 
 # RENAME function and update logic to use Ollama
@@ -247,10 +228,11 @@ def split_markdown_into_chunks(md_text: str, max_chunk_size: int = 10000, max_ch
 async def perform_pdf_processing(job_id: str, temp_pdf_path: str, sanitized_title: str):
     """
     Performs the actual PDF processing in a background task.
-    Updates the global job_status dictionary upon completion or failure.
     """
     logger.info(f"Job {job_id}: Starting background PDF processing for {temp_pdf_path}")
-    job_status[job_id]["status"] = "processing"
+    # Note: This background task no longer updates a shared job_status dictionary
+    # or sends a callback. The backend is responsible for checking file existence
+    # or polling a different status mechanism if needed.
 
     try:
         # Read PDF bytes
