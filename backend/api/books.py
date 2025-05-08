@@ -281,26 +281,30 @@ async def get_book_by_id(book_id: str):
         # Construct the full path to the markdown file on the container's filesystem
         # Join the container mount path with the filename stored in the DB
         # FIX: Use book.markdown_filename
-        container_markdown_path = os.path.join(CONTAINER_MARKDOWN_PATH, book.markdown_filename)
-        logger.info(f"Get endpoint: Constructed container markdown path: {container_markdown_path}")
+        if not CONTAINER_MARKDOWN_PATH:
+            logger.error("CONTAINER_MARKDOWN_PATH is not set. Cannot read markdown file.")
+            markdown_content = "Error: Markdown storage path not configured on server."
+        else:
+            container_markdown_path = os.path.join(CONTAINER_MARKDOWN_PATH, book.markdown_filename)
+            logger.info(f"Get endpoint: Constructed container markdown path: {container_markdown_path}")
 
-        # Use run_in_threadpool for synchronous os.path.exists and file read
-        def check_and_read_markdown(path):
-            if os.path.exists(path):
-                logger.info(f"Get endpoint: Markdown file found at {path}. Reading...")
-                try:
-                    with open(path, 'r', encoding='utf-8') as f:
-                        content = f.read()
-                        logger.info(f"Get endpoint: Successfully read markdown (length: {len(content)}) from {path}")
-                        return content
-                except Exception as file_read_error:
-                    logger.error(f"Get endpoint: Failed to read markdown file {path}: {file_read_error}", exc_info=True)
-                    return f"Error: Could not read processed content. {file_read_error}"
-            else:
-                logger.error(f"Get endpoint: Markdown file not found at container path: {path}")
-                return "Error: Processed content file not found."
+            # Use run_in_threadpool for synchronous os.path.exists and file read
+            def check_and_read_markdown(path):
+                if os.path.exists(path):
+                    logger.info(f"Get endpoint: Markdown file found at {path}. Reading...")
+                    try:
+                        with open(path, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                            logger.info(f"Get endpoint: Successfully read markdown (length: {len(content)}) from {path}")
+                            return content
+                    except Exception as file_read_error:
+                        logger.error(f"Get endpoint: Failed to read markdown file {path}: {file_read_error}", exc_info=True)
+                        return f"Error: Could not read processed content. {file_read_error}"
+                else:
+                    logger.error(f"Get endpoint: Markdown file not found at container path: {path}")
+                    return "Error: Processed content file not found."
 
-        markdown_content = await run_in_threadpool(check_and_read_markdown, container_markdown_path)
+            markdown_content = await run_in_threadpool(check_and_read_markdown, container_markdown_path)
 
     # Generate image URLs from stored filenames
     # FIX: Use book.image_filenames
@@ -323,116 +327,91 @@ async def get_book_by_id(book_id: str):
     return book # Return the populated Book model instance
 
 
-@router.get("/status/{job_id}")
+# --- Add this helper function if it's not already present in this file ---
+# --- Or ensure it's imported if defined elsewhere and accessible ---
+async def get_effective_book_status_async(db_book_status: Optional[str], markdown_filename: Optional[str]) -> str:
+    """
+    Determines the effective status of a book asynchronously.
+    "completed" if markdown file exists.
+    "failed" if DB status is "failed".
+    Otherwise, returns the DB status (or "pending" if None/empty).
+    """
+    if markdown_filename and CONTAINER_MARKDOWN_PATH: # Ensure CONTAINER_MARKDOWN_PATH is accessible
+        file_path = os.path.join(CONTAINER_MARKDOWN_PATH, markdown_filename)
+        
+        # Use run_in_threadpool for the blocking os.path.exists call
+        file_exists = await run_in_threadpool(os.path.exists, file_path)
+        if file_exists:
+            return "completed"
+    
+    if db_book_status == "failed":
+        return "failed"
+    
+    return db_book_status if db_book_status else "pending"
+
+
+@router.get("/status/{job_id}") # Removed response_model, will return a Dict
 async def get_book_status_by_job_id(job_id: str) -> Dict[str, Any]:
     """
-    Proxies the status check request to the PDF processing service
-    and updates the book record in the database if processing is complete.
-    Returns the PDF service's status response.
+    Checks the status of a book processing job by its job_id.
+    Status is determined by database record, which is updated by the PDF service callback.
+    This endpoint NO LONGER proxies to the PDF service.
     """
-    logger.info(f"Received status check request for job_id: {job_id}. Proxying to PDF service.")
+    logger.info(f"Received status check for job_id: {job_id} (local check).")
 
-    if not PDF_CLIENT_URL:
-        logger.error("PDF_CLIENT_URL environment variable is not set.")
-        raise HTTPException(status_code=500, detail="PDF processing service URL is not configured.")
+    if not job_id: # Basic validation
+        logger.warning("Status check requested with no job_id.")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="job_id is required")
 
-    pdf_service_status_url = f"{PDF_CLIENT_URL}/status/{job_id}"
-    logger.info(f"Proxying status request to: {pdf_service_status_url}")
-
-    # Fetch the book record first to get the book_id and current status
     book_doc = await get_book_by_job_id(job_id)
-    book_id_str = str(book_doc["_id"]) if book_doc and "_id" in book_doc else None
-    current_db_status = book_doc.get("status", "unknown") if book_doc else "unknown"
-    book_title = book_doc.get("title", "Unknown Title") if book_doc else "Unknown Title" # Get title for response
 
     if not book_doc:
-         logger.warning(f"Status check: Book record with job_id {job_id} not found in DB.")
-         # We can still try to get status from PDF service, but won't update DB
+        logger.warning(f"Status check: Book record with job_id {job_id} not found in DB.")
+        # If the frontend polls this, a 404 might stop polling.
+        # The PDF service callback is responsible for creating/updating the record.
+        # If the record doesn't exist, it implies the callback hasn't happened or failed very early,
+        # or the job_id is invalid.
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job ID {job_id} not found.")
 
-    try:
-        def get_status_from_pdf_service():
-            response = requests.get(pdf_service_status_url)
-            response.raise_for_status()
-            return response.json()
+    # Use the helper to determine the status to be reported based on DB and file existence
+    # This provides a consistent view, especially if there's a slight delay in DB update vs file creation.
+    effective_status = await get_effective_book_status_async(
+        book_doc.get("status"),
+        book_doc.get("markdown_filename")
+    )
+    
+    # Construct a response similar to what the frontend might expect
+    # (previously from PDF service, now generated locally based on DB state)
+    response_data = {
+        "job_id": job_id,
+        "status": effective_status, # Use the effective status
+        "success": effective_status == "completed", # Assuming success means completed
+        "title": book_doc.get("title", "Unknown Title"),
+        "message": f"Processing status: {effective_status}.",
+        # These fields might be expected by frontend if it was parsing PDF service response
+        "file_path": None, 
+        "images": [] 
+    }
 
-        pdf_service_response = await run_in_threadpool(get_status_from_pdf_service)
-        logger.info(f"Received status response from PDF service for job {job_id}: {pdf_service_response}")
+    if effective_status == "completed":
+        response_data["message"] = "Processing completed successfully."
+        if book_doc.get("markdown_filename"):
+            # Provide the filename if useful for frontend, not the full server path
+            response_data["file_path"] = book_doc.get("markdown_filename") 
+        if book_doc.get("image_filenames"):
+            # Provide simplified image info (just filenames)
+            response_data["images"] = [{"filename": fn} for fn in book_doc.get("image_filenames")]
+    elif effective_status == "failed":
+        response_data["message"] = book_doc.get("processing_error") or "Processing failed."
+    
+    # If the DB status is 'processing' but file doesn't exist yet, effective_status will be 'processing'.
+    # If DB status is 'pending' and file doesn't exist, effective_status will be 'pending'.
 
-        # --- Update DB based on PDF service response ---
-        pdf_service_status = pdf_service_response.get("status")
+    # The PDF service callback is the sole mechanism for updating the DB from 'pending'/'processing'
+    # to 'completed' (with file paths) or 'failed'. This polling endpoint is just for status reporting.
+    # No DB updates should happen here anymore.
 
-        # Only update if we found a book record and the PDF service status is 'completed' or 'failed'
-        # and the DB status is not already completed/failed
-        if book_doc and pdf_service_status in ["completed", "failed"] and current_db_status not in ["completed", "failed"]:
-            logger.info(f"PDF service reported status '{pdf_service_status}' for job {job_id}. Updating DB record {book_id_str}.")
-
-            update_data = {
-                "status": pdf_service_status,
-                # Use updated_at for completion timestamp as per DB schema
-                "updated_at": datetime.utcnow(), # Update timestamp on completion/failure
-                # Use processing_error as per DB schema
-                "processing_error": pdf_service_response.get("message") if pdf_service_status == "failed" else None,
-                # Store the file paths/filenames returned by the PDF service
-                # The PDF service returns 'file_path' (full path) and 'images' (list of dicts with 'path').
-                # We need to extract just the filenames or store the full paths depending on DB schema.
-                # The DB schema shows 'markdown_filename' and 'image_filenames'.
-                # Let's assume the PDF service returns full paths, and we store just the basename (filename).
-                # If the PDF service *already* returns just the filename, this is simpler.
-                # Based on pdf_service/app.py, it saves to MARKDOWN_PATH/sanitized_title.md
-                # and IMAGES_PATH/sanitized_title_img_XYZ.png. It returns the full path.
-                # So we should store the basename.
-                "markdown_filename": os.path.basename(pdf_service_response.get("file_path")) if pdf_service_response.get("file_path") else None, # Store just the filename
-                # The PDF service returns a list of dicts with 'filename' and 'path'.
-                # We need to store the 'filename' for each image as per DB schema.
-                "image_filenames": [img_info.get("filename") for img_info in pdf_service_response.get("images", []) if img_info.get("filename")] # Store image filenames from PDF service
-            }
-            # Remove None values from update_data to avoid overwriting existing data with None
-            update_data = {k: v for k, v in update_data.items() if v is not None}
-
-            updated = await update_book(book_id_str, update_data)
-            if updated:
-                logger.info(f"Successfully updated book {book_id_str} status to '{pdf_service_status}'.")
-            else:
-                logger.error(f"Failed to update book {book_id_str} status to '{pdf_service_status}' despite PDF service completion.")
-        elif book_doc and pdf_service_status == "processing" and current_db_status == "pending":
-             logger.info(f"PDF service reported status '{pdf_service_status}' for job {job_id}. Updating DB record {book_id_str} from '{current_db_status}'.")
-             update_data = {"status": "processing", "updated_at": datetime.utcnow()} # Also update updated_at
-             updated = await update_book(book_id_str, update_data)
-             if updated:
-                 logger.info(f"Successfully updated book {book_id_str} status to 'processing'.")
-             else:
-                 logger.error(f"Failed to update book {book_id_str} status to 'processing'.")
-        else:
-            logger.info(f"PDF service status '{pdf_service_status}' for job {job_id} does not require DB update (DB status is '{current_db_status}' or book not found).")
-
-        # --- Return the PDF service response directly to the frontend ---
-        return pdf_service_response
-
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error connecting to PDF service during status check for job {job_id}: {e}")
-        # Return a simulated 'failed' status if the PDF service is unreachable
-        # Include book title if we found the book record earlier
-        return {
-            "success": False,
-            "message": f"Could not connect to PDF processing service for status check: {e}",
-            "job_id": job_id,
-            "status": "failed", # Report as failed from backend perspective
-            "title": book_title, # Use the title fetched earlier
-            "file_path": None, # PDF service returns file_path, keep this key for frontend
-            "images": [] # PDF service returns images, keep this key for frontend
-        }
-    except Exception as e:
-        logger.error(f"Error during PDF service status check for job {job_id}: {e}", exc_info=True)
-        # Return a simulated 'failed' status for other errors
-        # Include book title if we found the book record earlier
-        return {
-            "success": False,
-            "message": f"Error checking PDF service status: {e}",
-            "job_id": job_id,
-            "status": "failed", # Report as failed from backend perspective
-            "title": book_title, # Use the title fetched earlier
-            "file_path": None, # PDF service returns file_path, keep this key for frontend
-            "images": [] # PDF service returns images, keep this key for frontend
-        }
+    logger.info(f"Returning local status for job {job_id}: {response_data}")
+    return response_data
 
 # ... (rest of the file) ...
