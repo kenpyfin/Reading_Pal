@@ -157,7 +157,7 @@ const NotePane = forwardRef(({
 
   return (
     <div className="note-pane" ref={ref}> {/* Attach the ref */}
-      <h2>Notes & LLM Insights</h2> {/* UPDATED Heading */}
+      <h2>Notes & LLM Insights</h2>
 
       {/* ADDED: Dedicated area for displaying selected text */}
       {selectedBookText && (
