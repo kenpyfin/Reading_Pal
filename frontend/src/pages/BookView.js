@@ -119,10 +119,11 @@ function BookView() {
       
       const pageStartGlobalOffset = (validCurrentPage - 1) * CHARACTERS_PER_PAGE;
       const pageEndGlobalOffset = pageStartGlobalOffset + CHARACTERS_PER_PAGE;
+      console.log(`[BookView - Highlighting Effect] Page ${currentPage}: Global Offset Range [${pageStartGlobalOffset} - ${pageEndGlobalOffset})`);
       
       const plainPageText = fullMarkdownContent.current.substring(pageStartGlobalOffset, pageEndGlobalOffset);
       setCurrentPageContent(plainPageText); 
-      console.log("[BookView - Highlighting Effect] Plain text for page", currentPage, `(len: ${plainPageText.length}): "${plainPageText.substring(0, 100)}..."`);
+      console.log(`[BookView - Highlighting Effect] Plain text for page ${currentPage} (len: ${plainPageText.length}): "${plainPageText.substring(0, 100)}..."`);
 
 
       // Apply highlighting
@@ -134,60 +135,72 @@ function BookView() {
             }
             const noteStartGlobal = note.global_character_offset;
             const noteEndGlobal = noteStartGlobal + note.source_text.length;
-            return Math.max(pageStartGlobalOffset, noteStartGlobal) < Math.min(pageEndGlobalOffset, noteEndGlobal);
+            // Check for overlap: (StartA < EndB) and (StartB < EndA)
+            const overlaps = Math.max(pageStartGlobalOffset, noteStartGlobal) < Math.min(pageEndGlobalOffset, noteEndGlobal);
+            if (!overlaps) {
+                // console.log(`[BookView - Highlighting Effect] Note ID ${note.id} (offset ${noteStartGlobal}, len ${note.source_text.length}) does NOT overlap with page range [${pageStartGlobalOffset}-${pageEndGlobalOffset})`);
+            }
+            return overlaps;
           })
           .sort((a, b) => a.global_character_offset - b.global_character_offset); // Sort by start offset
         
-        console.log("[BookView - Highlighting Effect] Relevant notes for this page:", relevantNotes.length, relevantNotes);
+        console.log(`[BookView - Highlighting Effect] Found ${relevantNotes.length} relevant notes for page ${currentPage}:`, relevantNotes.map(n => ({id: n.id, offset: n.global_character_offset, len: n.source_text.length })));
 
         let newHighlightedString = "";
         let lastProcessedIndexInPage = 0; // Tracks position in plainPageText
 
         relevantNotes.forEach(note => {
-          console.log(`[BookView - Highlighting Effect] Processing note ID ${note.id}: global_offset=${note.global_character_offset}, source_text_len=${note.source_text?.length}`);
+          console.log(`[BookView - Highlighting Effect] Processing note ID ${note.id}: global_offset=${note.global_character_offset}, source_text_len=${note.source_text?.length}, source_text (first 30): "${note.source_text?.substring(0,30)}"`);
           const noteStartGlobal = note.global_character_offset;
-          const noteLength = note.source_text.length; // Length of the original source text
+          const noteLength = note.source_text.length; 
 
-          // Calculate note's start position relative to the current page's plain text
           let noteStartInPage = noteStartGlobal - pageStartGlobalOffset;
           
-          // Ensure noteStartInPage is within the bounds of the current plainPageText
-          noteStartInPage = Math.max(0, noteStartInPage);
-
           // Append the part of plainPageText before the current note's highlight
-          if (noteStartInPage > lastProcessedIndexInPage) {
-            newHighlightedString += plainPageText.substring(lastProcessedIndexInPage, noteStartInPage);
+          // Ensure noteStartInPage is not less than lastProcessedIndexInPage to handle overlapping notes correctly (though current sort helps)
+          const actualSegmentStartInPage = Math.max(noteStartInPage, lastProcessedIndexInPage);
+          
+          if (actualSegmentStartInPage > lastProcessedIndexInPage) {
+            newHighlightedString += plainPageText.substring(lastProcessedIndexInPage, actualSegmentStartInPage);
+            console.log(`[BookView - Highlighting Effect] Appended pre-text for note ${note.id}: from ${lastProcessedIndexInPage} to ${actualSegmentStartInPage}`);
           }
           
           // Determine the actual segment of the note's source_text that is visible on this page
-          const highlightSegmentStartInPage = noteStartInPage;
-          // Calculate how much of the note's text is visible starting from highlightSegmentStartInPage
-          const visibleLengthOnPage = Math.min(
-            noteLength - Math.max(0, pageStartGlobalOffset - noteStartGlobal), // visible part of note on this page
-            plainPageText.length - highlightSegmentStartInPage // remaining length of page
+          // The start of the highlight within the page's plain text
+          const highlightSegmentStartOnPage = Math.max(0, noteStartInPage);
+
+          // The end of the highlight within the page's plain text
+          // It's the minimum of: (note's end relative to page start) AND (page's end)
+          const highlightSegmentEndOnPage = Math.min(
+            noteStartInPage + noteLength, // note's end relative to page start
+            plainPageText.length          // page's end
           );
           
-          const highlightSegmentEndInPage = highlightSegmentStartInPage + visibleLengthOnPage;
-
-          if (highlightSegmentStartInPage < highlightSegmentEndInPage && highlightSegmentStartInPage < plainPageText.length) {
-            const textToHighlight = plainPageText.substring(highlightSegmentStartInPage, highlightSegmentEndInPage);
-            // console.log(`[BookView - Highlighting Effect] textToHighlight for note ${note.id}: "${textToHighlight}"`);
+          // Ensure we only try to highlight if the segment is valid and actually on this page
+          if (highlightSegmentStartOnPage < highlightSegmentEndOnPage && highlightSegmentStartOnPage < plainPageText.length) {
+            const textToHighlight = plainPageText.substring(highlightSegmentStartOnPage, highlightSegmentEndOnPage);
+            console.log(`[BookView - Highlighting Effect] Highlighting for note ${note.id}: from ${highlightSegmentStartOnPage} to ${highlightSegmentEndOnPage}. Text: "${textToHighlight.substring(0,50)}..."`);
             newHighlightedString += `<span class="highlighted-note-text" data-note-id="${note.id}">${textToHighlight}</span>`;
+            lastProcessedIndexInPage = highlightSegmentEndOnPage;
+          } else {
+             console.log(`[BookView - Highlighting Effect] Skipping highlight for note ${note.id} as its segment [${highlightSegmentStartOnPage}-${highlightSegmentEndOnPage}] is not valid or not on page.`);
+             // If we skipped, ensure lastProcessedIndexInPage is at least where this note would have started,
+             // to prevent reprocessing this area if it didn't actually add text.
+             lastProcessedIndexInPage = Math.max(lastProcessedIndexInPage, actualSegmentStartInPage);
           }
-          
-          lastProcessedIndexInPage = Math.max(lastProcessedIndexInPage, highlightSegmentEndInPage);
         });
 
         // Append any remaining text after the last highlight
         if (lastProcessedIndexInPage < plainPageText.length) {
           newHighlightedString += plainPageText.substring(lastProcessedIndexInPage);
+          console.log(`[BookView - Highlighting Effect] Appended post-text: from ${lastProcessedIndexInPage} to ${plainPageText.length}`);
         }
         
-        console.log("[BookView - Highlighting Effect] Final newHighlightedString (first 100 chars):", `"${newHighlightedString.substring(0,100)}..."`);
+        console.log(`[BookView - Highlighting Effect] Final newHighlightedString for page ${currentPage} (first 100 chars): "${newHighlightedString.substring(0,100)}..."`);
         setHighlightedPageContent(newHighlightedString);
 
       } else { // No notes or no relevant notes
-        console.log("[BookView - Highlighting Effect] No notes to highlight, setting plain text.");
+        console.log(`[BookView - Highlighting Effect] No notes to highlight on page ${currentPage}, setting plain text.`);
         setHighlightedPageContent(plainPageText); 
       }
       
@@ -227,48 +240,57 @@ function BookView() {
     }
   };
 
-  const handleTextSelect = (text) => {
-    setSelectedBookText(text); 
-    if (bookPaneRef.current && text) {
+  const handleTextSelect = (text) => { // text is window.getSelection().toString()
+    console.log("[BookView - handleTextSelect] Raw selection text:", `"${text}"`);
+    if (bookPaneRef.current && text && text.trim() !== "") {
       const selection = window.getSelection();
       if (selection && selection.rangeCount > 0) {
         const pageText = currentPageContent; // Plain text of the current page
-        const selectionText = selection.toString();
+        const selectionText = text; // Use the passed-in text which is selection.toString()
 
         let startInPage = -1;
         if (pageText && selectionText) {
             startInPage = pageText.indexOf(selectionText);
         }
         
-        console.log("[BookView - handleTextSelect] Selection Text:", `"${selectionText}"`);
-        console.log("[BookView - handleTextSelect] Current Page Plain Text (first 100 chars):", `"${pageText.substring(0,100)}..."`);
-        console.log("[BookView - handleTextSelect] Calculated startInPage:", startInPage);
+        console.log("[BookView - handleTextSelect] Trying to find selectionText in currentPageContent.");
+        console.log("[BookView - handleTextSelect] selectionText (length " + selectionText.length + "):", `"${selectionText}"`);
+        // console.log("[BookView - handleTextSelect] currentPageContent (length " + pageText.length + ", first 100 chars):", `"${pageText.substring(0,100)}..."`);
+        console.log("[BookView - handleTextSelect] Calculated startInPage (from indexOf):", startInPage);
 
-        if (startInPage === -1 && selectionText.trim() !== "") {
-            console.warn("[BookView - handleTextSelect] indexOf failed. Offset will be inaccurate or 0.");
-            // Fallback to 0 or attempt a more complex DOM-based calculation if needed,
-            // but this indicates a potential issue with matching selection to plain text.
-            startInPage = 0; // Or some other error handling
-        } else if (startInPage === -1) { // If selection is empty or not found even after trying
-            startInPage = 0; 
-        }
-
-        const globalOffset = (currentPage - 1) * CHARACTERS_PER_PAGE + startInPage;
-        setSelectedGlobalCharOffset(globalOffset);
-        console.log("[BookView - handleTextSelect] Calculated globalOffset:", globalOffset);
-        
-        const element = bookPaneRef.current;
-        if (element.scrollHeight > element.clientHeight) {
-            const pageScrollPercentage = element.scrollTop / (element.scrollHeight - element.clientHeight);
-            setSelectedScrollPercentage(pageScrollPercentage);
+        if (startInPage !== -1) {
+            const globalOffset = (currentPage - 1) * CHARACTERS_PER_PAGE + startInPage;
+            // Use selectionText.length because that's what the user selected.
+            // The canonical text is what's stored in fullMarkdownContent.
+            const canonicalSelectedText = fullMarkdownContent.current.substring(globalOffset, globalOffset + selectionText.length);
+            
+            setSelectedBookText(canonicalSelectedText);
+            setSelectedGlobalCharOffset(globalOffset);
+            console.log("[BookView - handleTextSelect] Successfully calculated: globalOffset:", globalOffset);
+            console.log("[BookView - handleTextSelect] canonicalSelectedText (length " + canonicalSelectedText.length + "):", `"${canonicalSelectedText}"`);
+            
+            const element = bookPaneRef.current;
+            if (element.scrollHeight > element.clientHeight) {
+                const pageScrollPercentage = element.scrollTop / (element.scrollHeight - element.clientHeight);
+                setSelectedScrollPercentage(pageScrollPercentage);
+                console.log("[BookView - handleTextSelect] Scroll Percentage:", pageScrollPercentage);
+            } else {
+                setSelectedScrollPercentage(0);
+            }
         } else {
-            setSelectedScrollPercentage(0);
+            console.warn("[BookView - handleTextSelect] indexOf failed to find selectionText within currentPageContent. Note location data (global offset) will not be set. Selected text will still be available for LLM.");
+            setSelectedBookText(selectionText); // Keep the user's selection for LLM context
+            setSelectedGlobalCharOffset(null);  // Explicitly nullify if not found
+            setSelectedScrollPercentage(null); // Explicitly nullify
         }
-      } else {
+      } else { // No selection or range
+        console.log("[BookView - handleTextSelect] No selection or rangeCount is 0.");
+        setSelectedBookText(null);
         setSelectedGlobalCharOffset(null);
         setSelectedScrollPercentage(null);
       }
-    } else {
+    } else { // No text selected or bookPaneRef not available
+      console.log("[BookView - handleTextSelect] No text selected or bookPaneRef is null.");
       setSelectedBookText(null);
       setSelectedGlobalCharOffset(null);
       setSelectedScrollPercentage(null);
@@ -287,16 +309,18 @@ function BookView() {
     console.log("[BookView - handleNewNoteSaved] Received new note:", newNote);
     if (newNote && newNote.id) { // Ensure newNote is valid
       setNotes(prevNotes => {
+        // Prevent adding duplicates if this handler is somehow called multiple times with the same note
+        const noteExists = prevNotes.some(note => note.id === newNote.id);
+        if (noteExists) {
+            console.warn("[BookView - handleNewNoteSaved] Note ID", newNote.id, "already exists in state. Not adding again.");
+            return prevNotes;
+        }
         const updatedNotes = [...prevNotes, newNote].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-        console.log("[BookView - handleNewNoteSaved] Updated notes state:", updatedNotes);
+        console.log("[BookView - handleNewNoteSaved] Updated notes state with new note:", updatedNotes.map(n => n.id));
         return updatedNotes;
       });
-      // Optionally, clear selection after note is saved
-      // setSelectedBookText(null);
-      // setSelectedGlobalCharOffset(null);
-      // setSelectedScrollPercentage(null);
     } else {
-        console.warn("[BookView - handleNewNoteSaved] Received invalid newNote object:", newNote);
+        console.warn("[BookView - handleNewNoteSaved] Received invalid newNote object or note without ID:", newNote);
     }
   };
 
