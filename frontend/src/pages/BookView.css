@@ -230,10 +230,24 @@
     background-color: #f2f2f2;
 }
 
-/* Styling for highlighted note text */
+/* Styling for highlighted note text (from user selection for new notes) */
 .highlighted-note-text {
   background-color: yellow; /* Or your preferred highlight color */
   /* padding: 0 2px; */ /* Optional: if you want a little space around the text */
   /* border-radius: 3px; */ /* Optional: for rounded corners on the highlight */
   /* cursor: pointer; */ /* Optional: if you plan to make them clickable */
+}
+
+/* Styling for the temporary highlight when scrolling to a note */
+.highlighted-note-scroll-target {
+  /* No default background, will be applied by JS temporarily */
+  /* outline: 1px dashed blue; */ /* Optional: for debugging if JS highlight fails */
+  transition: background-color 0.5s ease-out; /* For smooth fade-out of JS-applied highlight */
+}
+
+.highlighted-note-scroll-target-marker { /* For the fallback marker span */
+    /* display: inline-block; */ /* If it needs layout */
+    /* width: 1px; */
+    /* height: 1em; */ /* Make it visible for debugging */
+    /* background-color: red; */ /* For debugging */
 }

@@ -4,6 +4,7 @@ import BookPane from '../components/BookPane';
 import NotePane from '../components/NotePane';
 import { debounce } from 'lodash';
 import './BookView.css';
+import logger from '../utils/logger'; // Ensure logger is imported
 
 const CHARACTERS_PER_PAGE = 5000; // Define characters per page
 
@@ -41,6 +42,9 @@ function BookView() {
 
   const [notes, setNotes] = useState([]); // State to store notes for the current book
 
+  // Ref for the temporary highlight span used for scrolling to a note
+  const scrollTargetHighlightRef = useRef(null);
+
   const fetchBook = async () => {
     setLoading(true);
     setError(null);
@@ -66,7 +70,7 @@ function BookView() {
         setTotalPages(1);
       }
     } catch (err) {
-      console.error('Failed to fetch book:', err);
+      logger.error('Failed to fetch book:', err);
       setError(`Failed to load book: ${err.message || 'Unknown error'}`);
       setBookData(null);
       fullMarkdownContent.current = '';
@@ -95,7 +99,7 @@ function BookView() {
         notesData.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
         setNotes(notesData);
       } catch (err) {
-        console.error('Error fetching notes:', err);
+        logger.error('Error fetching notes:', err);
         setNotes([]); // Reset notes on error
       }
     };
@@ -105,7 +109,7 @@ function BookView() {
 
   // Effect for handling pagination logic AND highlighting when bookData, currentPage, or notes change
   useEffect(() => {
-    console.log("[BookView - Highlighting Effect] Running. Current Page:", currentPage, "Notes count:", notes.length);
+    logger.debug("[BookView - Highlighting Effect] Running. Current Page:", currentPage, "Notes count:", notes.length);
     if (fullMarkdownContent.current) {
       const totalChars = fullMarkdownContent.current.length;
       const numPages = Math.max(1, Math.ceil(totalChars / CHARACTERS_PER_PAGE));
@@ -119,11 +123,11 @@ function BookView() {
       
       const pageStartGlobalOffset = (validCurrentPage - 1) * CHARACTERS_PER_PAGE;
       const pageEndGlobalOffset = pageStartGlobalOffset + CHARACTERS_PER_PAGE;
-      console.log(`[BookView - Highlighting Effect] Page ${currentPage}: Global Offset Range [${pageStartGlobalOffset} - ${pageEndGlobalOffset})`);
+      logger.debug(`[BookView - Highlighting Effect] Page ${currentPage}: Global Offset Range [${pageStartGlobalOffset} - ${pageEndGlobalOffset})`);
       
       const plainPageText = fullMarkdownContent.current.substring(pageStartGlobalOffset, pageEndGlobalOffset);
       setCurrentPageContent(plainPageText); 
-      console.log(`[BookView - Highlighting Effect] Plain text for page ${currentPage} (len: ${plainPageText.length}): "${plainPageText.substring(0, 100)}..."`);
+      logger.debug(`[BookView - Highlighting Effect] Plain text for page ${currentPage} (len: ${plainPageText.length}): "${plainPageText.substring(0, 100)}..."`);
 
 
       // Apply highlighting
@@ -138,19 +142,19 @@ function BookView() {
             // Check for overlap: (StartA < EndB) and (StartB < EndA)
             const overlaps = Math.max(pageStartGlobalOffset, noteStartGlobal) < Math.min(pageEndGlobalOffset, noteEndGlobal);
             if (!overlaps) {
-                // console.log(`[BookView - Highlighting Effect] Note ID ${note.id} (offset ${noteStartGlobal}, len ${note.source_text.length}) does NOT overlap with page range [${pageStartGlobalOffset}-${pageEndGlobalOffset})`);
+                // logger.debug(`[BookView - Highlighting Effect] Note ID ${note.id} (offset ${noteStartGlobal}, len ${note.source_text.length}) does NOT overlap with page range [${pageStartGlobalOffset}-${pageEndGlobalOffset})`);
             }
             return overlaps;
           })
           .sort((a, b) => a.global_character_offset - b.global_character_offset); // Sort by start offset
         
-        console.log(`[BookView - Highlighting Effect] Found ${relevantNotes.length} relevant notes for page ${currentPage}:`, relevantNotes.map(n => ({id: n.id, offset: n.global_character_offset, len: n.source_text.length })));
+        logger.debug(`[BookView - Highlighting Effect] Found ${relevantNotes.length} relevant notes for page ${currentPage}:`, relevantNotes.map(n => ({id: n.id, offset: n.global_character_offset, len: n.source_text.length })));
 
         let newHighlightedString = "";
         let lastProcessedIndexInPage = 0; // Tracks position in plainPageText
 
         relevantNotes.forEach(note => {
-          console.log(`[BookView - Highlighting Effect] Processing note ID ${note.id}: global_offset=${note.global_character_offset}, source_text_len=${note.source_text?.length}, source_text (first 30): "${note.source_text?.substring(0,30)}"`);
+          logger.debug(`[BookView - Highlighting Effect] Processing note ID ${note.id}: global_offset=${note.global_character_offset}, source_text_len=${note.source_text?.length}, source_text (first 30): "${note.source_text?.substring(0,30)}"`);
           const noteStartGlobal = note.global_character_offset;
           const noteLength = note.source_text.length; 
 
@@ -162,7 +166,7 @@ function BookView() {
           
           if (actualSegmentStartInPage > lastProcessedIndexInPage) {
             newHighlightedString += plainPageText.substring(lastProcessedIndexInPage, actualSegmentStartInPage);
-            console.log(`[BookView - Highlighting Effect] Appended pre-text for note ${note.id}: from ${lastProcessedIndexInPage} to ${actualSegmentStartInPage}`);
+            logger.debug(`[BookView - Highlighting Effect] Appended pre-text for note ${note.id}: from ${lastProcessedIndexInPage} to ${actualSegmentStartInPage}`);
           }
           
           // Determine the actual segment of the note's source_text that is visible on this page
@@ -179,11 +183,11 @@ function BookView() {
           // Ensure we only try to highlight if the segment is valid and actually on this page
           if (highlightSegmentStartOnPage < highlightSegmentEndOnPage && highlightSegmentStartOnPage < plainPageText.length) {
             const textToHighlight = plainPageText.substring(highlightSegmentStartOnPage, highlightSegmentEndOnPage);
-            console.log(`[BookView - Highlighting Effect] Highlighting for note ${note.id}: from ${highlightSegmentStartOnPage} to ${highlightSegmentEndOnPage}. Text: "${textToHighlight.substring(0,50)}..."`);
+            logger.debug(`[BookView - Highlighting Effect] Highlighting for note ${note.id}: from ${highlightSegmentStartOnPage} to ${highlightSegmentEndOnPage}. Text: "${textToHighlight.substring(0,50)}..."`);
             newHighlightedString += `<span class="highlighted-note-text" data-note-id="${note.id}">${textToHighlight}</span>`;
             lastProcessedIndexInPage = highlightSegmentEndOnPage;
           } else {
-             console.log(`[BookView - Highlighting Effect] Skipping highlight for note ${note.id} as its segment [${highlightSegmentStartOnPage}-${highlightSegmentEndOnPage}] is not valid or not on page.`);
+             logger.debug(`[BookView - Highlighting Effect] Skipping highlight for note ${note.id} as its segment [${highlightSegmentStartOnPage}-${highlightSegmentEndOnPage}] is not valid or not on page.`);
              // If we skipped, ensure lastProcessedIndexInPage is at least where this note would have started,
              // to prevent reprocessing this area if it didn't actually add text.
              lastProcessedIndexInPage = Math.max(lastProcessedIndexInPage, actualSegmentStartInPage);
@@ -193,14 +197,14 @@ function BookView() {
         // Append any remaining text after the last highlight
         if (lastProcessedIndexInPage < plainPageText.length) {
           newHighlightedString += plainPageText.substring(lastProcessedIndexInPage);
-          console.log(`[BookView - Highlighting Effect] Appended post-text: from ${lastProcessedIndexInPage} to ${plainPageText.length}`);
+          logger.debug(`[BookView - Highlighting Effect] Appended post-text: from ${lastProcessedIndexInPage} to ${plainPageText.length}`);
         }
         
-        console.log(`[BookView - Highlighting Effect] Final newHighlightedString for page ${currentPage} (first 100 chars): "${newHighlightedString.substring(0,100)}..."`);
+        logger.debug(`[BookView - Highlighting Effect] Final newHighlightedString for page ${currentPage} (first 100 chars): "${newHighlightedString.substring(0,100)}..."`);
         setHighlightedPageContent(newHighlightedString);
 
       } else { // No notes or no relevant notes
-        console.log(`[BookView - Highlighting Effect] No notes to highlight on page ${currentPage}, setting plain text.`);
+        logger.debug(`[BookView - Highlighting Effect] No notes to highlight on page ${currentPage}, setting plain text.`);
         setHighlightedPageContent(plainPageText); 
       }
       
@@ -249,27 +253,8 @@ function BookView() {
         const range = selection.getRangeAt(0);
         const bookPaneElement = bookPaneRef.current; // This is div.book-pane-container
 
-        // Calculate character offset from the start of the bookPaneElement to the start of the selection
-        // let charCount = 0; // Not used in this version
-        // let foundStart = false; // Not used in this version
-
-        // Create a range that spans from the start of bookPaneElement to the start of the selection
-        // const preSelectionRange = document.createRange(); // Not used in this version
-        // preSelectionRange.selectNodeContents(bookPaneElement); // Select all content within bookPaneElement
-        // preSelectionRange.setEnd(range.startContainer, range.startOffset); // Set end to selection start
-
-        // The toString().length of this preSelectionRange can be a good approximation of the character offset
-        // *within the rendered content of the current page*.
-        // This will include characters from existing highlight spans if any.
-        // This is an issue if we need an offset relative to *plain text*.
-
-        // For a more accurate offset relative to PLAIN TEXT (currentPageContent):
-        // We still need to map the DOM selection to the plain text.
-        // The most robust way is to iterate text nodes.
-
         let startInPage = -1;
-        const container = bookPaneRef.current; // The element whose plain text content matches currentPageContent
-                                             // (or should, if highlighting is done carefully)
+        const container = bookPaneRef.current; 
         
         if (container) {
             const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
@@ -278,20 +263,7 @@ function BookView() {
             let selectionStartNode = range.startContainer;
             let selectionStartOffset = range.startOffset;
 
-            // If selection starts in an element node (e.g., a span), find the actual text node and offset
             if (selectionStartNode.nodeType !== Node.TEXT_NODE) {
-                // This can happen if selection starts at the boundary of an element.
-                // Try to find the first text node within or after.
-                // This part can get complex. For simplicity, if it's not a text node,
-                // the offset might be less accurate with the simple walker.
-                // A common case: selection starts in a <span>. range.startContainer is the <span>.
-                // We need to find the text node inside it or the next text node.
-                let child = selectionStartNode.firstChild;
-                let tempOffset = 0; // Tracks character offset within the children of selectionStartNode
-                
-                // Iterate through children of the element node (selectionStartNode)
-                // to find the text node that contains the start of the selection
-                // and adjust selectionStartOffset to be relative to that text node.
                 let foundTextNode = false;
                 function findTextNodeRecursive(node, targetDomOffset) {
                     let currentDomOffset = 0;
@@ -302,19 +274,17 @@ function BookView() {
                                 selectionStartNode = childNode;
                                 selectionStartOffset = targetDomOffset - currentDomOffset;
                                 foundTextNode = true;
-                                return true; // Found
+                                return true; 
                             }
                             currentDomOffset += childNode.textContent.length;
                         } else if (childNode.nodeType === Node.ELEMENT_NODE) {
                             if (findTextNodeRecursive(childNode, targetDomOffset - currentDomOffset)) {
-                                return true; // Found in recursion
+                                return true; 
                             }
-                            // If not found in recursion, add its textContent length to currentDomOffset
-                            // This assumes textContent length is a good proxy for DOM offset contribution
                             currentDomOffset += childNode.textContent.length; 
                         }
                     }
-                    return false; // Not found in this branch
+                    return false; 
                 }
 
                 if (range.startContainer.nodeType === Node.ELEMENT_NODE) {
@@ -322,12 +292,7 @@ function BookView() {
                 }
                 
                 if (!foundTextNode) {
-                    // Fallback or warning if we couldn't pinpoint the text node.
-                    // This might happen if selection is in an empty element or complex structure.
-                    console.warn("[BookView - handleTextSelect] Could not precisely map element selection to a text node. Offset might be less accurate.");
-                    // As a rough fallback, we might try to use preSelectionRange.toString().length,
-                    // but this is what we are trying to avoid due to its own inaccuracies.
-                    // For now, we'll proceed, and if startInPage remains -1, it will be handled.
+                    logger.warn("[BookView - handleTextSelect] Could not precisely map element selection to a text node. Offset might be less accurate.");
                 }
             }
 
@@ -337,31 +302,24 @@ function BookView() {
                     startInPage = currentOffset + selectionStartOffset;
                     break;
                 }
-                // Only count text that is not part of our highlight spans for offset calculation
-                // This check is tricky because the walker gives us raw text nodes.
-                // If a highlight span splits a text node, the walker sees multiple text nodes.
-                // The key is that `currentPageContent` is the *source of truth* for plain text.
-                // The `global_character_offset` should always refer to this plain text.
                 currentOffset += textNode.textContent.length;
             }
         }
 
-        console.log("[BookView - handleTextSelect] Selection Text:", `"${textFromBookPane}"`);
-        console.log("[BookView - handleTextSelect] Calculated startInPage (DOM Walker):", startInPage);
+        logger.debug("[BookView - handleTextSelect] Selection Text:", `"${textFromBookPane}"`);
+        logger.debug("[BookView - handleTextSelect] Calculated startInPage (DOM Walker):", startInPage);
 
         if (startInPage !== -1) {
             const globalOffset = (currentPage - 1) * CHARACTERS_PER_PAGE + startInPage;
             
-            // Get the canonical selected text from fullMarkdownContent using the calculated globalOffset
-            // and the length of the user's visual selection.
             const canonicalSelectedText = fullMarkdownContent.current.substring(globalOffset, globalOffset + textFromBookPane.length);
             
-            setSelectedBookText(canonicalSelectedText); // Store the canonical version
+            setSelectedBookText(canonicalSelectedText); 
             setSelectedGlobalCharOffset(globalOffset);
-            console.log("[BookView - handleTextSelect] Successfully calculated: globalOffset:", globalOffset);
-            console.log("[BookView - handleTextSelect] canonicalSelectedText (length " + canonicalSelectedText.length + "):", `"${canonicalSelectedText}"`);
+            logger.debug("[BookView - handleTextSelect] Successfully calculated: globalOffset:", globalOffset);
+            logger.debug("[BookView - handleTextSelect] canonicalSelectedText (length " + canonicalSelectedText.length + "):", `"${canonicalSelectedText}"`);
             
-            const element = bookPaneRef.current; // This is div.book-pane-container
+            const element = bookPaneRef.current; 
             if (element.scrollHeight > element.clientHeight) {
                 const pageScrollPercentage = element.scrollTop / (element.scrollHeight - element.clientHeight);
                 setSelectedScrollPercentage(pageScrollPercentage);
@@ -369,8 +327,8 @@ function BookView() {
                 setSelectedScrollPercentage(0);
             }
         } else {
-            console.warn("[BookView - handleTextSelect] DOM Walker failed to find selection start. Note location data (global offset) will not be set. Selected text will still be available for LLM.");
-            setSelectedBookText(textFromBookPane); // Keep user's visual selection for LLM
+            logger.warn("[BookView - handleTextSelect] DOM Walker failed to find selection start. Note location data (global offset) will not be set. Selected text will still be available for LLM.");
+            setSelectedBookText(textFromBookPane); 
             setSelectedGlobalCharOffset(null);
             setSelectedScrollPercentage(null);
         }
@@ -386,86 +344,279 @@ function BookView() {
     }
   };
 
-  // Handler for clicking a note in NotePane, expects global character offset
   const handleNoteClick = (globalCharOffsetOfNote) => {
     if (globalCharOffsetOfNote !== null && globalCharOffsetOfNote !== undefined) {
       setScrollToGlobalOffset(globalCharOffsetOfNote);
     }
   };
   
-  // Handler to be called when a new note is saved in NotePane
   const handleNewNoteSaved = (newNote) => {
-    console.log("[BookView - handleNewNoteSaved] Received new note:", newNote);
-    if (newNote && newNote.id) { // Ensure newNote is valid
+    logger.debug("[BookView - handleNewNoteSaved] Received new note:", newNote);
+    if (newNote && newNote.id) { 
       setNotes(prevNotes => {
-        // Prevent adding duplicates if this handler is somehow called multiple times with the same note
         const noteExists = prevNotes.some(note => note.id === newNote.id);
         if (noteExists) {
-            console.warn("[BookView - handleNewNoteSaved] Note ID", newNote.id, "already exists in state. Not adding again.");
+            logger.warn("[BookView - handleNewNoteSaved] Note ID", newNote.id, "already exists in state. Not adding again.");
             return prevNotes;
         }
         const updatedNotes = [...prevNotes, newNote].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-        console.log("[BookView - handleNewNoteSaved] Updated notes state with new note:", updatedNotes.map(n => n.id));
+        logger.debug("[BookView - handleNewNoteSaved] Updated notes state with new note:", updatedNotes.map(n => n.id));
         return updatedNotes;
       });
     } else {
-        console.warn("[BookView - handleNewNoteSaved] Received invalid newNote object or note without ID:", newNote);
+        logger.warn("[BookView - handleNewNoteSaved] Received invalid newNote object or note without ID:", newNote);
     }
   };
 
-
+  // Effect for scrolling to a note when scrollToGlobalOffset changes
   useEffect(() => {
-    if (scrollToGlobalOffset === null || !fullMarkdownContent.current) return;
+    if (scrollToGlobalOffset === null || !fullMarkdownContent.current) {
+      if (scrollToGlobalOffset !== null) {
+        logger.debug(`[ScrollToNoteEffect] Aborting: scrollToGlobalOffset=${scrollToGlobalOffset}, fullMarkdownContent.current=${!!fullMarkdownContent.current}`);
+      }
+      return;
+    }
 
     const targetGlobalOffset = scrollToGlobalOffset;
-    const targetPage = Math.floor(targetGlobalOffset / CHARACTERS_PER_PAGE) + 1;
-    const offsetWithinPage = targetGlobalOffset % CHARACTERS_PER_PAGE;
+    logger.info(`[ScrollToNoteEffect] Attempting to scroll to global character offset: ${targetGlobalOffset}`);
 
-    if (targetPage !== currentPage) {
-      setCurrentPage(targetPage);
-      setPendingScrollOffsetInPage(offsetWithinPage);
-    } else {
-      // Current page is already correct, just scroll
-      if (bookPaneRef.current && currentPageContent.length > 0) {
-        const bookElement = bookPaneRef.current;
-        // Ensure scrollHeight is greater than clientHeight to avoid division by zero or negative scroll values
-        if (bookElement.scrollHeight > bookElement.clientHeight) {
-            // Calculate scroll position based on character offset within the current page's original content
-            const scrollRatio = offsetWithinPage / currentPageContent.length;
-            const targetScrollTop = scrollRatio * (bookElement.scrollHeight - bookElement.clientHeight);
-            
-            isProgrammaticScroll.current = true;
-            bookElement.scrollTo({ top: targetScrollTop, behavior: 'smooth' }); // Changed to 'smooth'
-            setTimeout(() => { isProgrammaticScroll.current = false; }, 300); // Increased timeout for smooth scroll
-        } else { 
-            // Content is shorter than the view, scroll to top
-            isProgrammaticScroll.current = true;
-            bookElement.scrollTo({ top: 0, behavior: 'smooth' });
-            setTimeout(() => { isProgrammaticScroll.current = false; }, 300);
-        }
+    // Determine the target page and offset within that page
+    const targetPageNum = Math.floor(targetGlobalOffset / CHARACTERS_PER_PAGE) + 1;
+    const offsetWithinTargetPage = targetGlobalOffset % CHARACTERS_PER_PAGE;
+    logger.debug(`[ScrollToNoteEffect] Target page: ${targetPageNum}, Offset within page: ${offsetWithinTargetPage}`);
+
+    // If the target page is not the current page, change the page
+    // The actual scrolling will happen in the effect that depends on `currentPageContent` and `pendingScrollOffsetInPage`
+    if (targetPageNum !== currentPage) {
+      logger.info(`[ScrollToNoteEffect] Target page ${targetPageNum} is different from current page ${currentPage}. Setting current page and pending offset.`);
+      setCurrentPage(targetPageNum);
+      setPendingScrollOffsetInPage(offsetWithinTargetPage); // This will be picked up by the other useEffect
+      setScrollToGlobalOffset(null); // Reset after initiating page change
+      return;
+    }
+
+    // If already on the correct page, proceed to scroll within this page
+    logger.info(`[ScrollToNoteEffect] Already on target page ${currentPage}. Proceeding with scroll.`);
+    
+    if (!bookPaneRef.current) {
+        logger.warn("[ScrollToNoteEffect] bookPaneRef.current is null. Cannot scroll.");
+        setScrollToGlobalOffset(null); // Reset
+        return;
+    }
+    const bookElement = bookPaneRef.current;
+
+    // Cleanup previous scroll target highlight
+    if (scrollTargetHighlightRef.current && scrollTargetHighlightRef.current.parentNode) {
+      try {
+        const parent = scrollTargetHighlightRef.current.parentNode;
+        const textContent = scrollTargetHighlightRef.current.textContent || "";
+        parent.replaceChild(document.createTextNode(textContent), scrollTargetHighlightRef.current);
+        logger.debug("[ScrollToNoteEffect] Cleaned up previous scroll target highlight span.");
+      } catch (e) {
+        logger.error("[ScrollToNoteEffect] Error cleaning up previous scroll target highlight span:", e);
       }
     }
-    setScrollToGlobalOffset(null); // Reset after processing
-  }, [scrollToGlobalOffset, currentPage, currentPageContent.length, fullMarkdownContent]); // Added fullMarkdownContent
+    scrollTargetHighlightRef.current = null;
+
+
+    // Find the text node and character offset to scroll to
+    const walker = document.createTreeWalker(bookElement, NodeFilter.SHOW_TEXT, null);
+    let accumulatedOffset = 0;
+    let textNode = null;
+    let foundTargetNodeAndOffset = false;
+
+    while ((textNode = walker.nextNode())) {
+      const nodeText = textNode.textContent || '';
+      const nodeLength = nodeText.length;
+
+      if (accumulatedOffset + nodeLength >= offsetWithinTargetPage) {
+        const startOffsetInNode = offsetWithinTargetPage - accumulatedOffset;
+        
+        if (startOffsetInNode >= 0 && startOffsetInNode <= nodeLength) { // Ensure valid offset
+          logger.info(`[ScrollToNoteEffect] Target text node found. Offset in node: ${startOffsetInNode}. Node content (start): "${nodeText.substring(0, 30)}..."`);
+          
+          const range = document.createRange();
+          range.setStart(textNode, startOffsetInNode);
+          range.setEnd(textNode, startOffsetInNode); 
+          
+          const highlightRange = document.createRange();
+          highlightRange.setStart(textNode, startOffsetInNode);
+          highlightRange.setEnd(textNode, Math.min(nodeLength, startOffsetInNode + 5)); 
+
+          const highlightSpan = document.createElement('span');
+          highlightSpan.className = 'highlighted-note-scroll-target'; 
+          
+          try {
+            highlightRange.surroundContents(highlightSpan);
+            scrollTargetHighlightRef.current = highlightSpan; 
+            logger.debug("[ScrollToNoteEffect] Inserted highlight span for scroll target:", highlightSpan.textContent);
+
+            let spanOffsetTop = 0;
+            let currentElement = highlightSpan;
+            while (currentElement && currentElement !== bookElement) {
+              spanOffsetTop += currentElement.offsetTop;
+              currentElement = currentElement.offsetParent;
+            }
+            
+            logger.info(`[ScrollToNoteEffect] Calculated spanOffsetTop: ${spanOffsetTop}px relative to bookPane.`);
+
+            isProgrammaticScroll.current = true;
+            const scrollTopTarget = Math.max(0, spanOffsetTop - 20); 
+            bookElement.scrollTop = scrollTopTarget;
+            
+            logger.info(`[ScrollToNoteEffect] Programmatically scrolled bookPane to: ${scrollTopTarget}px.`);
+            
+            highlightSpan.style.transition = 'background-color 0.5s ease-out';
+            highlightSpan.style.backgroundColor = 'rgba(255, 255, 0, 0.5)'; 
+            setTimeout(() => {
+                if (highlightSpan) {
+                    highlightSpan.style.backgroundColor = ''; 
+                }
+            }, 1500); 
+
+
+          } catch (e) {
+            logger.error("[ScrollToNoteEffect] Error inserting highlight span or scrolling:", e, "Node:", textNode, "Offset:", startOffsetInNode);
+            try {
+                const markerSpan = document.createElement("span");
+                markerSpan.className = 'highlighted-note-scroll-target-marker'; 
+                range.insertNode(markerSpan);
+                scrollTargetHighlightRef.current = markerSpan;
+                // markerSpan.scrollIntoView({ behavior: "auto", block: "start" }); // "auto" might be better than "smooth" for direct jump
+                // For direct scrollTop manipulation, we'd calculate offsetTop for markerSpan too.
+                // For simplicity with marker, let's use scrollIntoView if surroundContents fails.
+                let markerOffsetTop = 0;
+                let currentMarkerEl = markerSpan;
+                while (currentMarkerEl && currentMarkerEl !== bookElement) {
+                    markerOffsetTop += currentMarkerEl.offsetTop;
+                    currentMarkerEl = currentMarkerEl.offsetParent;
+                }
+                const markerScrollTopTarget = Math.max(0, markerOffsetTop - 20);
+                bookElement.scrollTop = markerScrollTopTarget;
+                logger.info("[ScrollToNoteEffect] Fallback: Used markerSpan and direct scroll. Scrolled to:", markerScrollTopTarget);
+
+            } catch (e2) {
+                logger.error("[ScrollToNoteEffect] Fallback markerSpan insertion/scroll also failed:", e2);
+            }
+          }
+          foundTargetNodeAndOffset = true;
+          break; 
+        }
+      }
+      accumulatedOffset += nodeLength;
+    }
+
+    if (!foundTargetNodeAndOffset) {
+      logger.warn(`[ScrollToNoteEffect] Could not find the exact text node and offset for page offset: ${offsetWithinTargetPage}. Total characters processed on page: ${accumulatedOffset}. Scrolling to top of page.`);
+      isProgrammaticScroll.current = true;
+      bookElement.scrollTop = 0; 
+    }
+
+    const timer = setTimeout(() => {
+      isProgrammaticScroll.current = false;
+      logger.debug("[ScrollToNoteEffect] Reset isProgrammaticScroll to false after timeout.");
+    }, 300); 
+
+    setScrollToGlobalOffset(null); 
+
+    return () => {
+      clearTimeout(timer);
+      if (scrollTargetHighlightRef.current && scrollTargetHighlightRef.current.parentNode) {
+        try {
+          const parent = scrollTargetHighlightRef.current.parentNode;
+          const textToRestore = scrollTargetHighlightRef.current.textContent || "";
+          parent.replaceChild(document.createTextNode(textToRestore), scrollTargetHighlightRef.current);
+          logger.debug("[ScrollToNoteEffect] Cleanup: Replaced/Removed scroll target highlight span.");
+        } catch (e) {
+          logger.error("[ScrollToNoteEffect] Cleanup: Error removing scroll target highlight span:", e);
+        }
+      }
+      scrollTargetHighlightRef.current = null;
+    };
+  }, [scrollToGlobalOffset, fullMarkdownContent, currentPage, currentPageContent]);
+
 
   useEffect(() => {
     if (pendingScrollOffsetInPage !== null && bookPaneRef.current && currentPageContent.length > 0) {
       const bookElement = bookPaneRef.current;
-      if (bookElement.scrollHeight > bookElement.clientHeight) {
-        const scrollRatio = pendingScrollOffsetInPage / currentPageContent.length;
-        const targetScrollTop = scrollRatio * (bookElement.scrollHeight - bookElement.clientHeight);
+      // The DOM needs to be updated with currentPageContent before we can find the offset.
+      // This effect runs *after* currentPageContent is updated and the DOM reflects it.
+      
+      // Find the text node and character offset to scroll to, similar to the main scroll effect
+      const walker = document.createTreeWalker(bookElement, NodeFilter.SHOW_TEXT, null);
+      let accumulatedOffset = 0;
+      let textNode = null;
+      let foundTargetNodeForPendingScroll = false;
 
-        isProgrammaticScroll.current = true;
-        bookElement.scrollTo({ top: targetScrollTop, behavior: 'smooth' }); // Changed to 'smooth'
-        setTimeout(() => { isProgrammaticScroll.current = false; }, 300); // Increased timeout
-      } else {
-        isProgrammaticScroll.current = true;
-        bookElement.scrollTo({ top: 0, behavior: 'smooth' });
-        setTimeout(() => { isProgrammaticScroll.current = false; }, 300);
+      while ((textNode = walker.nextNode())) {
+          const nodeText = textNode.textContent || '';
+          const nodeLength = nodeText.length;
+
+          if (accumulatedOffset + nodeLength >= pendingScrollOffsetInPage) {
+              const startOffsetInNode = pendingScrollOffsetInPage - accumulatedOffset;
+              if (startOffsetInNode >= 0 && startOffsetInNode <= nodeLength) {
+                  logger.info(`[PendingScrollEffect] Target text node found for pending scroll. Offset in node: ${startOffsetInNode}.`);
+                  
+                  const range = document.createRange();
+                  range.setStart(textNode, startOffsetInNode);
+                  range.setEnd(textNode, startOffsetInNode);
+
+                  const tempSpan = document.createElement('span'); // Temporary, non-highlighted marker
+                  try {
+                      range.insertNode(tempSpan);
+                      let spanOffsetTop = 0;
+                      let currentElement = tempSpan;
+                      while (currentElement && currentElement !== bookElement) {
+                          spanOffsetTop += currentElement.offsetTop;
+                          currentElement = currentElement.offsetParent;
+                      }
+                      
+                      isProgrammaticScroll.current = true;
+                      const scrollTopTarget = Math.max(0, spanOffsetTop - 20);
+                      bookElement.scrollTop = scrollTopTarget;
+                      logger.info(`[PendingScrollEffect] Scrolled to pending offset. Target scrollTop: ${scrollTopTarget}`);
+                      
+                      // Clean up the temporary span
+                      if (tempSpan.parentNode) {
+                          tempSpan.parentNode.removeChild(tempSpan);
+                      }
+                  } catch (e) {
+                      logger.error("[PendingScrollEffect] Error inserting temp span or scrolling:", e);
+                      // Fallback: scroll based on ratio if precise DOM manipulation fails
+                      if (bookElement.scrollHeight > bookElement.clientHeight) {
+                          const scrollRatio = pendingScrollOffsetInPage / currentPageContent.length;
+                          const targetScrollTopFallback = scrollRatio * (bookElement.scrollHeight - bookElement.clientHeight);
+                          isProgrammaticScroll.current = true;
+                          bookElement.scrollTop = Math.max(0, targetScrollTopFallback -20);
+                          logger.info(`[PendingScrollEffect] Fallback scroll to ratio. Target scrollTop: ${bookElement.scrollTop}`);
+                      } else {
+                          isProgrammaticScroll.current = true;
+                          bookElement.scrollTop = 0;
+                      }
+                  }
+                  foundTargetNodeForPendingScroll = true;
+                  break;
+              }
+          }
+          accumulatedOffset += nodeLength;
       }
+      
+      if (!foundTargetNodeForPendingScroll) {
+          logger.warn(`[PendingScrollEffect] Could not find exact node for pending offset ${pendingScrollOffsetInPage}. Scrolling to top of page.`);
+          isProgrammaticScroll.current = true;
+          bookElement.scrollTop = 0;
+      }
+
+      setTimeout(() => { isProgrammaticScroll.current = false; }, 300);
       setPendingScrollOffsetInPage(null); // Reset after scrolling
+    } else if (pendingScrollOffsetInPage !== null && bookPaneRef.current && currentPageContent.length === 0 && pendingScrollOffsetInPage === 0) {
+        // Handle case where page is empty and offset is 0 (scroll to top)
+        isProgrammaticScroll.current = true;
+        bookPaneRef.current.scrollTop = 0;
+        setTimeout(() => { isProgrammaticScroll.current = false; }, 300);
+        setPendingScrollOffsetInPage(null);
     }
-  }, [currentPageContent, pendingScrollOffsetInPage]); // currentPageContent implies current page is loaded
+  }, [currentPageContent, pendingScrollOffsetInPage]); 
 
 
   const syncScroll = useCallback(
@@ -479,26 +630,22 @@ function BookView() {
       const targetElement = targetPaneRef.current;
 
       if (scrollingElement.scrollHeight <= scrollingElement.clientHeight) return;
-      // Allow target to be scrolled even if it's shorter, to sync to top/bottom
-      // if (targetElement.scrollHeight <= targetElement.clientHeight) return; 
-
+      
       const scrollPercentage = scrollingElement.scrollTop / (scrollingElement.scrollHeight - scrollingElement.clientHeight);
       
       let targetScrollTop;
       if (targetElement.scrollHeight > targetElement.clientHeight) {
         targetScrollTop = scrollPercentage * (targetElement.scrollHeight - targetElement.clientHeight);
       } else {
-        // If target is not scrollable, sync to top if source is at top, else to bottom
         targetScrollTop = scrollPercentage > 0.5 ? targetElement.scrollHeight : 0;
       }
 
-
-      if (Math.abs(targetElement.scrollTop - targetScrollTop) > 5) { // Threshold to prevent jitter
+      if (Math.abs(targetElement.scrollTop - targetScrollTop) > 5) { 
         isProgrammaticScroll.current = true;
         targetElement.scrollTop = targetScrollTop;
-        setTimeout(() => { isProgrammaticScroll.current = false; }, 50); // Shorter timeout for sync
+        setTimeout(() => { isProgrammaticScroll.current = false; }, 50); 
       }
-    }, 50), // Debounce time
+    }, 50), 
     []
   );
 
@@ -516,11 +663,11 @@ function BookView() {
       return () => {
         bookElement.removeEventListener('scroll', debouncedBookScroll);
         noteElement.removeEventListener('scroll', debouncedNoteScroll);
-        debouncedBookScroll.cancel(); // Cancel lodash debounce on unmount
+        debouncedBookScroll.cancel(); 
         debouncedNoteScroll.cancel();
       };
     }
-  }, [syncScroll]); // syncScroll is memoized by useCallback
+  }, [syncScroll]); 
 
   const handlePreviousPage = () => {
     setCurrentPage((prev) => Math.max(1, prev - 1));
@@ -577,7 +724,7 @@ function BookView() {
         <div className="book-pane-wrapper">
           <div className="book-pane-container" ref={bookPaneRef}>
             <BookPane
-              markdownContent={highlightedPageContent} // USE HIGHLIGHTED CONTENT
+              markdownContent={highlightedPageContent} 
               imageUrls={bookData.image_urls}
               onTextSelect={handleTextSelect}
             />
@@ -592,7 +739,7 @@ function BookView() {
                 type="number"
                 value={pageInput}
                 onChange={handlePageInputChange}
-                onBlur={handleGoToPage} // Or use a submit button for the form
+                onBlur={handleGoToPage} 
                 min="1"
                 max={totalPages}
                 className="page-input"
@@ -610,9 +757,9 @@ function BookView() {
               bookId={bookId}
               selectedBookText={selectedBookText}
               selectedScrollPercentage={selectedScrollPercentage}
-              selectedGlobalCharOffset={selectedGlobalCharOffset} // Pass this down
-              onNoteClick={handleNoteClick} // Renamed from onNoteClickInternal for clarity
-              onNewNoteSaved={handleNewNoteSaved} // PASS THE NEW PROP
+              selectedGlobalCharOffset={selectedGlobalCharOffset} 
+              onNoteClick={handleNoteClick} 
+              onNewNoteSaved={handleNewNoteSaved} 
             />
           </div>
         </div>
