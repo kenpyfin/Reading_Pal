@@ -476,15 +476,19 @@ function BookView() {
 
 
           } catch (e) {
-            logger.error("[ScrollToNoteEffect] Error inserting highlight span or scrolling:", e, "Node:", textNode, "Offset:", startOffsetInNode);
+            logger.error("[ScrollToNoteEffect] Error inserting highlight span or scrolling (surroundContents failed):", e, "Node:", textNode, "Offset:", startOffsetInNode);
+            // Fallback logic
             try {
                 const markerSpan = document.createElement("span");
                 markerSpan.className = 'highlighted-note-scroll-target-marker'; 
-                range.insertNode(markerSpan);
-                scrollTargetHighlightRef.current = markerSpan;
-                // markerSpan.scrollIntoView({ behavior: "auto", block: "start" }); // "auto" might be better than "smooth" for direct jump
-                // For direct scrollTop manipulation, we'd calculate offsetTop for markerSpan too.
-                // For simplicity with marker, let's use scrollIntoView if surroundContents fails.
+                
+                // ADD TEMPORARY VISUAL CUE FOR THE MARKER SPAN
+                markerSpan.style.outline = "2px solid red"; // Distinct visual cue
+                markerSpan.style.backgroundColor = "rgba(255, 0, 0, 0.2)"; // Light red background
+
+                range.insertNode(markerSpan); // Insert the (empty) marker span
+                scrollTargetHighlightRef.current = markerSpan; // Store ref for cleanup
+                
                 let markerOffsetTop = 0;
                 let currentMarkerEl = markerSpan;
                 while (currentMarkerEl && currentMarkerEl !== bookElement) {
@@ -492,8 +496,18 @@ function BookView() {
                     currentMarkerEl = currentMarkerEl.offsetParent;
                 }
                 const markerScrollTopTarget = Math.max(0, markerOffsetTop - 20);
+                
+                isProgrammaticScroll.current = true; // Set before scrolling
                 bookElement.scrollTop = markerScrollTopTarget;
                 logger.info("[ScrollToNoteEffect] Fallback: Used markerSpan and direct scroll. Scrolled to:", markerScrollTopTarget);
+
+                // REMOVE TEMPORARY VISUAL CUE AFTER A DELAY
+                setTimeout(() => {
+                    if (markerSpan) {
+                        markerSpan.style.outline = "";
+                        markerSpan.style.backgroundColor = "";
+                    }
+                }, 1500); // Keep cue for 1.5 seconds
 
             } catch (e2) {
                 logger.error("[ScrollToNoteEffect] Fallback markerSpan insertion/scroll also failed:", e2);
