@@ -108,69 +108,79 @@ function BookView() {
     if (fullMarkdownContent.current) {
       const totalChars = fullMarkdownContent.current.length;
       const numPages = Math.max(1, Math.ceil(totalChars / CHARACTERS_PER_PAGE));
-      setTotalPages(numPages); // Update total pages
+      setTotalPages(numPages); 
 
-      const validCurrentPage = Math.max(1, Math.min(currentPage, numPages));
+      const validCurrentPage = Math.max(1, Math.min(currentPage, numPages || 1));
       if (currentPage !== validCurrentPage) {
-        setCurrentPage(validCurrentPage); // Adjust if out of bounds
-        return; // Let the effect re-run with the corrected currentPage
+        setCurrentPage(validCurrentPage); 
+        return; 
       }
       
-      const start = (validCurrentPage - 1) * CHARACTERS_PER_PAGE;
-      const end = start + CHARACTERS_PER_PAGE;
-      let pageContent = fullMarkdownContent.current.substring(start, end);
-      setCurrentPageContent(pageContent); // Store original page content
+      const pageStartGlobalOffset = (validCurrentPage - 1) * CHARACTERS_PER_PAGE;
+      const pageEndGlobalOffset = pageStartGlobalOffset + CHARACTERS_PER_PAGE;
+      
+      const plainPageText = fullMarkdownContent.current.substring(pageStartGlobalOffset, pageEndGlobalOffset);
+      setCurrentPageContent(plainPageText); 
 
       // Apply highlighting
-      let tempHighlightedContent = pageContent;
-      if (notes.length > 0) {
-        // Sort notes by global_character_offset in descending order
-        // to avoid issues with nested or overlapping highlights when replacing.
-        // Highlighting longer matches first or those appearing later in the text first can be safer.
-        // Or, more robustly, process replacements on a copy and track offset changes.
-        // For simplicity, if source_text is unique enough, order might not be critical.
-        // Let's sort by offset to be somewhat systematic.
-        const sortedNotesForHighlighting = [...notes].sort((a, b) => {
-            if (a.global_character_offset === undefined || a.global_character_offset === null) return 1;
-            if (b.global_character_offset === undefined || b.global_character_offset === null) return -1;
-            return a.global_character_offset - b.global_character_offset;
-        });
-
-        sortedNotesForHighlighting.forEach(note => {
-          // Ensure note.source_text and global_character_offset are valid
-          if (note.source_text && note.source_text.trim() !== "" && note.global_character_offset !== undefined && note.global_character_offset !== null) {
-            const escapedSourceText = escapeRegExp(note.source_text);
-            // Important: The regex needs to be applied to the current state of tempHighlightedContent,
-            // but the offsets are relative to the original fullMarkdownContent.
-            // This simple replace might fail if source_text is not unique or if highlights alter indices.
-            
-            const noteStartOffset = note.global_character_offset;
-            const noteEndOffset = noteStartOffset + note.source_text.length;
-
-            // Check if the note's global character range overlaps with the current page's global character range
-            if ( (noteStartOffset >= start && noteStartOffset < end) || // Note starts on this page
-                 (noteEndOffset > start && noteEndOffset <= end) ||   // Note ends on this page
-                 (noteStartOffset < start && noteEndOffset > end)      // Note spans this page
-            ) {
-              // Calculate the position of the source_text *within the current pageContent*
-              const startOnPage = Math.max(0, noteStartOffset - start);
-              const endOnPage = Math.min(CHARACTERS_PER_PAGE, noteEndOffset - start);
-              
-              // Extract the text to be highlighted from the *original* pageContent
-              // to avoid issues with already highlighted content
-              const textToHighlightOnPage = pageContent.substring(startOnPage, endOnPage);
-
-              if (textToHighlightOnPage && textToHighlightOnPage.trim() !== "") {
-                const regex = new RegExp(escapeRegExp(textToHighlightOnPage), 'g');
-                tempHighlightedContent = tempHighlightedContent.replace(regex, (match) => 
-                  `<span class="highlighted-note-text" data-note-id="${note.id}">${match}</span>`
-                );
-              }
+      if (notes && notes.length > 0) {
+        const relevantNotes = notes
+          .filter(note => {
+            if (note.global_character_offset === undefined || note.global_character_offset === null || !note.source_text || note.source_text.length === 0) {
+              return false;
             }
+            const noteStartGlobal = note.global_character_offset;
+            const noteEndGlobal = noteStartGlobal + note.source_text.length;
+            return Math.max(pageStartGlobalOffset, noteStartGlobal) < Math.min(pageEndGlobalOffset, noteEndGlobal);
+          })
+          .sort((a, b) => a.global_character_offset - b.global_character_offset); // Sort by start offset
+
+        let newHighlightedString = "";
+        let lastProcessedIndexInPage = 0; // Tracks position in plainPageText
+
+        relevantNotes.forEach(note => {
+          const noteStartGlobal = note.global_character_offset;
+          const noteLength = note.source_text.length; // Length of the original source text
+
+          // Calculate note's start position relative to the current page's plain text
+          let noteStartInPage = noteStartGlobal - pageStartGlobalOffset;
+          
+          // Ensure noteStartInPage is within the bounds of the current plainPageText
+          noteStartInPage = Math.max(0, noteStartInPage);
+
+          // Append the part of plainPageText before the current note's highlight
+          if (noteStartInPage > lastProcessedIndexInPage) {
+            newHighlightedString += plainPageText.substring(lastProcessedIndexInPage, noteStartInPage);
           }
+          
+          // Determine the actual segment of the note's source_text that is visible on this page
+          const highlightSegmentStartInPage = noteStartInPage;
+          // Calculate how much of the note's text is visible starting from highlightSegmentStartInPage
+          const visibleLengthOnPage = Math.min(
+            noteLength - Math.max(0, pageStartGlobalOffset - noteStartGlobal), // visible part of note on this page
+            plainPageText.length - highlightSegmentStartInPage // remaining length of page
+          );
+          
+          const highlightSegmentEndInPage = highlightSegmentStartInPage + visibleLengthOnPage;
+
+          if (highlightSegmentStartInPage < highlightSegmentEndInPage && highlightSegmentStartInPage < plainPageText.length) {
+            const textToHighlight = plainPageText.substring(highlightSegmentStartInPage, highlightSegmentEndInPage);
+            newHighlightedString += `<span class="highlighted-note-text" data-note-id="${note.id}">${textToHighlight}</span>`;
+          }
+          
+          lastProcessedIndexInPage = Math.max(lastProcessedIndexInPage, highlightSegmentEndInPage);
         });
+
+        // Append any remaining text after the last highlight
+        if (lastProcessedIndexInPage < plainPageText.length) {
+          newHighlightedString += plainPageText.substring(lastProcessedIndexInPage);
+        }
+        
+        setHighlightedPageContent(newHighlightedString);
+
+      } else { // No notes or no relevant notes
+        setHighlightedPageContent(plainPageText); 
       }
-      setHighlightedPageContent(tempHighlightedContent);
       
       if (bookPaneRef.current) {
         if (pendingScrollOffsetInPage === null) {
@@ -179,7 +189,7 @@ function BookView() {
             setTimeout(() => { isProgrammaticScroll.current = false; }, 100);
         }
       }
-    } else {
+    } else { // No fullMarkdownContent.current
       setCurrentPageContent('');
       setHighlightedPageContent('');
       setTotalPages(1);
@@ -187,6 +197,7 @@ function BookView() {
     }
   // Add `notes` and `pendingScrollOffsetInPage` to dependency array
   }, [bookData, currentPage, notes, pendingScrollOffsetInPage]); // fullMarkdownContent.current is a ref, not a state/prop for deps
+
 
   useEffect(() => {
     setPageInput(String(currentPage));
@@ -208,35 +219,48 @@ function BookView() {
   };
 
   const handleTextSelect = (text) => {
-    setSelectedBookText(text);
+    setSelectedBookText(text); // text is the selected plain text
     if (bookPaneRef.current && text) {
       const selection = window.getSelection();
       if (selection && selection.rangeCount > 0) {
-        const range = selection.getRangeAt(0);
+        // To find the start of the selection within the *plain text* of the current page:
+        // This assumes `currentPageContent` holds the plain text for the current page.
+        const pageText = currentPageContent; 
+        const selectionText = selection.toString(); // The actual selected text
+
+        // Find the first occurrence of selectionText within pageText.
+        // This is an approximation and might not be perfect if selectionText is not unique.
+        // A more robust way involves DOM range manipulation relative to plain text nodes.
+        let startInPage = pageText.indexOf(selectionText);
         
-        const preSelectionRange = range.cloneRange();
-        const contentContainer = bookPaneRef.current.querySelector('.book-pane'); 
-        if (contentContainer) {
-            preSelectionRange.selectNodeContents(contentContainer);
-            preSelectionRange.setEnd(range.startContainer, range.startOffset);
+        if (startInPage === -1 && selectionText.trim() !== "") {
+            // Fallback or more sophisticated search if direct indexOf fails (e.g. due to normalization)
+            console.warn("Could not directly find selected text in page content for offset calculation. Offset may be inaccurate. Using fallback.");
+            // As a rough fallback, use the previous method, but acknowledge its limitations
+            const range = selection.getRangeAt(0);
+            const preSelectionRange = range.cloneRange();
+            // Query for the specific content displaying element within BookPane if BookPane itself is just a wrapper
+            const contentDisplayElement = bookPaneRef.current.querySelector('.book-content-display'); // Or whatever class/selector BookPane uses for its actual text container
             
-            // This calculation of startInPage needs to be robust against existing HTML tags.
-            // A simple .toString().length on a range within mixed HTML/text content
-            // might not accurately reflect character offset in the original markdown.
-            // For now, we proceed with this, acknowledging its limitations.
-            // A more complex solution would involve mapping selection back to the raw currentPageContent.
-            const startInPage = preSelectionRange.toString().length; 
-            
-            const globalOffset = (currentPage - 1) * CHARACTERS_PER_PAGE + startInPage;
-            setSelectedGlobalCharOffset(globalOffset);
-        } else {
-            setSelectedGlobalCharOffset(null);
+            if (contentDisplayElement) { // Check if the specific content element is found
+                preSelectionRange.selectNodeContents(contentDisplayElement);
+                preSelectionRange.setEnd(range.startContainer, range.startOffset);
+                // This length is from rendered content, which might include HTML tags (highlights)
+                // It's a fallback and less accurate.
+                startInPage = preSelectionRange.toString().length; 
+            } else {
+                console.error("BookPane's content display element not found for offset calculation fallback.");
+                startInPage = 0; // Or handle error appropriately
+            }
+        } else if (startInPage === -1) { // If selection is empty or not found even after trying
+            startInPage = 0; 
         }
 
+        const globalOffset = (currentPage - 1) * CHARACTERS_PER_PAGE + startInPage;
+        setSelectedGlobalCharOffset(globalOffset);
+        
         const element = bookPaneRef.current;
         if (element.scrollHeight > element.clientHeight) {
-            // Calculate scroll percentage based on the start of the selection
-            // This is an approximation. A more precise way might involve the position of the range.
             const pageScrollPercentage = element.scrollTop / (element.scrollHeight - element.clientHeight);
             setSelectedScrollPercentage(pageScrollPercentage);
         } else {
