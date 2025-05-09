@@ -5,12 +5,13 @@ import asyncio # Import asyncio
 import os
 import logging
 import requests # Import requests
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, status
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, status, Body
 from typing import List, Optional, Dict, Any # Import Optional, Dict, Any
 from bson import ObjectId
 from fastapi.concurrency import run_in_threadpool
 from datetime import datetime # Import datetime
 import re # Import re for sanitization
+from pydantic import BaseModel, Field # Import Pydantic BaseModel and Field
 
 # Import models and db functions
 from backend.models.book import Book
@@ -413,5 +414,91 @@ async def get_book_status_by_job_id(job_id: str) -> Dict[str, Any]:
 
     logger.info(f"Returning local status for job {job_id}: {response_data}")
     return response_data
+
+# --- Pydantic model for PDF Service Callback ---
+class PDFServiceImageInfo(BaseModel):
+    filename: str
+    path: str # Full path on PDF service, we only care about filename
+
+class PDFServiceCallbackData(BaseModel):
+    job_id: str
+    status: str # "completed" or "failed"
+    message: Optional[str] = None
+    file_path: Optional[str] = None # Full path to markdown file on PDF service
+    images: Optional[List[PDFServiceImageInfo]] = []
+    processing_error: Optional[str] = None
+
+
+@router.post("/callback", status_code=status.HTTP_200_OK)
+async def pdf_processing_callback(payload: PDFServiceCallbackData = Body(...)):
+    """
+    Receives callback from PDF processing service upon job completion or failure.
+    Updates the book record in the database.
+    """
+    logger.info(f"Received PDF processing callback for job_id: {payload.job_id}")
+    logger.debug(f"Callback payload: {payload.model_dump_json(indent=2)}")
+
+    book_doc = await get_book_by_job_id(payload.job_id)
+
+    if not book_doc:
+        logger.error(f"Callback: Book with job_id {payload.job_id} not found. Cannot update.")
+        # Return 200 to acknowledge receipt and prevent PDF service retries for this specific error.
+        # The error is on our side (missing job_id) or a race condition.
+        return {"message": "Callback received, but job_id not found or already processed."}
+
+    book_id_str = str(book_doc["_id"])
+    logger.info(f"Callback: Found book with ID {book_id_str} for job_id {payload.job_id}.")
+
+    update_data = {
+        "status": payload.status,
+        "updated_at": datetime.utcnow() # Always update the timestamp
+    }
+
+    if payload.status == "completed":
+        if payload.file_path:
+            update_data["markdown_filename"] = os.path.basename(payload.file_path)
+            logger.info(f"Callback: Extracted markdown_filename: {update_data['markdown_filename']}")
+        else:
+            logger.warning(f"Callback: Job {payload.job_id} completed but no file_path provided.")
+            # Potentially mark as failed if markdown_filename is critical
+            update_data["status"] = "failed"
+            update_data["processing_error"] = "Processing reported as completed by PDF service, but no markdown file path was provided."
+        
+        if payload.images:
+            image_filenames = [img.filename for img in payload.images if img.filename]
+            update_data["image_filenames"] = image_filenames
+            logger.info(f"Callback: Extracted {len(image_filenames)} image filenames.")
+        else:
+            update_data["image_filenames"] = [] # Ensure it's an empty list if no images
+
+    elif payload.status == "failed":
+        update_data["processing_error"] = payload.processing_error or "Processing failed without specific error message from PDF service."
+        logger.warning(f"Callback: Job {payload.job_id} failed. Error: {update_data['processing_error']}")
+        # Ensure markdown and image filenames are cleared or set to None if the job failed
+        update_data["markdown_filename"] = None
+        update_data["image_filenames"] = []
+
+
+    else: # Handle unexpected status values
+        logger.warning(f"Callback: Received unexpected status '{payload.status}' for job_id {payload.job_id}. Treating as failed.")
+        update_data["status"] = "failed"
+        update_data["processing_error"] = f"Received unexpected status '{payload.status}' from PDF service. Original message: {payload.message}"
+
+    try:
+        updated_count = await update_book(book_id_str, update_data)
+        if updated_count: # update_book should return modified_count or similar
+            logger.info(f"Callback: Successfully updated book {book_id_str} (job_id: {payload.job_id}) with status '{update_data['status']}'.")
+            return {"message": "Callback processed successfully."}
+        else:
+            logger.error(f"Callback: Failed to update book {book_id_str} (job_id: {payload.job_id}) in DB, or no changes were made.")
+            # This could happen if the document was already in the target state or deleted.
+            # Still return 200 to PDF service.
+            return {"message": "Callback received, but DB update failed or no changes needed."}
+
+    except Exception as e:
+        logger.error(f"Callback: Exception updating book {book_id_str} (job_id: {payload.job_id}): {e}", exc_info=True)
+        # Even on internal error, acknowledge to PDF service to prevent retries if the issue is persistent.
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+                            detail="Internal server error processing callback.")
 
 # ... (rest of the file) ...
