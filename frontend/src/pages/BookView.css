@@ -2,21 +2,41 @@
 
 .book-view-container {
   display: flex;
-  height: 100vh; /* Full viewport height */
+  height: 100vh; /* Full viewport height, adjust if you have a global header/navbar */
   width: 100%;
-  overflow: hidden; /* Prevent main container scroll */
+  overflow: hidden; /* Prevent main container scroll, children will handle their own scroll */
+}
+
+/* Define .book-pane-wrapper and .note-pane-wrapper */
+.book-pane-wrapper,
+.note-pane-wrapper {
+  flex: 1; /* Each wrapper takes equal width in the .book-view-container */
+  display: flex; /* Use flexbox for children */
+  flex-direction: column; /* Stack children (content container, controls) vertically */
+  overflow: hidden; /* Prevent these wrappers from scrolling; their children will scroll */
+}
+
+.note-pane-wrapper {
+  border-left: 1px solid #ccc; /* Separator line for the note pane wrapper */
 }
 
 .book-pane-container,
 .note-pane-container {
-  flex: 1; /* Each takes equal width */
-  overflow-y: auto; /* Enable vertical scrolling */
+  flex-grow: 1; /* Allow this container to grow and take available vertical space */
+  overflow-y: auto; /* Enable vertical scrolling FOR THIS CONTAINER */
   padding: 20px;
   box-sizing: border-box; /* Include padding in element's total width and height */
 }
 
-.note-pane-container {
-  border-left: 1px solid #ccc; /* Separator line */
+/* Pagination controls styling */
+.pagination-controls {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 8px 0;
+  border-top: 1px solid #eee;
+  background-color: #f9f9f9;
+  flex-shrink: 0; /* Prevent controls from shrinking if space is tight */
 }
 
 /* Optional: Basic styling for content within panes */
