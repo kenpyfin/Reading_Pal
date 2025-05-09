@@ -56,10 +56,12 @@ const NotePane = forwardRef(({
     const noteData = {
       book_id: bookId,
       content: newNoteContent.trim(),
-      source_text: selectedBookText || undefined,
+      source_text: selectedBookText || undefined, // This is the selected plain text
       scroll_percentage: selectedScrollPercentage !== null && selectedScrollPercentage !== undefined ? parseFloat(selectedScrollPercentage.toFixed(4)) : undefined,
-      global_character_offset: selectedGlobalCharOffset !== null && selectedGlobalCharOffset !== undefined ? selectedGlobalCharOffset : undefined, // INCLUDE THIS
+      global_character_offset: selectedGlobalCharOffset, // This comes from BookView
     };
+    console.log("[NotePane - handleSaveNote] Sending noteData to backend:", noteData);
+
 
     try {
       const response = await fetch('/api/notes/', {
@@ -76,7 +78,8 @@ const NotePane = forwardRef(({
       }
 
       const savedNote = await response.json();
-      console.log('Note saved in NotePane:', savedNote);
+      console.log('[NotePane - handleSaveNote] Received savedNote from backend:', savedNote);
+
 
       // Update NotePane's local list of notes for display
       setNotes(prevNotes => [...prevNotes, savedNote].sort((a, b) => new Date(a.created_at) - new Date(b.created_at)));
