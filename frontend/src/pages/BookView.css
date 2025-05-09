@@ -229,3 +229,11 @@
 .book-pane th {
     background-color: #f2f2f2;
 }
+
+/* Styling for highlighted note text */
+.highlighted-note-text {
+  background-color: yellow; /* Or your preferred highlight color */
+  /* padding: 0 2px; */ /* Optional: if you want a little space around the text */
+  /* border-radius: 3px; */ /* Optional: for rounded corners on the highlight */
+  /* cursor: pointer; */ /* Optional: if you plan to make them clickable */
+}

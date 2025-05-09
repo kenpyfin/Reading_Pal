@@ -7,6 +7,14 @@ import './BookView.css';
 
 const CHARACTERS_PER_PAGE = 5000; // Define characters per page
 
+// Function to escape regex special characters
+function escapeRegExp(string) {
+  if (typeof string !== 'string') {
+    return '';
+  }
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // $& means the whole matched string
+}
+
 function BookView() {
   const { bookId } = useParams();
   const [bookData, setBookData] = useState(null);
@@ -19,21 +27,19 @@ function BookView() {
   const fullMarkdownContent = useRef(''); // To store the full markdown
 
   const [selectedBookText, setSelectedBookText] = useState(null);
-  // selectedScrollPercentage is relative to the current page view
   const [selectedScrollPercentage, setSelectedScrollPercentage] = useState(null);
-  // selectedGlobalCharOffset is relative to the full document
   const [selectedGlobalCharOffset, setSelectedGlobalCharOffset] = useState(null);
 
-
-  // State for pagination
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
-  const [currentPageContent, setCurrentPageContent] = useState('');
-  const [pageInput, setPageInput] = useState(''); // State for the page input field
+  const [currentPageContent, setCurrentPageContent] = useState(''); // Original content for logic
+  const [highlightedPageContent, setHighlightedPageContent] = useState(''); // Content with highlights for rendering
+  const [pageInput, setPageInput] = useState('');
 
-  // State for scrolling to a note's location
   const [scrollToGlobalOffset, setScrollToGlobalOffset] = useState(null);
   const [pendingScrollOffsetInPage, setPendingScrollOffsetInPage] = useState(null);
+
+  const [notes, setNotes] = useState([]); // State to store notes for the current book
 
   const fetchBook = async () => {
     setLoading(true);
@@ -55,11 +61,9 @@ function BookView() {
         const totalChars = fullMarkdownContent.current.length;
         const numPages = Math.max(1, Math.ceil(totalChars / CHARACTERS_PER_PAGE));
         setTotalPages(numPages);
-        // setCurrentPage(1); // Reset to page 1 on new book load - handled by effect
       } else {
         fullMarkdownContent.current = '';
         setTotalPages(1);
-        // setCurrentPage(1); // Reset to page 1
       }
     } catch (err) {
       console.error('Failed to fetch book:', err);
@@ -77,14 +81,33 @@ function BookView() {
     }
   }, [bookId]);
 
-  // Effect for handling pagination logic when bookData or currentPage changes
+  // Fetch notes when bookId changes
+  useEffect(() => {
+    const fetchNotes = async () => {
+      if (!bookId) return;
+      try {
+        const response = await fetch(`/api/notes/${bookId}`);
+        if (!response.ok) {
+          throw new Error('Failed to fetch notes');
+        }
+        const notesData = await response.json();
+        setNotes(notesData);
+      } catch (err) {
+        console.error('Error fetching notes:', err);
+        setNotes([]); // Reset notes on error
+      }
+    };
+
+    fetchNotes();
+  }, [bookId]);
+
+  // Effect for handling pagination logic AND highlighting when bookData, currentPage, or notes change
   useEffect(() => {
     if (fullMarkdownContent.current) {
       const totalChars = fullMarkdownContent.current.length;
       const numPages = Math.max(1, Math.ceil(totalChars / CHARACTERS_PER_PAGE));
       setTotalPages(numPages); // Update total pages
 
-      // Ensure currentPage is within valid bounds
       const validCurrentPage = Math.max(1, Math.min(currentPage, numPages));
       if (currentPage !== validCurrentPage) {
         setCurrentPage(validCurrentPage); // Adjust if out of bounds
@@ -93,10 +116,37 @@ function BookView() {
       
       const start = (validCurrentPage - 1) * CHARACTERS_PER_PAGE;
       const end = start + CHARACTERS_PER_PAGE;
-      setCurrentPageContent(fullMarkdownContent.current.substring(start, end));
+      let pageContent = fullMarkdownContent.current.substring(start, end);
+      setCurrentPageContent(pageContent); // Store original page content
+
+      // Apply highlighting
+      let tempHighlightedContent = pageContent;
+      if (notes.length > 0) {
+        notes.forEach(note => {
+          // Ensure note.source_text and global_character_offset are valid
+          if (note.source_text && note.source_text.trim() !== "" && note.global_character_offset !== undefined) {
+            const escapedSourceText = escapeRegExp(note.source_text);
+            const regex = new RegExp(escapedSourceText, 'g');
+            
+            const noteStartOffset = note.global_character_offset;
+            const noteEndOffset = noteStartOffset + note.source_text.length;
+
+            // Check if the note's global character range overlaps with the current page's global character range
+            if ( (noteStartOffset >= start && noteStartOffset < end) || // Note starts on this page
+                 (noteEndOffset > start && noteEndOffset <= end) ||   // Note ends on this page
+                 (noteStartOffset < start && noteEndOffset > end)      // Note spans this page
+            ) {
+              // Only attempt replacement if the note's range overlaps with the current page
+              tempHighlightedContent = tempHighlightedContent.replace(regex, (match) => 
+                `<span class="highlighted-note-text" data-note-id="${note.id}">${match}</span>`
+              );
+            }
+          }
+        });
+      }
+      setHighlightedPageContent(tempHighlightedContent);
       
       if (bookPaneRef.current) {
-        // Reset scroll position when page content changes, unless a pending scroll is active
         if (pendingScrollOffsetInPage === null) {
             isProgrammaticScroll.current = true;
             bookPaneRef.current.scrollTop = 0;
@@ -105,12 +155,13 @@ function BookView() {
       }
     } else {
       setCurrentPageContent('');
+      setHighlightedPageContent('');
       setTotalPages(1);
       setCurrentPage(1);
     }
-  }, [bookData, currentPage, fullMarkdownContent.current]); // fullMarkdownContent.current won't trigger re-render, bookData dependency is key
+  // Add `notes` and `pendingScrollOffsetInPage` to dependency array
+  }, [bookData, currentPage, notes, pendingScrollOffsetInPage]); // fullMarkdownContent.current is a ref, not a state/prop for deps
 
-  // Update pageInput when currentPage changes (e.g., via Prev/Next buttons)
   useEffect(() => {
     setPageInput(String(currentPage));
   }, [currentPage]);
@@ -120,15 +171,11 @@ function BookView() {
   };
 
   const handleGoToPage = (event) => {
-    // Allow submission via Enter key or form submission
-    if (event) event.preventDefault(); // Prevent form submission if it's in a form
-
+    if (event) event.preventDefault();
     const pageNum = parseInt(pageInput, 10);
     if (!isNaN(pageNum) && pageNum >= 1 && pageNum <= totalPages) {
       setCurrentPage(pageNum);
     } else {
-      // Optionally, provide feedback for invalid input
-      // For now, just reset input to current valid page
       setPageInput(String(currentPage)); 
       alert(`Please enter a page number between 1 and ${totalPages}.`);
     }
@@ -141,32 +188,33 @@ function BookView() {
       if (selection && selection.rangeCount > 0) {
         const range = selection.getRangeAt(0);
         
-        // Calculate character offset within the current page
         const preSelectionRange = range.cloneRange();
-        // Ensure preSelectionRange considers only the content of BookPane
-        // Assuming BookPane's direct child is where markdown is rendered.
-        // If BookPane has multiple children, this might need adjustment or a specific target div.
-        const contentContainer = bookPaneRef.current.querySelector('.book-pane'); // Or more specific if BookPane wraps content
+        const contentContainer = bookPaneRef.current.querySelector('.book-pane'); 
         if (contentContainer) {
             preSelectionRange.selectNodeContents(contentContainer);
             preSelectionRange.setEnd(range.startContainer, range.startOffset);
+            
+            // Calculate startInPage carefully, considering existing HTML highlights
+            // This is tricky because preSelectionRange.toString() will give plain text
+            // We need to count characters in the *original* markdown, not the highlighted HTML
+            // For now, this calculation might be slightly off if selection is within/around highlights
+            // A more robust way would be to map selection back to original unhighlighted content.
+            // This is a known complexity. For now, we use the text length.
             const startInPage = preSelectionRange.toString().length;
             
             const globalOffset = (currentPage - 1) * CHARACTERS_PER_PAGE + startInPage;
             setSelectedGlobalCharOffset(globalOffset);
         } else {
-            setSelectedGlobalCharOffset(null); // Fallback if container not found
+            setSelectedGlobalCharOffset(null);
         }
 
-        // Calculate scroll percentage relative to current page view
         const element = bookPaneRef.current;
         if (element.scrollHeight > element.clientHeight) {
             const pageScrollPercentage = element.scrollTop / (element.scrollHeight - element.clientHeight);
             setSelectedScrollPercentage(pageScrollPercentage);
         } else {
-            setSelectedScrollPercentage(0); // Or null if no scrollbar
+            setSelectedScrollPercentage(0);
         }
-
       } else {
         setSelectedGlobalCharOffset(null);
         setSelectedScrollPercentage(null);
@@ -178,14 +226,12 @@ function BookView() {
     }
   };
 
-  // onNoteClick now receives a globalCharacterOffset from NotePane
   const handleNoteClick = (globalOffset) => {
     if (globalOffset !== null && globalOffset !== undefined) {
       setScrollToGlobalOffset(globalOffset);
     }
   };
 
-  // useEffect to handle scrolling when scrollToGlobalOffset changes (e.g., note clicked)
   useEffect(() => {
     if (scrollToGlobalOffset === null || !fullMarkdownContent.current) return;
 
@@ -194,39 +240,33 @@ function BookView() {
     const offsetWithinPage = targetGlobalOffset % CHARACTERS_PER_PAGE;
 
     if (targetPage !== currentPage) {
-      // Navigate to the target page
       setCurrentPage(targetPage);
-      // Store the intended offset for when the new page loads
       setPendingScrollOffsetInPage(offsetWithinPage);
     } else {
-      // Already on the correct page, scroll directly
-      if (bookPaneRef.current && currentPageContent.length > 0) {
+      if (bookPaneRef.current && currentPageContent.length > 0) { // Use currentPageContent for length
         const bookElement = bookPaneRef.current;
-        // Ensure scrollHeight is greater than clientHeight to avoid division by zero or NaN
         if (bookElement.scrollHeight > bookElement.clientHeight) {
-            const scrollRatio = offsetWithinPage / currentPageContent.length;
+            const scrollRatio = offsetWithinPage / currentPageContent.length; // Use original content length
             const targetScrollTop = scrollRatio * (bookElement.scrollHeight - bookElement.clientHeight);
             
             isProgrammaticScroll.current = true;
             bookElement.scrollTo({ top: targetScrollTop, behavior: 'instant' });
             setTimeout(() => { isProgrammaticScroll.current = false; }, 100);
-        } else { // If no scrollbar, content is fully visible, effectively at scrollTop 0
+        } else { 
             isProgrammaticScroll.current = true;
             bookElement.scrollTo({ top: 0, behavior: 'instant' });
             setTimeout(() => { isProgrammaticScroll.current = false; }, 100);
         }
       }
     }
-    setScrollToGlobalOffset(null); // Reset trigger
-  }, [scrollToGlobalOffset]); // Only trigger on scrollToGlobalOffset
+    setScrollToGlobalOffset(null);
+  }, [scrollToGlobalOffset, currentPage, currentPageContent.length]); // Add dependencies
 
-  // New useEffect to handle scrolling AFTER page content has updated due to currentPage change
   useEffect(() => {
     if (pendingScrollOffsetInPage !== null && bookPaneRef.current && currentPageContent.length > 0) {
       const bookElement = bookPaneRef.current;
-      // Ensure the content for the currentPage is now reflected in currentPageContent
       if (bookElement.scrollHeight > bookElement.clientHeight) {
-        const scrollRatio = pendingScrollOffsetInPage / currentPageContent.length;
+        const scrollRatio = pendingScrollOffsetInPage / currentPageContent.length; // Use original content length
         const targetScrollTop = scrollRatio * (bookElement.scrollHeight - bookElement.clientHeight);
 
         isProgrammaticScroll.current = true;
@@ -237,9 +277,9 @@ function BookView() {
         bookElement.scrollTo({ top: 0, behavior: 'instant' });
         setTimeout(() => { isProgrammaticScroll.current = false; }, 100);
       }
-      setPendingScrollOffsetInPage(null); // Clear pending scroll
+      setPendingScrollOffsetInPage(null);
     }
-  }, [currentPageContent, pendingScrollOffsetInPage]); // Trigger when page content or pending offset changes
+  }, [currentPageContent, pendingScrollOffsetInPage]);
 
 
   const syncScroll = useCallback(
@@ -252,10 +292,8 @@ function BookView() {
       const scrollingElement = scrollingPaneRef.current;
       const targetElement = targetPaneRef.current;
 
-      // Ensure scrollHeight is greater than clientHeight to avoid division by zero
       if (scrollingElement.scrollHeight <= scrollingElement.clientHeight) return;
       if (targetElement.scrollHeight <= targetElement.clientHeight) return;
-
 
       const scrollPercentage = scrollingElement.scrollTop / (scrollingElement.scrollHeight - scrollingElement.clientHeight);
       const targetScrollTop = scrollPercentage * (targetElement.scrollHeight - targetElement.clientHeight);
@@ -263,7 +301,7 @@ function BookView() {
       if (Math.abs(targetElement.scrollTop - targetScrollTop) > 5) {
         isProgrammaticScroll.current = true;
         targetElement.scrollTop = targetScrollTop;
-        setTimeout(() => { isProgrammaticScroll.current = false; }, 50); // Reset after a short delay
+        setTimeout(() => { isProgrammaticScroll.current = false; }, 50);
       }
     }, 50),
     []
@@ -327,7 +365,7 @@ function BookView() {
       </div>
     );
   }
-  if (bookData.status === 'completed' && !fullMarkdownContent.current) { // Check fullMarkdownContent ref
+  if (bookData.status === 'completed' && !fullMarkdownContent.current) {
     return (
       <div style={{ padding: '20px', color: 'orange', textAlign: 'center' }}>
         <h2>{bookData.title || bookData.original_filename}</h2>
@@ -341,55 +379,47 @@ function BookView() {
 
   return (
     <div className="book-view-container">
-      {/* <div className="main-content-area"> This div might be useful if you have sidebars outside book/note panes */}
-        <div className="book-pane-wrapper"> {/* Wrapper for BookPane and its controls */}
+        <div className="book-pane-wrapper">
           <div className="book-pane-container" ref={bookPaneRef}>
             <BookPane
-              // Pass current page's content to BookPane
-              markdownContent={currentPageContent} 
-              imageUrls={bookData.image_urls} // Image URLs are global, not per page
+              markdownContent={highlightedPageContent} // USE HIGHLIGHTED CONTENT
+              imageUrls={bookData.image_urls}
               onTextSelect={handleTextSelect}
-              // ref={bookPaneRef} // forwardRef handles this
             />
           </div>
           <div className="pagination-controls">
             <button onClick={handlePreviousPage} disabled={currentPage === 1}>
               Previous
             </button>
-            {/* Wrap input and "Go" in a form or handle Enter key on input */}
             <form onSubmit={handleGoToPage} className="page-input-form">
               <span> Page </span>
               <input
                 type="number"
                 value={pageInput}
                 onChange={handlePageInputChange}
-                onBlur={handleGoToPage} // Optional: go to page on blur
+                onBlur={handleGoToPage}
                 min="1"
                 max={totalPages}
                 className="page-input"
               />
               <span> of {totalPages} </span>
-              {/* Optional: Add a "Go" button if not relying on Enter/Blur */}
-              {/* <button type="submit">Go</button> */}
             </form>
             <button onClick={handleNextPage} disabled={currentPage === totalPages}>
               Next
             </button>
           </div>
         </div>
-        <div className="note-pane-wrapper"> {/* Wrapper for NotePane */}
+        <div className="note-pane-wrapper">
           <div className="note-pane-container" ref={notePaneRef}>
             <NotePane
               bookId={bookId}
               selectedBookText={selectedBookText}
-              selectedScrollPercentage={selectedScrollPercentage} // Relative to current page
-              selectedGlobalCharOffset={selectedGlobalCharOffset} // Absolute offset
-              onNoteClick={handleNoteClick} // Expects globalCharOffset
-              // ref={notePaneRef} // forwardRef handles this
+              selectedScrollPercentage={selectedScrollPercentage}
+              selectedGlobalCharOffset={selectedGlobalCharOffset}
+              onNoteClick={handleNoteClick}
             />
           </div>
         </div>
-      {/* </div> */}
     </div>
   );
 }

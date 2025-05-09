@@ -1,42 +1,26 @@
-import React, { forwardRef } from 'react'; // Import forwardRef
-import ReactMarkdown from 'react-markdown'; // Import react-markdown
-import remarkGfm from 'remark-gfm'; // Import remark-gfm for GitHub Flavored Markdown
+import React, { forwardRef } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import rehypeRaw from 'rehype-raw'; // Import rehype-raw
 
-// Wrap the component with forwardRef
-// --- REMOVE onScroll from the prop list ---
-const BookPane = forwardRef(({ markdownContent, imageUrls, onTextSelect }, ref) => { // Accept onTextSelect prop and ref
-
-  // --- REMOVE this unused handleScroll function ---
-  /*
-  const handleScroll = (event) => {
-    // This function is no longer needed as scrolling is handled in BookView
-    // console.log('BookPane scrolling');
-    // if (onScroll) {
-    //   onScroll(event);
-    // }
-  };
-  */
-
-  // Function to handle text selection
+const BookPane = forwardRef(({ markdownContent, imageUrls, onTextSelect }, ref) => {
   const handleMouseUp = () => {
     const selection = window.getSelection();
     const selectedText = selection.toString().trim();
-    // Call the parent component's handler with the selected text or null if selection is empty
-    if (onTextSelect) { // Check if the prop is provided
+    if (onTextSelect) {
       onTextSelect(selectedText.length > 0 ? selectedText : null);
     }
   };
 
   return (
-    // --- REMOVE the onScroll attribute ---
-    <div className="book-pane" ref={ref} onMouseUp={handleMouseUp}> {/* Attach ref and onMouseUp listener */}
+    <div className="book-pane" ref={ref} onMouseUp={handleMouseUp}>
       <h2>Book Content</h2>
       {markdownContent ? (
         <ReactMarkdown
-          remarkPlugins={[remarkGfm]} // Enable GitHub Flavored Markdown
+          remarkPlugins={[remarkGfm]}
+          rehypePlugins={[rehypeRaw]} // ADD THIS PLUGIN to allow raw HTML (our span)
           children={markdownContent}
           components={{
-            // Custom renderer for images to ensure correct src paths
             img: ({ node, ...props }) => {
               // The backend provides URLs like /images/{filename}
               // We can use them directly if the static route is set up
@@ -51,5 +35,4 @@ const BookPane = forwardRef(({ markdownContent, imageUrls, onTextSelect }, ref) 
   );
 });
 
-// Export the component wrapped with forwardRef
 export default BookPane;
