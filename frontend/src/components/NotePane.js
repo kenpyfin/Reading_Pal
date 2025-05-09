@@ -3,8 +3,15 @@ import React, { useState, useEffect, useRef, forwardRef } from 'react';
 import './NotePane.css'; // Assuming you'll add some basic CSS
 
 // Wrap the component with forwardRef and accept new props
-const NotePane = forwardRef(({ bookId, selectedBookText, selectedScrollPercentage, onNoteClick }, ref) => { // ACCEPT NEW PROPS
-  const [notes, setNotes] = useState([]);
+const NotePane = forwardRef(({ 
+  bookId, 
+  selectedBookText, 
+  selectedScrollPercentage, 
+  selectedGlobalCharOffset, // Make sure this prop is received
+  onNoteClick, 
+  onNewNoteSaved // ACCEPT THE NEW PROP
+}, ref) => {
+  const [notes, setNotes] = useState([]); // This state is local to NotePane for display
   const [newNoteContent, setNewNoteContent] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -13,24 +20,10 @@ const NotePane = forwardRef(({ bookId, selectedBookText, selectedScrollPercentag
   const [llmLoading, setLlmLoading] = useState(false);
   const [llmQuestion, setLlmQuestion] = useState('');
   const [llmAskResponse, setLlmAskResponse] = useState(null);
-  // --- REMOVE or COMMENT OUT this line ---
-  // const [llmSummarizeResponse, setLlmSummarizeResponse] = useState(null);
   const [llmError, setLlmError] = useState(null);
 
 
-  // --- Enhancement 1: REMOVE or COMMENT OUT this useEffect block ---
-  // This effect is what was pre-filling the new note content.
-  /*
-  useEffect(() => {
-    if (selectedBookText !== null) { // Only update if text is selected or cleared
-      setNewNoteContent(selectedBookText || ''); // Use selected text, or clear if null
-    }
-  }, [selectedBookText]); // Dependency on selectedBookText prop
-  */
-  // The new note input will now remain empty by default.
-
-
-  // Fetch notes when bookId changes
+  // Fetch notes when bookId changes (for NotePane's internal display)
   useEffect(() => {
     const fetchNotes = async () => {
       if (!bookId) return;
@@ -47,7 +40,7 @@ const NotePane = forwardRef(({ bookId, selectedBookText, selectedScrollPercentag
         const sortedNotes = data.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
         setNotes(sortedNotes);
       } catch (err) {
-        console.error('Failed to fetch notes:', err);
+        console.error('Failed to fetch notes for NotePane:', err);
         setError(`Failed to load notes: ${err.message || 'Unknown error'}`);
       } finally {
         setLoading(false);
@@ -63,9 +56,9 @@ const NotePane = forwardRef(({ bookId, selectedBookText, selectedScrollPercentag
     const noteData = {
       book_id: bookId,
       content: newNoteContent.trim(),
-      source_text: selectedBookText || undefined, // Include source_text if available
-      // --- Enhancement 2: Include the captured scroll percentage ---
-      scroll_percentage: selectedScrollPercentage || undefined, // INCLUDE THE PERCENTAGE
+      source_text: selectedBookText || undefined,
+      scroll_percentage: selectedScrollPercentage !== null && selectedScrollPercentage !== undefined ? parseFloat(selectedScrollPercentage.toFixed(4)) : undefined,
+      global_character_offset: selectedGlobalCharOffset !== null && selectedGlobalCharOffset !== undefined ? selectedGlobalCharOffset : undefined, // INCLUDE THIS
     };
 
     try {
@@ -83,12 +76,20 @@ const NotePane = forwardRef(({ bookId, selectedBookText, selectedScrollPercentag
       }
 
       const savedNote = await response.json();
-      console.log('Note saved:', savedNote);
-      // Add the new note to the state and sort
+      console.log('Note saved in NotePane:', savedNote);
+
+      // Update NotePane's local list of notes for display
       setNotes(prevNotes => [...prevNotes, savedNote].sort((a, b) => new Date(a.created_at) - new Date(b.created_at)));
+      
+      // Call the callback prop to inform BookView
+      if (onNewNoteSaved) {
+        onNewNoteSaved(savedNote); // INFORM BookView
+      }
+
       setNewNoteContent(''); // Clear the input field
-      // Note: selectedBookText and selectedScrollPercentage are cleared by the parent (BookView) via prop update
-      // when a new selection is made or selection is cleared.
+      // selectedBookText, selectedScrollPercentage, selectedGlobalCharOffset are props.
+      // BookView should manage clearing its own state for these if desired after a note is saved.
+      // For example, BookView's handleNewNoteSaved could call setSelectedBookText(null), etc.
 
     } catch (err) {
       console.error('Failed to save note:', err);
@@ -96,52 +97,26 @@ const NotePane = forwardRef(({ bookId, selectedBookText, selectedScrollPercentag
     }
   };
 
-  // --- Enhancement 2: Add handler for Note Click ---
-  const handleNoteClickInternal = (note) => { // Use a different name to avoid conflict with prop
-      // Check if the note has a scroll percentage and the handler is provided by the parent
-      if (note.scroll_percentage !== null && note.scroll_percentage !== undefined && onNoteClick) {
-          onNoteClick(note.scroll_percentage); // Call the handler passed from parent (BookView)
+  const handleNoteClickInternal = (note) => {
+      // Use global_character_offset for jumping if available, otherwise fall back to scroll_percentage
+      if (note.global_character_offset !== null && note.global_character_offset !== undefined && onNoteClick) {
+          onNoteClick(note.global_character_offset); // Pass global_character_offset
+      } else if (note.scroll_percentage !== null && note.scroll_percentage !== undefined && onNoteClick) {
+          // This part is a fallback and might need adjustment in BookView's handleNoteClick
+          // if it strictly expects a global_character_offset.
+          // For now, we assume onNoteClick can handle a percentage if offset is not available,
+          // or BookView's handleNoteClick needs to be adapted.
+          // However, the primary mechanism is now global_character_offset.
+          console.warn("Note clicked without global_character_offset, attempting to use scroll_percentage. This may not be precise.");
+          // To make this work, BookView's handleNoteClick would need to differentiate.
+          // For now, let's prioritize global_character_offset.
+          // If you want to support scroll_percentage as a fallback, BookView's handleNoteClick
+          // would need to be more complex or you'd pass a different type of value.
+          // Sticking to global_character_offset for now for the primary click action.
       }
   };
 
 
-  // --- REMOVE or COMMENT OUT this entire function ---
-  /*
-  // Add handleSummarizeBook function (keep as is)
-  const handleSummarizeBook = async () => {
-    if (!bookId) return;
-    setLlmLoading(true);
-    setLlmAskResponse(null);
-    setLlmSummarizeResponse(null);
-    setLlmError(null);
-
-    try {
-      const response = await fetch('/api/llm/summarize', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ book_id: bookId }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-         throw new Error(data.detail || data.response || `HTTP error! status: ${response.status}`);
-      }
-
-      setLlmSummarizeResponse(data.response);
-
-    } catch (err) {
-      console.error('Failed to summarize book:', err);
-      setLlmError(`Failed to summarize: ${err.message || 'Unknown error'}`);
-    } finally {
-      setLlmLoading(false);
-    }
-  };
-  */
-
-  // Add handleAskLLM function (modify as instructed previously)
   const handleAskLLM = async () => {
     if (!bookId || !llmQuestion.trim()) {
         setLlmError("Please enter a question.");
@@ -149,8 +124,6 @@ const NotePane = forwardRef(({ bookId, selectedBookText, selectedScrollPercentag
     }
     setLlmLoading(true);
     setLlmAskResponse(null);
-    // --- REMOVE or COMMENT OUT this line ---
-    // setLlmSummarizeResponse(null);
     setLlmError(null);
 
     try {
@@ -160,11 +133,9 @@ const NotePane = forwardRef(({ bookId, selectedBookText, selectedScrollPercentag
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          book_id: bookId, // Ensure book_id is included
-          // --- Change key from 'text' to 'question' ---
+          book_id: bookId,
           question: llmQuestion.trim(),
-          // --- Include selectedBookText as context ---
-          context: selectedBookText || null, // Pass selected text, or null if none
+          context: selectedBookText || null, 
         }),
       });
 
@@ -197,37 +168,29 @@ const NotePane = forwardRef(({ bookId, selectedBookText, selectedScrollPercentag
     <div className="note-pane" ref={ref}> {/* Attach the ref */}
       <h2>Notes</h2>
 
-      {/* Display existing notes */}
       <div className="notes-list">
         {notes.length === 0 ? (
           <p>No notes yet. Add one below!</p>
         ) : (
           notes.map(note => (
-            // --- Enhancement 2: Make note item clickable ---
-            // Add onClick handler and a class for styling cursor
             <div
                 key={note.id}
-                className={`note-item ${note.scroll_percentage !== null ? 'clickable-note' : ''}`} // Add class if clickable
-                onClick={() => handleNoteClickInternal(note)} // CALL THE INTERNAL HANDLER
-                style={{ cursor: note.scroll_percentage !== null ? 'pointer' : 'default' }} // Change cursor
+                className={`note-item ${(note.global_character_offset !== null && note.global_character_offset !== undefined) ? 'clickable-note' : ''}`}
+                onClick={() => handleNoteClickInternal(note)}
+                style={{ cursor: (note.global_character_offset !== null && note.global_character_offset !== undefined) ? 'pointer' : 'default' }}
             >
-              {/* Display source text if available */}
               {note.source_text && (
                   <blockquote style={{ fontSize: '0.9em', color: '#555', borderLeft: '2px solid #ccc', paddingLeft: '10px', margin: '5px 0' }}>
                       {note.source_text}
                   </blockquote>
               )}
               <p>{note.content}</p>
-              {/* Optional: Display timestamp, edit/delete buttons */}
-              {/* <small>{new Date(note.created_at).toLocaleString()}</small> */}
-              {/* Optional: Display scroll percentage for debugging */}
-              {/* {note.scroll_percentage !== null && <small>Scroll: {note.scroll_percentage.toFixed(2)}</small>} */}
+              {/* <small>Offset: {note.global_character_offset}, Scroll %: {note.scroll_percentage !== null ? note.scroll_percentage.toFixed(2) : 'N/A'}</small> */}
             </div>
           ))
         )}
       </div>
 
-      {/* Input for new note */}
       <div className="new-note-form">
         <h3>Add New Note</h3>
         <textarea
@@ -240,40 +203,22 @@ const NotePane = forwardRef(({ bookId, selectedBookText, selectedScrollPercentag
         <button onClick={handleSaveNote} disabled={!newNoteContent.trim()}>
           Save Note
         </button>
-        {/* Optional: Add an indicator if the note is based on selection */}
         {selectedBookText && (
             <p style={{ fontSize: '0.9em', color: '#555', marginTop: '5px' }}>Note will be linked to selected text.</p>
         )}
-         {/* Optional: Add an indicator if scroll percentage was captured */}
-        {selectedScrollPercentage !== null && (
-            <p style={{ fontSize: '0.9em', color: '#555', marginTop: '5px' }}>Note will be linked to scroll position.</p>
+        {(selectedScrollPercentage !== null || selectedGlobalCharOffset !== null) && (
+            <p style={{ fontSize: '0.9em', color: '#555', marginTop: '5px' }}>Note will be linked to current location.</p>
         )}
 
       </div>
 
-      {/* LLM Interaction section */}
       <div className="llm-interaction">
         <h3>LLM Reading Assistance</h3>
-        {/* --- REMOVE or COMMENT OUT this button --- */}
-        {/*
-        <button onClick={handleSummarizeBook} disabled={llmLoading || !bookId} style={{ marginBottom: '15px' }}>
-             {llmLoading ? 'Summarizing...' : 'Summarize Book'}
-        </button>
-        */}
-        {/* --- REMOVE or COMMENT OUT this response display block --- */}
-        {/*
-        {llmSummarizeResponse && (
-            <div className="llm-response" style={{ marginTop: '10px', borderTop: '1px solid #eee', paddingTop: '10px' }}>
-                <h4>Summary:</h4>
-                <p>{llmSummarizeResponse}</p>
-            </div>
-        )}
-        */}
         <h4 style={{ marginTop: '20px' }}>Ask a Question</h4>
         <textarea
             value={llmQuestion}
             onChange={(e) => setLlmQuestion(e.target.value)}
-            placeholder="Ask a question about the book content..."
+            placeholder="Ask a question about the book content or selected text..."
             rows="3"
             style={{ width: '100%', marginBottom: '10px' }}
         />

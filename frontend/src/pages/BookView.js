@@ -91,6 +91,8 @@ function BookView() {
           throw new Error('Failed to fetch notes');
         }
         const notesData = await response.json();
+        // Sort notes by creation date or another relevant field if needed for consistent highlighting
+        notesData.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
         setNotes(notesData);
       } catch (err) {
         console.error('Error fetching notes:', err);
@@ -122,11 +124,25 @@ function BookView() {
       // Apply highlighting
       let tempHighlightedContent = pageContent;
       if (notes.length > 0) {
-        notes.forEach(note => {
+        // Sort notes by global_character_offset in descending order
+        // to avoid issues with nested or overlapping highlights when replacing.
+        // Highlighting longer matches first or those appearing later in the text first can be safer.
+        // Or, more robustly, process replacements on a copy and track offset changes.
+        // For simplicity, if source_text is unique enough, order might not be critical.
+        // Let's sort by offset to be somewhat systematic.
+        const sortedNotesForHighlighting = [...notes].sort((a, b) => {
+            if (a.global_character_offset === undefined || a.global_character_offset === null) return 1;
+            if (b.global_character_offset === undefined || b.global_character_offset === null) return -1;
+            return a.global_character_offset - b.global_character_offset;
+        });
+
+        sortedNotesForHighlighting.forEach(note => {
           // Ensure note.source_text and global_character_offset are valid
-          if (note.source_text && note.source_text.trim() !== "" && note.global_character_offset !== undefined) {
+          if (note.source_text && note.source_text.trim() !== "" && note.global_character_offset !== undefined && note.global_character_offset !== null) {
             const escapedSourceText = escapeRegExp(note.source_text);
-            const regex = new RegExp(escapedSourceText, 'g');
+            // Important: The regex needs to be applied to the current state of tempHighlightedContent,
+            // but the offsets are relative to the original fullMarkdownContent.
+            // This simple replace might fail if source_text is not unique or if highlights alter indices.
             
             const noteStartOffset = note.global_character_offset;
             const noteEndOffset = noteStartOffset + note.source_text.length;
@@ -136,10 +152,20 @@ function BookView() {
                  (noteEndOffset > start && noteEndOffset <= end) ||   // Note ends on this page
                  (noteStartOffset < start && noteEndOffset > end)      // Note spans this page
             ) {
-              // Only attempt replacement if the note's range overlaps with the current page
-              tempHighlightedContent = tempHighlightedContent.replace(regex, (match) => 
-                `<span class="highlighted-note-text" data-note-id="${note.id}">${match}</span>`
-              );
+              // Calculate the position of the source_text *within the current pageContent*
+              const startOnPage = Math.max(0, noteStartOffset - start);
+              const endOnPage = Math.min(CHARACTERS_PER_PAGE, noteEndOffset - start);
+              
+              // Extract the text to be highlighted from the *original* pageContent
+              // to avoid issues with already highlighted content
+              const textToHighlightOnPage = pageContent.substring(startOnPage, endOnPage);
+
+              if (textToHighlightOnPage && textToHighlightOnPage.trim() !== "") {
+                const regex = new RegExp(escapeRegExp(textToHighlightOnPage), 'g');
+                tempHighlightedContent = tempHighlightedContent.replace(regex, (match) => 
+                  `<span class="highlighted-note-text" data-note-id="${note.id}">${match}</span>`
+                );
+              }
             }
           }
         });
@@ -194,13 +220,12 @@ function BookView() {
             preSelectionRange.selectNodeContents(contentContainer);
             preSelectionRange.setEnd(range.startContainer, range.startOffset);
             
-            // Calculate startInPage carefully, considering existing HTML highlights
-            // This is tricky because preSelectionRange.toString() will give plain text
-            // We need to count characters in the *original* markdown, not the highlighted HTML
-            // For now, this calculation might be slightly off if selection is within/around highlights
-            // A more robust way would be to map selection back to original unhighlighted content.
-            // This is a known complexity. For now, we use the text length.
-            const startInPage = preSelectionRange.toString().length;
+            // This calculation of startInPage needs to be robust against existing HTML tags.
+            // A simple .toString().length on a range within mixed HTML/text content
+            // might not accurately reflect character offset in the original markdown.
+            // For now, we proceed with this, acknowledging its limitations.
+            // A more complex solution would involve mapping selection back to the raw currentPageContent.
+            const startInPage = preSelectionRange.toString().length; 
             
             const globalOffset = (currentPage - 1) * CHARACTERS_PER_PAGE + startInPage;
             setSelectedGlobalCharOffset(globalOffset);
@@ -210,6 +235,8 @@ function BookView() {
 
         const element = bookPaneRef.current;
         if (element.scrollHeight > element.clientHeight) {
+            // Calculate scroll percentage based on the start of the selection
+            // This is an approximation. A more precise way might involve the position of the range.
             const pageScrollPercentage = element.scrollTop / (element.scrollHeight - element.clientHeight);
             setSelectedScrollPercentage(pageScrollPercentage);
         } else {
@@ -226,11 +253,29 @@ function BookView() {
     }
   };
 
-  const handleNoteClick = (globalOffset) => {
-    if (globalOffset !== null && globalOffset !== undefined) {
-      setScrollToGlobalOffset(globalOffset);
+  // Handler for clicking a note in NotePane, expects global character offset
+  const handleNoteClick = (globalCharOffsetOfNote) => {
+    if (globalCharOffsetOfNote !== null && globalCharOffsetOfNote !== undefined) {
+      setScrollToGlobalOffset(globalCharOffsetOfNote);
     }
   };
+  
+  // Handler to be called when a new note is saved in NotePane
+  const handleNewNoteSaved = (newNote) => {
+    if (newNote) {
+      setNotes(prevNotes => {
+        const updatedNotes = [...prevNotes, newNote];
+        // Re-sort by creation date or another consistent criterion
+        updatedNotes.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+        return updatedNotes;
+      });
+      // Optionally, clear selection after note is saved
+      // setSelectedBookText(null);
+      // setSelectedGlobalCharOffset(null);
+      // setSelectedScrollPercentage(null);
+    }
+  };
+
 
   useEffect(() => {
     if (scrollToGlobalOffset === null || !fullMarkdownContent.current) return;
@@ -243,43 +288,47 @@ function BookView() {
       setCurrentPage(targetPage);
       setPendingScrollOffsetInPage(offsetWithinPage);
     } else {
-      if (bookPaneRef.current && currentPageContent.length > 0) { // Use currentPageContent for length
+      // Current page is already correct, just scroll
+      if (bookPaneRef.current && currentPageContent.length > 0) {
         const bookElement = bookPaneRef.current;
+        // Ensure scrollHeight is greater than clientHeight to avoid division by zero or negative scroll values
         if (bookElement.scrollHeight > bookElement.clientHeight) {
-            const scrollRatio = offsetWithinPage / currentPageContent.length; // Use original content length
+            // Calculate scroll position based on character offset within the current page's original content
+            const scrollRatio = offsetWithinPage / currentPageContent.length;
             const targetScrollTop = scrollRatio * (bookElement.scrollHeight - bookElement.clientHeight);
             
             isProgrammaticScroll.current = true;
-            bookElement.scrollTo({ top: targetScrollTop, behavior: 'instant' });
-            setTimeout(() => { isProgrammaticScroll.current = false; }, 100);
+            bookElement.scrollTo({ top: targetScrollTop, behavior: 'smooth' }); // Changed to 'smooth'
+            setTimeout(() => { isProgrammaticScroll.current = false; }, 300); // Increased timeout for smooth scroll
         } else { 
+            // Content is shorter than the view, scroll to top
             isProgrammaticScroll.current = true;
-            bookElement.scrollTo({ top: 0, behavior: 'instant' });
-            setTimeout(() => { isProgrammaticScroll.current = false; }, 100);
+            bookElement.scrollTo({ top: 0, behavior: 'smooth' });
+            setTimeout(() => { isProgrammaticScroll.current = false; }, 300);
         }
       }
     }
-    setScrollToGlobalOffset(null);
-  }, [scrollToGlobalOffset, currentPage, currentPageContent.length]); // Add dependencies
+    setScrollToGlobalOffset(null); // Reset after processing
+  }, [scrollToGlobalOffset, currentPage, currentPageContent.length, fullMarkdownContent]); // Added fullMarkdownContent
 
   useEffect(() => {
     if (pendingScrollOffsetInPage !== null && bookPaneRef.current && currentPageContent.length > 0) {
       const bookElement = bookPaneRef.current;
       if (bookElement.scrollHeight > bookElement.clientHeight) {
-        const scrollRatio = pendingScrollOffsetInPage / currentPageContent.length; // Use original content length
+        const scrollRatio = pendingScrollOffsetInPage / currentPageContent.length;
         const targetScrollTop = scrollRatio * (bookElement.scrollHeight - bookElement.clientHeight);
 
         isProgrammaticScroll.current = true;
-        bookElement.scrollTo({ top: targetScrollTop, behavior: 'instant' });
-        setTimeout(() => { isProgrammaticScroll.current = false; }, 100);
+        bookElement.scrollTo({ top: targetScrollTop, behavior: 'smooth' }); // Changed to 'smooth'
+        setTimeout(() => { isProgrammaticScroll.current = false; }, 300); // Increased timeout
       } else {
         isProgrammaticScroll.current = true;
-        bookElement.scrollTo({ top: 0, behavior: 'instant' });
-        setTimeout(() => { isProgrammaticScroll.current = false; }, 100);
+        bookElement.scrollTo({ top: 0, behavior: 'smooth' });
+        setTimeout(() => { isProgrammaticScroll.current = false; }, 300);
       }
-      setPendingScrollOffsetInPage(null);
+      setPendingScrollOffsetInPage(null); // Reset after scrolling
     }
-  }, [currentPageContent, pendingScrollOffsetInPage]);
+  }, [currentPageContent, pendingScrollOffsetInPage]); // currentPageContent implies current page is loaded
 
 
   const syncScroll = useCallback(
@@ -293,17 +342,26 @@ function BookView() {
       const targetElement = targetPaneRef.current;
 
       if (scrollingElement.scrollHeight <= scrollingElement.clientHeight) return;
-      if (targetElement.scrollHeight <= targetElement.clientHeight) return;
+      // Allow target to be scrolled even if it's shorter, to sync to top/bottom
+      // if (targetElement.scrollHeight <= targetElement.clientHeight) return; 
 
       const scrollPercentage = scrollingElement.scrollTop / (scrollingElement.scrollHeight - scrollingElement.clientHeight);
-      const targetScrollTop = scrollPercentage * (targetElement.scrollHeight - targetElement.clientHeight);
+      
+      let targetScrollTop;
+      if (targetElement.scrollHeight > targetElement.clientHeight) {
+        targetScrollTop = scrollPercentage * (targetElement.scrollHeight - targetElement.clientHeight);
+      } else {
+        // If target is not scrollable, sync to top if source is at top, else to bottom
+        targetScrollTop = scrollPercentage > 0.5 ? targetElement.scrollHeight : 0;
+      }
 
-      if (Math.abs(targetElement.scrollTop - targetScrollTop) > 5) {
+
+      if (Math.abs(targetElement.scrollTop - targetScrollTop) > 5) { // Threshold to prevent jitter
         isProgrammaticScroll.current = true;
         targetElement.scrollTop = targetScrollTop;
-        setTimeout(() => { isProgrammaticScroll.current = false; }, 50);
+        setTimeout(() => { isProgrammaticScroll.current = false; }, 50); // Shorter timeout for sync
       }
-    }, 50),
+    }, 50), // Debounce time
     []
   );
 
@@ -321,11 +379,11 @@ function BookView() {
       return () => {
         bookElement.removeEventListener('scroll', debouncedBookScroll);
         noteElement.removeEventListener('scroll', debouncedNoteScroll);
-        debouncedBookScroll.cancel();
+        debouncedBookScroll.cancel(); // Cancel lodash debounce on unmount
         debouncedNoteScroll.cancel();
       };
     }
-  }, [syncScroll]);
+  }, [syncScroll]); // syncScroll is memoized by useCallback
 
   const handlePreviousPage = () => {
     setCurrentPage((prev) => Math.max(1, prev - 1));
@@ -397,7 +455,7 @@ function BookView() {
                 type="number"
                 value={pageInput}
                 onChange={handlePageInputChange}
-                onBlur={handleGoToPage}
+                onBlur={handleGoToPage} // Or use a submit button for the form
                 min="1"
                 max={totalPages}
                 className="page-input"
@@ -415,8 +473,9 @@ function BookView() {
               bookId={bookId}
               selectedBookText={selectedBookText}
               selectedScrollPercentage={selectedScrollPercentage}
-              selectedGlobalCharOffset={selectedGlobalCharOffset}
-              onNoteClick={handleNoteClick}
+              selectedGlobalCharOffset={selectedGlobalCharOffset} // Pass this down
+              onNoteClick={handleNoteClick} // Renamed from onNoteClickInternal for clarity
+              onNewNoteSaved={handleNewNoteSaved} // PASS THE NEW PROP
             />
           </div>
         </div>
