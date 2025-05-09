@@ -2,11 +2,9 @@
 
 /* Styles for elements unique to NotePane or specific refinements */
 
-.note-pane h2 { /* Main heading for the pane */
-    margin-top: 0; /* Already in BookView.css, but good to confirm */
-    /* border-bottom: 1px solid #eee; /* From BookView.css */
-    /* padding-bottom: 10px; /* From BookView.css */
-}
+/* The .note-pane h2 styles are now handled by BookView.css to avoid redundancy.
+   If specific overrides for NotePane's h2 are needed in the future,
+   they can be added back here, possibly with a more specific class. */
 
 /* Style for the dedicated selected text display area */
 .selected-text-display {
