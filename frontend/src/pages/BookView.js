@@ -29,6 +29,7 @@ function BookView() {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [currentPageContent, setCurrentPageContent] = useState('');
+  const [pageInput, setPageInput] = useState(''); // State for the page input field
 
   // State for scrolling to a note's location
   const [scrollToGlobalOffset, setScrollToGlobalOffset] = useState(null);
@@ -109,6 +110,29 @@ function BookView() {
     }
   }, [bookData, currentPage, fullMarkdownContent.current]); // fullMarkdownContent.current won't trigger re-render, bookData dependency is key
 
+  // Update pageInput when currentPage changes (e.g., via Prev/Next buttons)
+  useEffect(() => {
+    setPageInput(String(currentPage));
+  }, [currentPage]);
+
+  const handlePageInputChange = (event) => {
+    setPageInput(event.target.value);
+  };
+
+  const handleGoToPage = (event) => {
+    // Allow submission via Enter key or form submission
+    if (event) event.preventDefault(); // Prevent form submission if it's in a form
+
+    const pageNum = parseInt(pageInput, 10);
+    if (!isNaN(pageNum) && pageNum >= 1 && pageNum <= totalPages) {
+      setCurrentPage(pageNum);
+    } else {
+      // Optionally, provide feedback for invalid input
+      // For now, just reset input to current valid page
+      setPageInput(String(currentPage)); 
+      alert(`Please enter a page number between 1 and ${totalPages}.`);
+    }
+  };
 
   const handleTextSelect = (text) => {
     setSelectedBookText(text);
@@ -332,7 +356,22 @@ function BookView() {
             <button onClick={handlePreviousPage} disabled={currentPage === 1}>
               Previous
             </button>
-            <span> Page {currentPage} of {totalPages} </span>
+            {/* Wrap input and "Go" in a form or handle Enter key on input */}
+            <form onSubmit={handleGoToPage} className="page-input-form">
+              <span> Page </span>
+              <input
+                type="number"
+                value={pageInput}
+                onChange={handlePageInputChange}
+                onBlur={handleGoToPage} // Optional: go to page on blur
+                min="1"
+                max={totalPages}
+                className="page-input"
+              />
+              <span> of {totalPages} </span>
+              {/* Optional: Add a "Go" button if not relying on Enter/Blur */}
+              {/* <button type="submit">Go</button> */}
+            </form>
             <button onClick={handleNextPage} disabled={currentPage === totalPages}>
               Next
             </button>
@@ -356,4 +395,3 @@ function BookView() {
 }
 
 export default BookView;
-

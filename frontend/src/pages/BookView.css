@@ -39,6 +39,56 @@
   flex-shrink: 0; /* Prevent controls from shrinking if space is tight */
 }
 
+.pagination-controls .page-input-form { /* Style for the form wrapping the input */
+  display: flex;
+  align-items: center;
+  margin: 0 10px; /* Add some margin around the input area */
+}
+
+.pagination-controls .page-input {
+  width: 50px; /* Adjust width as needed */
+  padding: 5px;
+  margin: 0 5px; /* Space around the input field */
+  text-align: center;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+
+/* Hide HTML5 number input spinners for a cleaner look (optional) */
+.pagination-controls .page-input::-webkit-outer-spin-button,
+.pagination-controls .page-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.pagination-controls .page-input[type=number] {
+  -moz-appearance: textfield; /* Firefox */
+}
+
+
+.pagination-controls button {
+  background-color: #007bff;
+  color: white;
+  border: none;
+  padding: 8px 15px;
+  /* margin: 0 10px; */ /* Margin is now on the form or individual buttons if needed */
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9em;
+}
+
+.pagination-controls button:disabled {
+  background-color: #ccc;
+  cursor: not-allowed;
+}
+
+.pagination-controls span {
+  /* margin: 0 10px; */ /* Adjust if needed, form has margin now */
+  font-size: 0.9em;
+  color: #333;
+}
+
+
 /* Optional: Basic styling for content within panes */
 .book-pane h2,
 .note-pane h2 {
