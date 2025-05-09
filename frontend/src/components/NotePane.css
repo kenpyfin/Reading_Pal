@@ -1,23 +1,115 @@
 /* frontend/src/components/NotePane.css */
 
-/* This file can be used for styles specific to the NotePane component */
-/* Styles for .note-pane, .notes-list, .note-item, .new-note-form, etc. */
-/* are already defined in BookView.css for the dual-pane layout context. */
-/* You can add component-specific overrides or additional styles here if needed. */
+/* Styles for elements unique to NotePane or specific refinements */
 
-/* Example: Style for individual note items */
-.note-item {
-    /* Styles defined in BookView.css */
+.note-pane h2 { /* Main heading for the pane */
+    margin-top: 0; /* Already in BookView.css, but good to confirm */
+    /* border-bottom: 1px solid #eee; /* From BookView.css */
+    /* padding-bottom: 10px; /* From BookView.css */
 }
 
-/* Example: Style for the new note textarea */
-.new-note-form textarea {
-    /* Styles defined in BookView.css */
+/* Style for the dedicated selected text display area */
+.selected-text-display {
+    margin-bottom: 20px;
+    padding: 10px 15px; /* More padding */
+    border: 1px solid #d1e7dd; /* Softer border color, matches LLM response idea */
+    border-radius: 4px;
+    background-color: #f8f9fa; /* Light background, similar to note-item */
 }
 
-/* Example: Style for the LLM interaction section (if uncommented) */
-.llm-interaction {
-    /* Styles defined in BookView.css */
+.selected-text-display h4 {
+    margin-top: 0;
+    margin-bottom: 8px;
+    font-size: 1.05em; /* Slightly adjusted size */
+    color: #212529; /* Darker text */
 }
 
-/* Add any other NotePane specific styles here */
+.selected-text-display blockquote {
+    margin: 0 0 5px 0; /* Adjusted margin */
+    padding: 0 10px;
+    font-style: italic;
+    color: #495057; /* Softer text color */
+    border-left: 3px solid #adb5bd; /* Softer border */
+    max-height: 150px; /* Limit height and make scrollable if needed */
+    overflow-y: auto; /* Add scroll for overflow */
+}
+
+.selected-text-display .location-info {
+    font-size: 0.85em; /* Slightly larger */
+    color: #6c757d; /* Softer color */
+    margin-top: 5px;
+    margin-bottom: 0;
+}
+
+/* Textarea styling (applies to both new note and LLM question) */
+/* These will refine or override styles from BookView.css if needed */
+.note-pane .new-note-form textarea,
+.note-pane .llm-interaction textarea {
+    width: 100%; /* Ensures full width within its container */
+    box-sizing: border-box; /* Includes padding and border in the element's total width and height */
+    padding: 10px; /* Consistent padding from BookView.css */
+    margin-bottom: 10px; /* Consistent margin from BookView.css */
+    border: 1px solid #ced4da; /* Standard border color */
+    border-radius: 4px; /* Standard border radius */
+    font-family: inherit;
+    font-size: inherit;
+    resize: vertical; /* Allow vertical resize */
+}
+
+/* LLM Interaction specific styles */
+.llm-interaction .error-message { /* For LLM specific errors */
+    color: #dc3545; /* Bootstrap danger color */
+    margin-top: 10px;
+    font-size: 0.9em;
+}
+/* .llm-response styling is primarily from BookView.css */
+
+/* Notes List specific styles */
+.notes-list {
+    margin-top: 25px; /* Space above the notes list section */
+}
+
+.notes-list h3 {
+    margin-bottom: 10px; /* Space below the "Saved Notes" heading */
+}
+
+/* .note-item styling is primarily from BookView.css */
+/* Add specific styles for content within .note-item if needed */
+.notes-list .note-item .note-source-text { /* For source_text display within a note */
+    font-size: 0.9em;
+    color: #6c757d; /* Softer color */
+    border-left: 2px solid #dee2e6; /* Light border */
+    padding-left: 10px;
+    margin: 5px 0 10px 0;
+    font-style: italic;
+    max-height: 100px; /* Limit height of quoted text in note */
+    overflow-y: auto; /* Add scroll for overflow */
+}
+
+.notes-list .note-item .note-content-display { /* Main content of the note */
+    margin-bottom: 8px; /* Space below note content */
+    word-wrap: break-word; /* Ensure long words break */
+}
+
+.notes-list .note-item .note-meta-display { /* Timestamp */
+    color: #6c757d;
+    font-size: 0.8em;
+    display: block; /* Ensure it takes its own line */
+}
+
+/* Clickable note styling (enhances BookView.css) */
+.clickable-note {
+    cursor: pointer;
+}
+
+.clickable-note:hover {
+    background-color: #e9ecef; /* Slightly darker hover than note-item's base */
+    border-color: #ced4da; /* Darken border on hover */
+}
+
+/* General error message styling if needed for note saving errors, etc. */
+.note-pane .error-message { /* A general error class if used outside LLM */
+    color: #dc3545;
+    font-size: 0.9em;
+    margin-top: 5px;
+}

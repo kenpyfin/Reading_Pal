@@ -1,14 +1,14 @@
 // Import forwardRef if not already imported
 import React, { useState, useEffect, useRef, forwardRef } from 'react';
-import './NotePane.css'; // Assuming you'll add some basic CSS
+import './NotePane.css'; // Ensure this CSS file is imported
 
 // Wrap the component with forwardRef and accept new props
-const NotePane = forwardRef(({ 
-  bookId, 
-  selectedBookText, 
-  selectedScrollPercentage, 
+const NotePane = forwardRef(({
+  bookId,
+  selectedBookText,
+  selectedScrollPercentage,
   selectedGlobalCharOffset, // Make sure this prop is received
-  onNoteClick, 
+  onNoteClick,
   onNewNoteSaved // ACCEPT THE NEW PROP
 }, ref) => {
   const [notes, setNotes] = useState([]); // This state is local to NotePane for display
@@ -101,21 +101,9 @@ const NotePane = forwardRef(({
   };
 
   const handleNoteClickInternal = (note) => {
-      // Use global_character_offset for jumping if available, otherwise fall back to scroll_percentage
+      // Use global_character_offset for jumping if available
       if (note.global_character_offset !== null && note.global_character_offset !== undefined && onNoteClick) {
           onNoteClick(note.global_character_offset); // Pass global_character_offset
-      } else if (note.scroll_percentage !== null && note.scroll_percentage !== undefined && onNoteClick) {
-          // This part is a fallback and might need adjustment in BookView's handleNoteClick
-          // if it strictly expects a global_character_offset.
-          // For now, we assume onNoteClick can handle a percentage if offset is not available,
-          // or BookView's handleNoteClick needs to be adapted.
-          // However, the primary mechanism is now global_character_offset.
-          console.warn("Note clicked without global_character_offset, attempting to use scroll_percentage. This may not be precise.");
-          // To make this work, BookView's handleNoteClick would need to differentiate.
-          // For now, let's prioritize global_character_offset.
-          // If you want to support scroll_percentage as a fallback, BookView's handleNoteClick
-          // would need to be more complex or you'd pass a different type of value.
-          // Sticking to global_character_offset for now for the primary click action.
       }
   };
 
@@ -163,78 +151,86 @@ const NotePane = forwardRef(({
     return <div className="note-pane" ref={ref}>Loading notes...</div>;
   }
 
-  if (error) {
+  if (error && notes.length === 0) { // Show error only if there are no notes to display
     return <div className="note-pane" ref={ref} style={{ color: 'red' }}>Error loading notes: {error}</div>;
   }
 
   return (
     <div className="note-pane" ref={ref}> {/* Attach the ref */}
-      <h2>Notes</h2>
+      <h2>Notes & LLM Insights</h2> {/* UPDATED Heading */}
 
-      <div className="notes-list">
-        {notes.length === 0 ? (
-          <p>No notes yet. Add one below!</p>
-        ) : (
-          notes.map(note => (
-            <div
-                key={note.id}
-                className={`note-item ${(note.global_character_offset !== null && note.global_character_offset !== undefined) ? 'clickable-note' : ''}`}
-                onClick={() => handleNoteClickInternal(note)}
-                style={{ cursor: (note.global_character_offset !== null && note.global_character_offset !== undefined) ? 'pointer' : 'default' }}
-            >
-              {note.source_text && (
-                  <blockquote style={{ fontSize: '0.9em', color: '#555', borderLeft: '2px solid #ccc', paddingLeft: '10px', margin: '5px 0' }}>
-                      {note.source_text}
-                  </blockquote>
-              )}
-              <p>{note.content}</p>
-              {/* <small>Offset: {note.global_character_offset}, Scroll %: {note.scroll_percentage !== null ? note.scroll_percentage.toFixed(2) : 'N/A'}</small> */}
-            </div>
-          ))
-        )}
-      </div>
+      {/* ADDED: Dedicated area for displaying selected text */}
+      {selectedBookText && (
+        <div className="selected-text-display">
+          <h4>Selected Text from Book:</h4>
+          <blockquote>
+            {selectedBookText}
+          </blockquote>
+          {(selectedScrollPercentage !== null || selectedGlobalCharOffset !== null) && (
+            <p className="location-info">
+              This text is linked to the current location in the book.
+            </p>
+          )}
+        </div>
+      )}
 
       <div className="new-note-form">
         <h3>Add New Note</h3>
         <textarea
           value={newNoteContent}
           onChange={(e) => setNewNoteContent(e.target.value)}
-          placeholder="Write your note here..."
+          placeholder="Write your note here, referencing the selected text above if any..."
           rows="4"
-          style={{ width: '100%', marginBottom: '10px' }}
+          // Inline style removed, will be handled by CSS
         />
         <button onClick={handleSaveNote} disabled={!newNoteContent.trim()}>
           Save Note
         </button>
-        {selectedBookText && (
-            <p style={{ fontSize: '0.9em', color: '#555', marginTop: '5px' }}>Note will be linked to selected text.</p>
-        )}
-        {(selectedScrollPercentage !== null || selectedGlobalCharOffset !== null) && (
-            <p style={{ fontSize: '0.9em', color: '#555', marginTop: '5px' }}>Note will be linked to current location.</p>
-        )}
-
+        {/* REMOVED conditional messages about linking, now covered by selected-text-display */}
       </div>
 
       <div className="llm-interaction">
         <h3>LLM Reading Assistance</h3>
-        <h4 style={{ marginTop: '20px' }}>Ask a Question</h4>
+        {/* <h4 style={{ marginTop: '20px' }}>Ask a Question</h4> REMOVED - Redundant with section H3 */}
         <textarea
             value={llmQuestion}
             onChange={(e) => setLlmQuestion(e.target.value)}
-            placeholder="Ask a question about the book content or selected text..."
+            placeholder="Ask a question about the book content or the selected text above..."
             rows="3"
-            style={{ width: '100%', marginBottom: '10px' }}
+            // Inline style removed, will be handled by CSS
         />
         <button onClick={handleAskLLM} disabled={llmLoading || !bookId || !llmQuestion.trim()}>
             {llmLoading ? 'Asking...' : 'Ask LLM'}
         </button>
-        {llmError && <p style={{ color: 'red' }}>{llmError}</p>}
+        {llmError && <p className="error-message">{llmError}</p>}
         {llmAskResponse && (
-            <div className="llm-response" style={{ marginTop: '15px', borderTop: '1px solid #eee', paddingTop: '10px' }}>
+            <div className="llm-response">
                 <h4>LLM Response:</h4>
                 <p>{llmAskResponse}</p>
             </div>
         )}
+      </div>
+      
+      <div className="notes-list">
+        <h3>Saved Notes</h3>
+        {error && notes.length > 0 && <p className="error-message">Error loading notes: {error}. Displaying cached notes.</p>}
+        {notes.length === 0 && !loading && <p>No notes yet. Add one above!</p>}
+        {notes.map(note => (
+          <div
+              key={note.id}
+              className={`note-item ${(note.global_character_offset !== null && note.global_character_offset !== undefined) ? 'clickable-note' : ''}`}
+              onClick={() => handleNoteClickInternal(note)}
+              // Inline style for cursor removed, will be handled by CSS
+          >
+            {note.source_text && (
+                <blockquote className="note-source-text"> {/* ADDED className */}
+                    <em>Source: "{note.source_text}"</em>
+                </blockquote>
+            )}
+            <p className="note-content-display">{note.content}</p> {/* ADDED className */}
+            <small className="note-meta-display">{new Date(note.created_at).toLocaleString()}</small> {/* ADDED className */}
+          </div>
+        ))}
       </div>
     </div>
   );
