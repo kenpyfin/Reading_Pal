@@ -240,57 +240,146 @@ function BookView() {
     }
   };
 
-  const handleTextSelect = (text) => { // text is window.getSelection().toString()
-    console.log("[BookView - handleTextSelect] Raw selection text:", `"${text}"`);
-    if (bookPaneRef.current && text && text.trim() !== "") {
+  const handleTextSelect = (textFromBookPane) => { // textFromBookPane is selection.toString()
+    setSelectedBookText(textFromBookPane); // Store the selected text as is
+
+    if (bookPaneRef.current && textFromBookPane && textFromBookPane.trim() !== "") {
       const selection = window.getSelection();
       if (selection && selection.rangeCount > 0) {
-        const pageText = currentPageContent; // Plain text of the current page
-        const selectionText = text; // Use the passed-in text which is selection.toString()
+        const range = selection.getRangeAt(0);
+        const bookPaneElement = bookPaneRef.current; // This is div.book-pane-container
+
+        // Calculate character offset from the start of the bookPaneElement to the start of the selection
+        // let charCount = 0; // Not used in this version
+        // let foundStart = false; // Not used in this version
+
+        // Create a range that spans from the start of bookPaneElement to the start of the selection
+        // const preSelectionRange = document.createRange(); // Not used in this version
+        // preSelectionRange.selectNodeContents(bookPaneElement); // Select all content within bookPaneElement
+        // preSelectionRange.setEnd(range.startContainer, range.startOffset); // Set end to selection start
+
+        // The toString().length of this preSelectionRange can be a good approximation of the character offset
+        // *within the rendered content of the current page*.
+        // This will include characters from existing highlight spans if any.
+        // This is an issue if we need an offset relative to *plain text*.
+
+        // For a more accurate offset relative to PLAIN TEXT (currentPageContent):
+        // We still need to map the DOM selection to the plain text.
+        // The most robust way is to iterate text nodes.
 
         let startInPage = -1;
-        if (pageText && selectionText) {
-            startInPage = pageText.indexOf(selectionText);
-        }
+        const container = bookPaneRef.current; // The element whose plain text content matches currentPageContent
+                                             // (or should, if highlighting is done carefully)
         
-        console.log("[BookView - handleTextSelect] Trying to find selectionText in currentPageContent.");
-        console.log("[BookView - handleTextSelect] selectionText (length " + selectionText.length + "):", `"${selectionText}"`);
-        // console.log("[BookView - handleTextSelect] currentPageContent (length " + pageText.length + ", first 100 chars):", `"${pageText.substring(0,100)}..."`);
-        console.log("[BookView - handleTextSelect] Calculated startInPage (from indexOf):", startInPage);
+        if (container) {
+            const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
+            let currentOffset = 0;
+            let textNode;
+            let selectionStartNode = range.startContainer;
+            let selectionStartOffset = range.startOffset;
+
+            // If selection starts in an element node (e.g., a span), find the actual text node and offset
+            if (selectionStartNode.nodeType !== Node.TEXT_NODE) {
+                // This can happen if selection starts at the boundary of an element.
+                // Try to find the first text node within or after.
+                // This part can get complex. For simplicity, if it's not a text node,
+                // the offset might be less accurate with the simple walker.
+                // A common case: selection starts in a <span>. range.startContainer is the <span>.
+                // We need to find the text node inside it or the next text node.
+                let child = selectionStartNode.firstChild;
+                let tempOffset = 0; // Tracks character offset within the children of selectionStartNode
+                
+                // Iterate through children of the element node (selectionStartNode)
+                // to find the text node that contains the start of the selection
+                // and adjust selectionStartOffset to be relative to that text node.
+                let foundTextNode = false;
+                function findTextNodeRecursive(node, targetDomOffset) {
+                    let currentDomOffset = 0;
+                    for (let i = 0; i < node.childNodes.length; i++) {
+                        const childNode = node.childNodes[i];
+                        if (childNode.nodeType === Node.TEXT_NODE) {
+                            if (currentDomOffset + childNode.textContent.length >= targetDomOffset) {
+                                selectionStartNode = childNode;
+                                selectionStartOffset = targetDomOffset - currentDomOffset;
+                                foundTextNode = true;
+                                return true; // Found
+                            }
+                            currentDomOffset += childNode.textContent.length;
+                        } else if (childNode.nodeType === Node.ELEMENT_NODE) {
+                            if (findTextNodeRecursive(childNode, targetDomOffset - currentDomOffset)) {
+                                return true; // Found in recursion
+                            }
+                            // If not found in recursion, add its textContent length to currentDomOffset
+                            // This assumes textContent length is a good proxy for DOM offset contribution
+                            currentDomOffset += childNode.textContent.length; 
+                        }
+                    }
+                    return false; // Not found in this branch
+                }
+
+                if (range.startContainer.nodeType === Node.ELEMENT_NODE) {
+                    findTextNodeRecursive(range.startContainer, range.startOffset);
+                }
+                
+                if (!foundTextNode) {
+                    // Fallback or warning if we couldn't pinpoint the text node.
+                    // This might happen if selection is in an empty element or complex structure.
+                    console.warn("[BookView - handleTextSelect] Could not precisely map element selection to a text node. Offset might be less accurate.");
+                    // As a rough fallback, we might try to use preSelectionRange.toString().length,
+                    // but this is what we are trying to avoid due to its own inaccuracies.
+                    // For now, we'll proceed, and if startInPage remains -1, it will be handled.
+                }
+            }
+
+
+            while ((textNode = walker.nextNode())) {
+                if (textNode === selectionStartNode) {
+                    startInPage = currentOffset + selectionStartOffset;
+                    break;
+                }
+                // Only count text that is not part of our highlight spans for offset calculation
+                // This check is tricky because the walker gives us raw text nodes.
+                // If a highlight span splits a text node, the walker sees multiple text nodes.
+                // The key is that `currentPageContent` is the *source of truth* for plain text.
+                // The `global_character_offset` should always refer to this plain text.
+                currentOffset += textNode.textContent.length;
+            }
+        }
+
+        console.log("[BookView - handleTextSelect] Selection Text:", `"${textFromBookPane}"`);
+        console.log("[BookView - handleTextSelect] Calculated startInPage (DOM Walker):", startInPage);
 
         if (startInPage !== -1) {
             const globalOffset = (currentPage - 1) * CHARACTERS_PER_PAGE + startInPage;
-            // Use selectionText.length because that's what the user selected.
-            // The canonical text is what's stored in fullMarkdownContent.
-            const canonicalSelectedText = fullMarkdownContent.current.substring(globalOffset, globalOffset + selectionText.length);
             
-            setSelectedBookText(canonicalSelectedText);
+            // Get the canonical selected text from fullMarkdownContent using the calculated globalOffset
+            // and the length of the user's visual selection.
+            const canonicalSelectedText = fullMarkdownContent.current.substring(globalOffset, globalOffset + textFromBookPane.length);
+            
+            setSelectedBookText(canonicalSelectedText); // Store the canonical version
             setSelectedGlobalCharOffset(globalOffset);
             console.log("[BookView - handleTextSelect] Successfully calculated: globalOffset:", globalOffset);
             console.log("[BookView - handleTextSelect] canonicalSelectedText (length " + canonicalSelectedText.length + "):", `"${canonicalSelectedText}"`);
             
-            const element = bookPaneRef.current;
+            const element = bookPaneRef.current; // This is div.book-pane-container
             if (element.scrollHeight > element.clientHeight) {
                 const pageScrollPercentage = element.scrollTop / (element.scrollHeight - element.clientHeight);
                 setSelectedScrollPercentage(pageScrollPercentage);
-                console.log("[BookView - handleTextSelect] Scroll Percentage:", pageScrollPercentage);
             } else {
                 setSelectedScrollPercentage(0);
             }
         } else {
-            console.warn("[BookView - handleTextSelect] indexOf failed to find selectionText within currentPageContent. Note location data (global offset) will not be set. Selected text will still be available for LLM.");
-            setSelectedBookText(selectionText); // Keep the user's selection for LLM context
-            setSelectedGlobalCharOffset(null);  // Explicitly nullify if not found
-            setSelectedScrollPercentage(null); // Explicitly nullify
+            console.warn("[BookView - handleTextSelect] DOM Walker failed to find selection start. Note location data (global offset) will not be set. Selected text will still be available for LLM.");
+            setSelectedBookText(textFromBookPane); // Keep user's visual selection for LLM
+            setSelectedGlobalCharOffset(null);
+            setSelectedScrollPercentage(null);
         }
-      } else { // No selection or range
-        console.log("[BookView - handleTextSelect] No selection or rangeCount is 0.");
+      } else {
         setSelectedBookText(null);
         setSelectedGlobalCharOffset(null);
         setSelectedScrollPercentage(null);
       }
-    } else { // No text selected or bookPaneRef not available
-      console.log("[BookView - handleTextSelect] No text selected or bookPaneRef is null.");
+    } else {
       setSelectedBookText(null);
       setSelectedGlobalCharOffset(null);
       setSelectedScrollPercentage(null);
