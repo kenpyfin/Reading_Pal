@@ -1,16 +1,16 @@
 // Import forwardRef if not already imported
-import React, { useState, useEffect, useRef, forwardRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react'; // Removed forwardRef
 import './NotePane.css'; // Ensure this CSS file is imported
 
-// Wrap the component with forwardRef and accept new props
-const NotePane = forwardRef(({
+// NotePane no longer uses forwardRef as the ref is not passed from BookView for its root
+const NotePane = ({ // Removed ref from props
   bookId,
   selectedBookText,
   selectedScrollPercentage,
   selectedGlobalCharOffset, // Make sure this prop is received
   onNoteClick,
   onNewNoteSaved // ACCEPT THE NEW PROP
-}, ref) => {
+}) => {
   const [notes, setNotes] = useState([]); // This state is local to NotePane for display
   const [newNoteContent, setNewNoteContent] = useState('');
   const [loading, setLoading] = useState(true);
@@ -150,15 +150,15 @@ const NotePane = forwardRef(({
 
 
   if (loading) {
-    return <div className="note-pane" ref={ref}>Loading notes...</div>;
+    return <div className="note-pane">Loading notes...</div>; // Removed ref
   }
 
   if (error && notes.length === 0) { // Show error only if there are no notes to display
-    return <div className="note-pane" ref={ref} style={{ color: 'red' }}>Error loading notes: {error}</div>;
+    return <div className="note-pane" style={{ color: 'red' }}>Error loading notes: {error}</div>; // Removed ref
   }
 
   return (
-    <div className="note-pane" ref={ref}> {/* Attach the ref */}
+    <div className="note-pane"> {/* Removed ref, root div of NotePane */}
       <h2>Notes & LLM Insights</h2>
 
       {/* ADDED: Dedicated area for displaying selected text */}
@@ -236,6 +236,6 @@ const NotePane = forwardRef(({
       </div>
     </div>
   );
-});
+}; // Removed forwardRef closing
 
 export default NotePane;

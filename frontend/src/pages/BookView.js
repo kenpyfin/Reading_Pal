@@ -22,8 +22,9 @@ function BookView() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  const bookPaneRef = useRef(null);
-  const notePaneRef = useRef(null);
+  // Refs for the scrollable container divs
+  const bookPaneContainerRef = useRef(null);
+  const notePaneContainerRef = useRef(null);
   const isProgrammaticScroll = useRef(false);
   const fullMarkdownContent = useRef(''); // To store the full markdown
 
@@ -208,10 +209,10 @@ function BookView() {
         setHighlightedPageContent(plainPageText); 
       }
       
-      if (bookPaneRef.current) {
+      if (bookPaneContainerRef.current) {
         if (pendingScrollOffsetInPage === null) {
             isProgrammaticScroll.current = true;
-            bookPaneRef.current.scrollTop = 0;
+            bookPaneContainerRef.current.scrollTop = 0;
             setTimeout(() => { isProgrammaticScroll.current = false; }, 100);
         }
       }
@@ -247,14 +248,14 @@ function BookView() {
   const handleTextSelect = (textFromBookPane) => { // textFromBookPane is selection.toString()
     setSelectedBookText(textFromBookPane); // Store the selected text as is
 
-    if (bookPaneRef.current && textFromBookPane && textFromBookPane.trim() !== "") {
+    if (bookPaneContainerRef.current && textFromBookPane && textFromBookPane.trim() !== "") {
       const selection = window.getSelection();
       if (selection && selection.rangeCount > 0) {
         const range = selection.getRangeAt(0);
-        const bookPaneElement = bookPaneRef.current; // This is div.book-pane-container
+        const bookPaneElement = bookPaneContainerRef.current; // This is div.book-pane-container
 
         let startInPage = -1;
-        const container = bookPaneRef.current; 
+        const container = bookPaneContainerRef.current; 
         
         if (container) {
             const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
@@ -319,7 +320,7 @@ function BookView() {
             logger.debug("[BookView - handleTextSelect] Successfully calculated: globalOffset:", globalOffset);
             logger.debug("[BookView - handleTextSelect] canonicalSelectedText (length " + canonicalSelectedText.length + "):", `"${canonicalSelectedText}"`);
             
-            const element = bookPaneRef.current; 
+            const element = bookPaneContainerRef.current; 
             if (element.scrollHeight > element.clientHeight) {
                 const pageScrollPercentage = element.scrollTop / (element.scrollHeight - element.clientHeight);
                 setSelectedScrollPercentage(pageScrollPercentage);
@@ -398,12 +399,12 @@ function BookView() {
     // If already on the correct page, proceed to scroll within this page
     logger.info(`[ScrollToNoteEffect] Already on target page ${currentPage}. Proceeding with scroll.`);
     
-    if (!bookPaneRef.current) {
-        logger.warn("[ScrollToNoteEffect] bookPaneRef.current is null. Cannot scroll.");
+    if (!bookPaneContainerRef.current) {
+        logger.warn("[ScrollToNoteEffect] bookPaneContainerRef.current is null. Cannot scroll.");
         setScrollToGlobalOffset(null); // Reset
         return;
     }
-    const bookElement = bookPaneRef.current;
+    const bookElement = bookPaneContainerRef.current;
 
     // Cleanup previous scroll target highlight
     if (scrollTargetHighlightRef.current && scrollTargetHighlightRef.current.parentNode) {
@@ -551,8 +552,8 @@ function BookView() {
 
 
   useEffect(() => {
-    if (pendingScrollOffsetInPage !== null && bookPaneRef.current && currentPageContent.length > 0) {
-      const bookElement = bookPaneRef.current;
+    if (pendingScrollOffsetInPage !== null && bookPaneContainerRef.current && currentPageContent.length > 0) {
+      const bookElement = bookPaneContainerRef.current;
       // The DOM needs to be updated with currentPageContent before we can find the offset.
       // This effect runs *after* currentPageContent is updated and the DOM reflects it.
       
@@ -623,10 +624,10 @@ function BookView() {
 
       setTimeout(() => { isProgrammaticScroll.current = false; }, 300);
       setPendingScrollOffsetInPage(null); // Reset after scrolling
-    } else if (pendingScrollOffsetInPage !== null && bookPaneRef.current && currentPageContent.length === 0 && pendingScrollOffsetInPage === 0) {
+    } else if (pendingScrollOffsetInPage !== null && bookPaneContainerRef.current && currentPageContent.length === 0 && pendingScrollOffsetInPage === 0) {
         // Handle case where page is empty and offset is 0 (scroll to top)
         isProgrammaticScroll.current = true;
-        bookPaneRef.current.scrollTop = 0;
+        bookPaneContainerRef.current.scrollTop = 0;
         setTimeout(() => { isProgrammaticScroll.current = false; }, 300);
         setPendingScrollOffsetInPage(null);
     }
@@ -664,12 +665,12 @@ function BookView() {
   );
 
   useEffect(() => {
-    const bookElement = bookPaneRef.current;
-    const noteElement = notePaneRef.current;
+    const bookElement = bookPaneContainerRef.current; // Use container ref
+    const noteElement = notePaneContainerRef.current; // Use container ref
 
     if (bookElement && noteElement) {
-      const debouncedBookScroll = () => syncScroll(bookPaneRef, notePaneRef);
-      const debouncedNoteScroll = () => syncScroll(notePaneRef, bookPaneRef);
+      const debouncedBookScroll = () => syncScroll(bookPaneContainerRef, notePaneContainerRef);
+      const debouncedNoteScroll = () => syncScroll(notePaneContainerRef, bookPaneContainerRef);
 
       bookElement.addEventListener('scroll', debouncedBookScroll);
       noteElement.addEventListener('scroll', debouncedNoteScroll);
@@ -736,7 +737,7 @@ function BookView() {
   return (
     <div className="book-view-container">
         <div className="book-pane-wrapper">
-          <div className="book-pane-container" ref={bookPaneRef}>
+          <div className="book-pane-container" ref={bookPaneContainerRef}>
             <BookPane
               markdownContent={highlightedPageContent} 
               imageUrls={bookData.image_urls}
@@ -766,7 +767,7 @@ function BookView() {
           </div>
         </div>
         <div className="note-pane-wrapper">
-          <div className="note-pane-container" ref={notePaneRef}>
+          <div className="note-pane-container" ref={notePaneContainerRef}>
             <NotePane
               bookId={bookId}
               selectedBookText={selectedBookText}
