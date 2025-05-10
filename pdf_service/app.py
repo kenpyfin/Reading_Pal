@@ -139,19 +139,25 @@ def reformat_markdown_with_ollama(md_text):
     reformatted_chunks = []
     
     # Enhanced System Prompt for Ollama
-    system_prompt = """You are an expert in Markdown. Your task is to reformat the given Markdown text to improve its readability, consistency, and structure.
-Strictly adhere to the following:
-1.  Preserve ALL original content, including text, headings, lists, code blocks, tables, and image links (e.g., ![](image.png)). Do NOT alter or remove any content.
-2.  Ensure standard Markdown syntax is used. Correct any non-standard or malformed Markdown.
-3.  Improve formatting for lists, code blocks, and blockquotes for clarity.
-4.  Maintain the original heading levels.
-5.  Do NOT add any conversational text, apologies, or explanations. Output ONLY the reformatted Markdown text.
-6.  If the input is already well-formatted, return it as is.
-7.  Pay close attention to image links like `![](path/to/image.png)` or `![alt text](path/to/image.png)` and ensure they are preserved exactly as they appear in the input.
-Reformat this markdown:
+    system_prompt = """You are a meticulous and precise Markdown reformatting tool. Your ONLY task is to reformat the given Markdown text to improve its readability and ensure consistent, standard Markdown syntax.
+
+**CRITICAL INSTRUCTIONS - ADHERE STRICTLY:**
+1.  **NO CONTENT ALTERATION:** You MUST preserve ALL original text content VERBATIM. This includes all words, sentences, paragraphs, headings, list items, code within code blocks, table cell content, etc. Do NOT summarize, expand, rephrase, or change the meaning of ANY content.
+2.  **EXACT IMAGE LINK PRESERVATION:** Image links (e.g., `![](path/to/image.png)` or `![alt text](path/to/image.png)`) MUST be preserved EXACTLY as they appear in the input. Do not modify paths, alt text, or the link syntax in any way.
+3.  **STANDARD MARKDOWN SYNTAX:** Ensure all output uses standard, common Markdown syntax. If you encounter malformed or non-standard syntax in the input, correct it to standard Markdown while preserving the original intent and content.
+4.  **CONSISTENT FORMATTING:** Apply consistent formatting for lists (e.g., use '-' or '*' consistently for unordered lists, and '1.' for ordered lists), code blocks (ensure proper triple backticks and language specifiers if present), and blockquotes.
+5.  **HEADING LEVELS:** Maintain the original heading levels (e.g., `#`, `##`, `###`). Do not change the semantic structure indicated by headings.
+6.  **OUTPUT ONLY MARKDOWN:** Your entire output MUST be ONLY the reformatted Markdown text. Do NOT include any conversational text, apologies, explanations, or any text before or after the Markdown content. **Specifically, do NOT wrap the entire output in a Markdown code block (e.g., using ```markdown ... ``` or ``` ... ```).**
+7.  **WHITESPACE MANAGEMENT:** Normalize excessive blank lines between paragraphs and elements. Ensure appropriate single blank lines for separation around block elements like headings, lists, code blocks, and paragraphs for readability. Do not add excessive newlines.
+8.  **TABLES:** If Markdown tables are present, ensure they are correctly formatted using standard Markdown table syntax (pipes and hyphens). Preserve all table content.
+9.  **HTML TAGS:** If any raw HTML tags are present in the input Markdown, preserve them as they are. Do not attempt to convert them to Markdown or remove them, unless they are clearly malformed and breaking standard Markdown rendering.
+
+Reformat the following Markdown text according to these strict instructions:
 """
 
     logger.info(f"Starting Ollama reformatting loop for {len(chunks)} chunks using model {OLLAMA_REFORMAT_MODEL}.")
+    strip_pattern = re.compile(r"^\s*```(?:markdown)?\s*\n?(.*?)\n?\s*```\s*$", re.DOTALL | re.IGNORECASE)
+
     for i, chunk in enumerate(chunks):
         if not chunk.strip(): # Skip empty or whitespace-only chunks
             reformatted_chunks.append(chunk)
@@ -171,11 +177,19 @@ Reformat this markdown:
                     # 'top_p': 0.5,       # Optional: Further restrict token choice
                 }
             )
-            reformatted_chunk = response['message']['content'] if response and 'message' in response and 'content' in response['message'] else ""
+            reformatted_chunk_raw = response['message']['content'] if response and 'message' in response and 'content' in response['message'] else ""
+            
+            # Strip ```markdown ... ``` wrappers
+            match = strip_pattern.match(reformatted_chunk_raw)
+            if match:
+                reformatted_chunk = match.group(1).strip()
+                logger.info(f"Stripped ```markdown wrapper from Ollama chunk {i+1}.")
+            else:
+                reformatted_chunk = reformatted_chunk_raw.strip() # Strip leading/trailing whitespace anyway
             
             # Basic validation: Check if the reformatted chunk is not empty if the original wasn't
             if not reformatted_chunk.strip() and chunk.strip():
-                logger.warning(f"Ollama returned an empty reformatted chunk {i+1} for a non-empty original chunk. Using original chunk.")
+                logger.warning(f"Ollama returned an empty reformatted chunk {i+1} for a non-empty original chunk (after potential stripping). Using original chunk.")
                 reformatted_chunks.append(chunk)
             # Check for significant reduction in content, which might indicate over-summarization or errors
             elif len(reformatted_chunk) < len(chunk) * 0.75 and len(chunk) > 200: # If shrunk by more than 25% for reasonably sized chunks
@@ -308,7 +322,7 @@ Strictly adhere to the following:
 2.  Ensure standard Markdown syntax is used. Correct any non-standard or malformed Markdown.
 3.  Improve formatting for lists, code blocks, and blockquotes for clarity.
 4.  Maintain the original heading levels.
-5.  Do NOT add any conversational text, apologies, or explanations. Output ONLY the reformatted Markdown text.
+5.  Do NOT add any conversational text, apologies, or explanations. Output ONLY the reformatted Markdown text. **Specifically, do NOT wrap the entire output in a Markdown code block (e.g., using ```markdown ... ``` or ``` ... ```).**
 6.  If the input is already well-formatted, return it as is.
 7.  Pay close attention to image links like `![](path/to/image.png)` or `![alt text](path/to/image.png)` and ensure they are preserved exactly as they appear in the input.
 Reformat this markdown:
@@ -324,6 +338,7 @@ Reformat this markdown:
     # ]
     # generation_config = genai.types.GenerationConfig(temperature=0.1)
 
+    strip_pattern = re.compile(r"^\s*```(?:markdown)?\s*\n?(.*?)\n?\s*```\s*$", re.DOTALL | re.IGNORECASE)
 
     logger.info(f"Starting Gemini reformatting loop for {len(chunks)} chunks...")
     for i, chunk in enumerate(chunks):
@@ -342,7 +357,16 @@ Reformat this markdown:
                 # safety_settings=safety_settings, # If using custom safety settings
             )
             
-            reformatted_chunk = response.text
+            reformatted_chunk_raw = response.text
+            
+            # Strip ```markdown ... ``` wrappers
+            match = strip_pattern.match(reformatted_chunk_raw)
+            if match:
+                reformatted_chunk = match.group(1).strip()
+                logger.info(f"Stripped ```markdown wrapper from Gemini chunk {i+1}.")
+            else:
+                reformatted_chunk = reformatted_chunk_raw.strip() # Strip leading/trailing whitespace anyway
+
             logger.info(f"Received response for chunk {i+1}. Reformatted length: {len(reformatted_chunk)} characters.")
             
             if len(reformatted_chunk) < len(chunk) * 0.5 and len(chunk) > 100:
@@ -453,7 +477,7 @@ async def perform_pdf_processing(job_id: str, temp_pdf_path: str, sanitized_titl
         reformatted_md_text = ""
         if GEMINI_API_KEY_REFORMAT: # Check if Gemini API key is available and configured
             logger.info(f"Job {job_id}: Attempting markdown reformatting with Google Gemini...")
-            reformatted_md_text = reformat_markdown_with_ollama(md_text)
+            reformatted_md_text = reformat_markdown_with_gemini(md_text) # Corrected to call gemini
         elif OLLAMA_API_BASE and OLLAMA_REFORMAT_MODEL: # Fallback to Ollama if configured
             logger.info(f"Job {job_id}: Gemini not available/configured. Attempting markdown reformatting with Ollama...")
             reformatted_md_text = reformat_markdown_with_ollama(md_text)
