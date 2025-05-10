@@ -2,9 +2,12 @@
 
 /* Styles for elements unique to NotePane or specific refinements */
 
-/* The .note-pane h2 styles are now handled by BookView.css to avoid redundancy.
-   If specific overrides for NotePane's h2 are needed in the future,
-   they can be added back here, possibly with a more specific class. */
+/* Styles for the main h2 title in NotePane */
+.note-pane h2 { /* Targets the <h2>Notes & LLM Insights</h2> */
+  margin-top: 0;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 10px;
+}
 
 /* Style for the dedicated selected text display area */
 .selected-text-display {

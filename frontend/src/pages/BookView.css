@@ -90,12 +90,13 @@
 
 
 /* Optional: Basic styling for content within panes */
-.book-pane h2,
-.note-pane h2 {
+/* Styling for h2 elements within the BookPane (e.g., markdown content) */
+.book-pane h2 {
   margin-top: 0;
   border-bottom: 1px solid #eee;
   padding-bottom: 10px;
 }
+/* Note: .note-pane h2 styling was removed from here and moved to NotePane.css */
 
 .book-pane img {
     max-width: 100%;
