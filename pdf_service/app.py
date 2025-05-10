@@ -16,6 +16,7 @@ from contextlib import nullcontext # Import nullcontext for Python 3.7+
 import ollama # Import the ollama library
 import asyncio # Import asyncio for background tasks
 import requests # Import requests for making HTTP calls in background task
+import google.generativeai as genai # ADD THIS LINE
 
 # Initialize FastAPI app
 app = FastAPI(title="PDF Processing Service")
@@ -48,6 +49,20 @@ OLLAMA_REFORMAT_MODEL = os.getenv('OLLAMA_REFORMAT_MODEL') # Use the general LLM
 
 # Get Backend Callback URL from environment variables
 BACKEND_CALLBACK_URL = os.getenv("BACKEND_CALLBACK_URL")
+
+# Get Gemini API Key
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") # ADD THIS LINE to load Gemini key
+
+# Configure Gemini API if key is present
+if GEMINI_API_KEY:
+    try:
+        genai.configure(api_key=GEMINI_API_KEY)
+        logger.info("Google Gemini API configured successfully.")
+    except Exception as e:
+        logger.warning(f"Failed to configure Google Gemini API: {e}. Gemini reformatting will not be available.")
+        GEMINI_API_KEY = None # Ensure it's None if configuration fails
+else:
+    logger.info("GEMINI_API_KEY not found. Google Gemini reformatting will not be available.")
 
 
 # --- Helper function to sanitize filename ---
@@ -245,6 +260,96 @@ def split_markdown_into_chunks(md_text: str, max_chunk_size: int = 10000, max_ch
     return final_chunks
 
 
+def reformat_markdown_with_gemini(md_text: str) -> str:
+    """
+    Reformats markdown text using the Google Gemini API.
+    """
+    if not GEMINI_API_KEY:
+        logger.warning("GEMINI_API_KEY not set or configuration failed. Skipping Gemini markdown reformatting.")
+        return md_text
+
+    try:
+        # Initialize the Gemini model
+        # You can choose different models like 'gemini-1.5-flash-latest' for speed/cost
+        # or 'gemini-1.0-pro' / 'gemini-1.5-pro-latest' for potentially higher quality.
+        model = genai.GenerativeModel('gemini-1.5-flash-latest')
+        logger.info("Google Gemini model initialized for reformatting.")
+    except Exception as e:
+        logger.error(f"Failed to initialize Google Gemini model: {e}. Skipping markdown reformatting.")
+        return md_text
+
+    # Approximate tokens per character (this is a rough estimate for Gemini)
+    # Gemini models have larger context windows, e.g., gemini-1.5-flash has 1M tokens.
+    # However, processing very large single chunks can be slow or hit other limits.
+    # Let's use a generous chunk character size, e.g., 100k characters.
+    # Max input tokens for gemini-1.5-flash is 1,048,576.
+    # Let's aim for chunks well under this, e.g., ~200k characters.
+    # 1 token ~ 4 chars. So 200k chars ~ 50k tokens.
+    MAX_CHUNK_CHARS_GEMINI = 200000 # Roughly 200,000 characters per chunk
+
+    logger.info(f"Splitting markdown into chunks for Gemini reformatting (max_chunk_size={MAX_CHUNK_CHARS_GEMINI})...")
+    chunks = split_markdown_into_chunks(md_text, max_chunk_size=MAX_CHUNK_CHARS_GEMINI, max_chunks=20) # Allow more chunks if needed
+    logger.info(f"Markdown split into {len(chunks)} chunks for Gemini.")
+
+    reformatted_chunks = []
+    system_instruction = """You are an expert in Markdown. Your task is to reformat the given Markdown text to improve its readability, consistency, and structure.
+Strictly adhere to the following:
+1.  Preserve ALL original content, including text, headings, lists, code blocks, tables, and image links (e.g., ![](image.png)). Do NOT alter or remove any content.
+2.  Ensure standard Markdown syntax is used. Correct any non-standard or malformed Markdown.
+3.  Improve formatting for lists, code blocks, and blockquotes for clarity.
+4.  Maintain the original heading levels.
+5.  Do NOT add any conversational text, apologies, or explanations. Output ONLY the reformatted Markdown text.
+6.  If the input is already well-formatted, return it as is.
+7.  Pay close attention to image links like `![](path/to/image.png)` or `![alt text](path/to/image.png)` and ensure they are preserved exactly as they appear in the input.
+Reformat this markdown:
+"""
+
+    # Safety settings can be adjusted if needed, though default might be fine for reformatting.
+    # Example:
+    # safety_settings = [
+    #     {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+    #     {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+    #     {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+    #     {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+    # ]
+    # generation_config = genai.types.GenerationConfig(temperature=0.1)
+
+
+    logger.info(f"Starting Gemini reformatting loop for {len(chunks)} chunks...")
+    for i, chunk in enumerate(chunks):
+        if not chunk.strip(): # Skip empty chunks
+            reformatted_chunks.append(chunk)
+            continue
+        try:
+            logger.info(f"Sending chunk {i+1}/{len(chunks)} to Gemini. Length: {len(chunk)} characters.")
+            
+            # Construct the prompt for Gemini
+            full_prompt = system_instruction + "\n\n" + chunk
+            
+            response = model.generate_content(
+                full_prompt,
+                # generation_config=generation_config, # If using custom config
+                # safety_settings=safety_settings, # If using custom safety settings
+            )
+            
+            reformatted_chunk = response.text
+            logger.info(f"Received response for chunk {i+1}. Reformatted length: {len(reformatted_chunk)} characters.")
+            
+            if len(reformatted_chunk) < len(chunk) * 0.5 and len(chunk) > 100:
+                logger.warning(f"Gemini Chunk {i+1} significantly shrunk. Original: {len(chunk)}, Reformatted: {len(reformatted_chunk)}")
+            reformatted_chunks.append(reformatted_chunk)
+        except Exception as e:
+            logger.error(f"Error reformatting chunk {i+1} with Gemini: {e}", exc_info=True)
+            # Fallback: return the original chunk if reformatting fails
+            logger.info(f"Appending original chunk {i+1} due to Gemini error. Length: {len(chunk)} characters.")
+            reformatted_chunks.append(chunk)
+
+    logger.info("Finished Gemini reformatting loop. Combining reformatted chunks...")
+    combined_text = "\n\n".join(reformatted_chunks) # Ensure good separation
+    logger.info("Gemini reformatting complete.")
+    return combined_text
+
+
 # --- Background task function for PDF processing ---
 async def perform_pdf_processing(job_id: str, temp_pdf_path: str, sanitized_title: str):
     """
@@ -334,10 +439,19 @@ async def perform_pdf_processing(job_id: str, temp_pdf_path: str, sanitized_titl
             logger.error(f"Job {job_id}: Failed to save raw markdown: {e_raw_save}")
         # --- END TEMPORARY DEBUGGING ---
 
-        # Reformat markdown using Ollama
-        logger.info(f"Job {job_id}: Calling reformat_markdown_with_ollama...")
-        reformatted_md_text = reformat_markdown_with_ollama(md_text)
-        logger.info(f"Job {job_id}: Markdown reformatting complete. Length: {len(reformatted_md_text)} chars.")
+        # Reformat markdown
+        reformatted_md_text = ""
+        if GEMINI_API_KEY: # Check if Gemini API key is available and configured
+            logger.info(f"Job {job_id}: Attempting markdown reformatting with Google Gemini...")
+            reformatted_md_text = reformat_markdown_with_gemini(md_text)
+        elif OLLAMA_API_BASE and OLLAMA_REFORMAT_MODEL: # Fallback to Ollama if configured
+            logger.info(f"Job {job_id}: Gemini not available/configured. Attempting markdown reformatting with Ollama...")
+            reformatted_md_text = reformat_markdown_with_ollama(md_text)
+        else:
+            logger.warning(f"Job {job_id}: Neither Gemini nor Ollama reformatting services are configured. Using raw markdown.")
+            reformatted_md_text = md_text
+        
+        logger.info(f"Job {job_id}: Markdown reformatting process chosen. Result length: {len(reformatted_md_text)} chars.")
 
 
         # Save markdown content to a file using the sanitized title
