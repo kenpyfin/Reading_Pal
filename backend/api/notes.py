@@ -41,16 +41,19 @@ async def create_note(note: NoteCreate):
         note_id = await save_note(note_data)
 
         # Fetch the saved note to return the full object with _id and timestamps
-        saved_note = await get_note_by_id(note_id)
-        if not saved_note:
+        saved_note_doc = await get_note_by_id(note_id) # Renamed to saved_note_doc
+        if not saved_note_doc:
              # This case should ideally not happen if save was successful
              raise HTTPException(status_code=500, detail="Failed to retrieve saved note.")
 
-        # Convert ObjectId to string for the response model
-        # This is handled by json_encoders in the Note model config, but explicit conversion is safer
-        saved_note['_id'] = str(saved_note['_id'])
-
-        return Note(**saved_note)
+        # The Note.model_validate method will parse the dictionary from the database.
+        # Pydantic will use the alias "_id" from saved_note_doc to populate the "id" field of the Note model.
+        # When FastAPI serializes this Note instance (due to response_model=Note),
+        # it will use the Note model's json_encoders to convert the "id" field (which is an ObjectId)
+        # into a string, and the JSON key will be "id".
+        validated_note = Note.model_validate(saved_note_doc)
+        logger.debug(f"Returning validated note: {validated_note.model_dump_json(indent=2)}")
+        return validated_note
 
     except ConnectionError:
          raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Database connection not available.")
@@ -69,19 +72,17 @@ async def get_notes(book_id: str):
     #     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid book ID format")
 
     try:
-        notes_list = await get_notes_by_book_id(book_id)
+        notes_list_docs = await get_notes_by_book_id(book_id)
 
-        # Convert ObjectId to string for each note in the list
-        # Also convert datetime objects to ISO format strings for JSON serialization
-        for note in notes_list:
-            note['_id'] = str(note['_id'])
-            if isinstance(note.get('created_at'), datetime):
-                 note['created_at'] = note['created_at'].isoformat()
-            if isinstance(note.get('updated_at'), datetime):
-                 note['updated_at'] = note['updated_at'].isoformat()
+        # Convert list of dicts from DB to list of Note model instances
+        # Pydantic will handle ObjectId to string conversion for 'id' field upon serialization by FastAPI
+        validated_notes = [Note.model_validate(note_doc) for note_doc in notes_list_docs]
+        
+        # Log for debugging if needed
+        # for v_note in validated_notes:
+        #    logger.debug(f"Validated note for list: {v_note.model_dump_json(indent=2)}")
 
-
-        return [Note(**note) for note in notes_list]
+        return validated_notes
 
     except ConnectionError:
          raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Database connection not available.")
@@ -112,15 +113,11 @@ async def update_existing_note(note_id: str, note_update: NoteUpdate):
         updated_note_doc = await update_note(note_id, update_data)
 
         if updated_note_doc:
-            # Convert ObjectId to string for the response model
-            updated_note_doc['_id'] = str(updated_note_doc['_id'])
-            # Convert datetime objects to ISO format strings
-            if isinstance(updated_note_doc.get('created_at'), datetime):
-                 updated_note_doc['created_at'] = updated_note_doc['created_at'].isoformat()
-            if isinstance(updated_note_doc.get('updated_at'), datetime):
-                 updated_note_doc['updated_at'] = updated_note_doc['updated_at'].isoformat()
-
-            return Note(**updated_note_doc)
+            # Convert the dictionary from DB to a Note model instance
+            # FastAPI will handle serialization (ObjectId to string for 'id')
+            validated_updated_note = Note.model_validate(updated_note_doc)
+            logger.debug(f"Returning updated note: {validated_updated_note.model_dump_json(indent=2)}")
+            return validated_updated_note
         else:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found")
 
