@@ -144,11 +144,12 @@ def reformat_markdown_with_ollama(md_text):
                 model=OLLAMA_REFORMAT_MODEL,
                 messages=[
                     {'role': 'system', 'content': system_prompt},
-                    {'role': 'user', 'content': f"Reformat this markdown:\n\n{chunk}"}
+                    {'role': 'user', 'content': f" Reformat this markdown:\n\n{chunk}"}
                 ],
                 options={
                     'temperature': 0.1, # Keep temperature low for consistent reformatting
-                    'num_predict': -1 # Generate until the model stops (within context limits)
+                    'num_predict': -1, # Generate until the model stops (within context limits)
+                    'context_length': 68888
                 }
             )
             reformatted_chunk = response['message']['content'] if response and 'message' in response else ""
