@@ -141,7 +141,7 @@ def reformat_markdown_with_ollama(md_text):
     MAX_CHUNK_CHARS = int(6000 / TOKENS_PER_CHAR) # Roughly 24000 characters per chunk
 
     logger.info(f"Splitting markdown into chunks for Ollama reformatting (max_chunk_size={MAX_CHUNK_CHARS})...")
-    chunks = split_markdown_into_chunks(md_text, max_chunk_size=MAX_CHUNK_CHARS, max_chunks=10) # max_chunks default is 10
+    chunks = split_markdown_into_chunks(md_text, max_chunk_size=MAX_CHUNK_CHARS, max_chunks=10)
     logger.info(f"Markdown split into {len(chunks)} chunks.")
 
     reformatted_chunks = []
@@ -160,12 +160,12 @@ def reformat_markdown_with_ollama(md_text):
                 messages=[
                     {'role': 'system', 'content': system_prompt},
                     {'role': 'user', 'content': f" Reformat this markdown:\n\n{chunk}"}
-                ],
-                options={
-                    'temperature': 0.1, # Keep temperature low for consistent reformatting
-                    'num_predict': -1, # Generate until the model stops (within context limits)
-                    'context_length': 68888
-                }
+                ]
+                # options={
+                #     'temperature': 0.1, # Keep temperature low for consistent reformatting
+                #     'num_predict': -1, # Generate until the model stops (within context limits)
+                #     'context_length': 60888
+                # }
             )
             reformatted_chunk = response['message']['content'] if response and 'message' in response else ""
             logger.info(f"Received response for chunk {i+1}. Reformatted length: {len(reformatted_chunk)} characters.")
@@ -212,7 +212,7 @@ def split_markdown_into_chunks(md_text: str, max_chunk_size: int = 10000, max_ch
     
     logger.info(f"Initial split resulted in {len(chunks)} chunks.")
     for i, chunk_item in enumerate(chunks):
-        logger.info(f"  Initial chunk {i} length: {len(chunk_item)} characters.")
+        logger.info(f"Initial chunk {i} length: {len(chunk_item)} characters.")
 
     # If the number of chunks exceeds max_chunks, recombine them
     # This part aims to merge smaller chunks if the initial split was too granular
