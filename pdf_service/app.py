@@ -116,73 +116,87 @@ class ProcessResponse(BaseModel):
 def reformat_markdown_with_ollama(md_text):
     # Check if Ollama configuration is available
     if not OLLAMA_API_BASE or not OLLAMA_REFORMAT_MODEL:
-        logger.warning("OLLAMA_API_BASE or LLM_MODEL not set. Skipping markdown reformatting.")
+        logger.warning("OLLAMA_API_BASE or OLLAMA_REFORMAT_MODEL not set. Skipping markdown reformatting with Ollama.")
         return md_text # Return original text if config is not available
 
     try:
-        # Use the synchronous Ollama client
-        logger.info(f"Attempting to initialize Ollama client at {OLLAMA_API_BASE}...")
+        logger.info(f"Attempting to initialize Ollama client at {OLLAMA_API_BASE} for reformatting...")
         client = ollama.Client(host=OLLAMA_API_BASE)
-        # Optional: Check if the model exists (can add overhead)
-        # client.show(OLLAMA_REFORMAT_MODEL) # This would raise an error if model doesn't exist
         logger.info(f"Ollama client initialized successfully for reformatting at {OLLAMA_API_BASE} using model {OLLAMA_REFORMAT_MODEL}.")
     except Exception as e:
-        logger.error(f"Failed to initialize Ollama client or check model: {e}. Skipping markdown reformatting.")
-        return md_text # Return original text if client initialization fails
+        logger.error(f"Failed to initialize Ollama client: {e}. Skipping markdown reformatting.")
+        return md_text
 
-
-    # Approximate tokens per character (this is a rough estimate)
-    TOKENS_PER_CHAR = 0.25
-    # Leave room for system prompt and other message components
-    # Adjust max tokens based on typical Ollama model context windows (e.g., 8192, 32768)
-    # Let's use a conservative chunk size, but allow larger if needed.
-    # Max tokens for response + prompt should fit within model context.
-    # Assuming a model with at least 8192 context, leave ~6000 for the chunk.
-    MAX_CHUNK_CHARS = int(6000 / TOKENS_PER_CHAR) # Roughly 24000 characters per chunk
+    # Reduce max chunk characters slightly to ensure more headroom for the detailed prompt
+    # Previous: MAX_CHUNK_CHARS = int(6000 / 0.25) # Roughly 24000 characters
+    MAX_CHUNK_CHARS = 18000 # Roughly 18000 characters per chunk (e.g. ~4500-6000 tokens)
 
     logger.info(f"Splitting markdown into chunks for Ollama reformatting (max_chunk_size={MAX_CHUNK_CHARS})...")
-    chunks = split_markdown_into_chunks(md_text, max_chunk_size=MAX_CHUNK_CHARS, max_chunks=10)
+    # Max chunks can be increased if documents are very long and this becomes a bottleneck
+    chunks = split_markdown_into_chunks(md_text, max_chunk_size=MAX_CHUNK_CHARS, max_chunks=15) 
     logger.info(f"Markdown split into {len(chunks)} chunks.")
 
     reformatted_chunks = []
-    # Adjust prompt for a general Ollama model
-    system_prompt = "You are a helpful assistant that reformats markdown text to be more readable and \
-        consistent. Preserve all original content, including text, headings, lists, code blocks, and image \
-            links. Only output the reformatted markdown without any conversational filler."
+    
+    # Enhanced System Prompt for Ollama
+    system_prompt = """You are a meticulous and precise Markdown reformatting tool. Your ONLY task is to reformat the given Markdown text to improve its readability and ensure consistent, standard Markdown syntax.
 
-    logger.info(f"Starting reformatting loop for {len(chunks)} chunks...")
+**CRITICAL INSTRUCTIONS - ADHERE STRICTLY:**
+1.  **NO CONTENT ALTERATION:** You MUST preserve ALL original text content VERBATIM. This includes all words, sentences, paragraphs, headings, list items, code within code blocks, table cell content, etc. Do NOT summarize, expand, rephrase, or change the meaning of ANY content.
+2.  **EXACT IMAGE LINK PRESERVATION:** Image links (e.g., `![](path/to/image.png)` or `![alt text](path/to/image.png)`) MUST be preserved EXACTLY as they appear in the input. Do not modify paths, alt text, or the link syntax in any way.
+3.  **STANDARD MARKDOWN SYNTAX:** Ensure all output uses standard, common Markdown syntax. If you encounter malformed or non-standard syntax in the input, correct it to standard Markdown while preserving the original intent and content.
+4.  **CONSISTENT FORMATTING:** Apply consistent formatting for lists (e.g., use '-' or '*' consistently for unordered lists, and '1.' for ordered lists), code blocks (ensure proper triple backticks and language specifiers if present), and blockquotes.
+5.  **HEADING LEVELS:** Maintain the original heading levels (e.g., `#`, `##`, `###`). Do not change the semantic structure indicated by headings.
+6.  **OUTPUT ONLY MARKDOWN:** Your entire output MUST be ONLY the reformatted Markdown text. Do NOT include any conversational text, apologies, explanations, or any text before or after the Markdown content.
+7.  **WHITESPACE MANAGEMENT:** Normalize excessive blank lines between paragraphs and elements. Ensure appropriate single blank lines for separation around block elements like headings, lists, code blocks, and paragraphs for readability. Do not add excessive newlines.
+8.  **TABLES:** If Markdown tables are present, ensure they are correctly formatted using standard Markdown table syntax (pipes and hyphens). Preserve all table content.
+9.  **HTML TAGS:** If any raw HTML tags are present in the input Markdown, preserve them as they are. Do not attempt to convert them to Markdown or remove them, unless they are clearly malformed and breaking standard Markdown rendering.
+
+Reformat the following Markdown text according to these strict instructions:
+"""
+
+    logger.info(f"Starting Ollama reformatting loop for {len(chunks)} chunks using model {OLLAMA_REFORMAT_MODEL}.")
     for i, chunk in enumerate(chunks):
+        if not chunk.strip(): # Skip empty or whitespace-only chunks
+            reformatted_chunks.append(chunk)
+            continue
         try:
             logger.info(f"Sending chunk {i+1}/{len(chunks)} to Ollama. Length: {len(chunk)} characters.")
-            # Use the chat endpoint
             response = client.chat(
                 model=OLLAMA_REFORMAT_MODEL,
                 messages=[
                     {'role': 'system', 'content': system_prompt},
-                    {'role': 'user', 'content': f" Reformat this markdown:\n\n{chunk}"}
-                ]
-                # options={
-                #     'temperature': 0.1, # Keep temperature low for consistent reformatting
-                #     'num_predict': -1, # Generate until the model stops (within context limits)
-                #     'context_length': 60888
-                # }
+                    {'role': 'user', 'content': chunk } # Just the chunk, the instruction is in the system prompt
+                ],
+                options={
+                    'temperature': 0.05, # Very low temperature for deterministic output
+                    'num_predict': -1,    # Allow model to generate as much as needed (up to its context limit)
+                    # 'top_k': 10,        # Optional: Further restrict token choice
+                    # 'top_p': 0.5,       # Optional: Further restrict token choice
+                }
             )
-            reformatted_chunk = response['message']['content'] if response and 'message' in response else ""
+            reformatted_chunk = response['message']['content'] if response and 'message' in response and 'content' in response['message'] else ""
+            
+            # Basic validation: Check if the reformatted chunk is not empty if the original wasn't
+            if not reformatted_chunk.strip() and chunk.strip():
+                logger.warning(f"Ollama returned an empty reformatted chunk {i+1} for a non-empty original chunk. Using original chunk.")
+                reformatted_chunks.append(chunk)
+            # Check for significant reduction in content, which might indicate over-summarization or errors
+            elif len(reformatted_chunk) < len(chunk) * 0.75 and len(chunk) > 200: # If shrunk by more than 25% for reasonably sized chunks
+                logger.warning(f"Chunk {i+1} significantly shrunk after Ollama reformatting. Original: {len(chunk)}, Reformatted: {len(reformatted_chunk)}. Consider reviewing output. Using reformatted chunk for now.")
+                reformatted_chunks.append(reformatted_chunk)
+            else:
+                reformatted_chunks.append(reformatted_chunk)
             logger.info(f"Received response for chunk {i+1}. Reformatted length: {len(reformatted_chunk)} characters.")
-            # Log if chunk significantly shrunk (e.g., by more than 50%)
-            if len(reformatted_chunk) < len(chunk) * 0.5 and len(chunk) > 100: # Avoid noise for tiny chunks
-                logger.warning(f"Chunk {i+1} significantly shrunk after reformatting. Original: {len(chunk)}, Reformatted: {len(reformatted_chunk)}")
-            reformatted_chunks.append(reformatted_chunk)
+
         except Exception as e:
             logger.error(f"Error reformatting chunk {i+1} with Ollama: {e}", exc_info=True)
-            # Fallback: return the original chunk if reformatting fails
-            logger.info(f"Appending original chunk {i+1} due to error. Length: {len(chunk)} characters.")
+            logger.info(f"Appending original chunk {i+1} due to Ollama error. Length: {len(chunk)} characters.")
             reformatted_chunks.append(chunk)
 
-    logger.info(f"Finished reformatting loop. Combining reformatted chunks...")
-    # Combine all reformatted chunks
+    logger.info("Finished Ollama reformatting loop. Combining reformatted chunks...")
     combined_text = "\n\n".join(reformatted_chunks)
-    logger.info(f"Reformatting complete.")
+    logger.info("Ollama reformatting complete.")
     return combined_text
 
 
