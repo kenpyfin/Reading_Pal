@@ -274,14 +274,10 @@ async def get_book_by_id(book_id: str):
          raise HTTPException(status_code=500, detail="Invalid book data found in database.")
 
     markdown_content = None
-    image_urls = []
+    image_urls_for_response = [] # Renamed to avoid confusion with internal image path rewriting
 
     # Only attempt to read/generate if processing is completed and markdown_filename exists
-    # FIX: Use book.markdown_filename
     if book.status == 'completed' and book.markdown_filename:
-        # Construct the full path to the markdown file on the container's filesystem
-        # Join the container mount path with the filename stored in the DB
-        # FIX: Use book.markdown_filename
         if not CONTAINER_MARKDOWN_PATH:
             logger.error("CONTAINER_MARKDOWN_PATH is not set. Cannot read markdown file.")
             markdown_content = "Error: Markdown storage path not configured on server."
@@ -289,7 +285,6 @@ async def get_book_by_id(book_id: str):
             container_markdown_path = os.path.join(CONTAINER_MARKDOWN_PATH, book.markdown_filename)
             logger.info(f"Get endpoint: Constructed container markdown path: {container_markdown_path}")
 
-            # Use run_in_threadpool for synchronous os.path.exists and file read
             def check_and_read_markdown(path):
                 if os.path.exists(path):
                     logger.info(f"Get endpoint: Markdown file found at {path}. Reading...")
@@ -306,14 +301,44 @@ async def get_book_by_id(book_id: str):
                     return "Error: Processed content file not found."
 
             markdown_content = await run_in_threadpool(check_and_read_markdown, container_markdown_path)
+            
+            # If markdown content was read, attempt to rewrite image paths within it
+            # This is a basic example; more robust parsing might be needed depending on markdown complexity
+            if markdown_content and isinstance(markdown_content, str) and book.image_filenames:
+                temp_markdown_content = markdown_content
+                for img_filename in book.image_filenames:
+                    if img_filename: # Ensure filename is not None or empty
+                        # Regex to find markdown image tags: ![alt text](path)
+                        # and HTML image tags: <img src="path">
+                        # This needs to be robust. For now, let's assume simple filenames are used in markdown.
+                        # Pattern 1: Markdown image e.g. ![](image.png) or ![alt text](image.png)
+                        # We need to be careful not to match already rewritten paths.
+                        # Let's assume original paths are just filenames or relative paths not starting with /images/
+                        
+                        # Escape filename for regex, especially if it contains special characters
+                        escaped_img_filename = re.escape(img_filename)
 
-    # Generate image URLs from stored filenames
-    # FIX: Use book.image_filenames
-    if book.status == 'completed' and book.image_filenames: # Only generate URLs if completed and filenames exist
-         # Convert server-side filenames to public URLs using the image static route prefix
-         # Join the container mount path with the filename for the static server to find it
-         image_urls = [f"/images/{filename}" for filename in book.image_filenames]
-         logger.info(f"Get endpoint: Generated {len(image_urls)} image URLs.")
+                        # Regex for Markdown: ![...](maybe_some_path/actual_filename.png)
+                        # We want to replace 'maybe_some_path/actual_filename.png' with '/images/actual_filename.png'
+                        # This regex is tricky because 'maybe_some_path/' can vary or be absent.
+                        # A simpler approach if PDF service consistently uses just the filename:
+                        markdown_pattern = re.compile(r"(!\[[^\]]*\]\()(" + escaped_img_filename + r")(\))")
+                        temp_markdown_content = markdown_pattern.sub(r"\1/images/" + img_filename + r"\3", temp_markdown_content)
+                        
+                        # Regex for HTML: <img ... src="maybe_some_path/actual_filename.png" ...>
+                        html_pattern = re.compile(r'(<img[^>]*src\s*=\s*["\'])(?!/images/)' + escaped_img_filename + r'(["\'][^>]*>)')
+                        temp_markdown_content = html_pattern.sub(r"\1/images/" + img_filename + r"\2", temp_markdown_content)
+
+                if temp_markdown_content != markdown_content:
+                    logger.info(f"Get endpoint: Rewrote image paths in markdown content for book {book_id}.")
+                    markdown_content = temp_markdown_content
+                else:
+                    logger.info(f"Get endpoint: No image paths were rewritten in markdown content for book {book_id}. This might be okay if paths are already correct or no images to rewrite.")
+
+
+    if book.status == 'completed' and book.image_filenames:
+         image_urls_for_response = [f"/images/{filename}" for filename in book.image_filenames if filename]
+         logger.info(f"Get endpoint: Generated {len(image_urls_for_response)} image URLs for response model.")
     elif book.status == 'completed' and not book.image_filenames:
          logger.info(f"Get endpoint: Book ID {book_id} completed but no image filenames stored.")
     elif book.status != 'completed':
@@ -322,10 +347,30 @@ async def get_book_by_id(book_id: str):
 
     # Populate the response-only fields in the model instance
     book.markdown_content = markdown_content
-    book.image_urls = image_urls
+    book.image_urls = image_urls_for_response # Use the correctly named variable
+
+    # --- ADDED LOGGING ---
+    if book.markdown_content:
+        logger.info(f"Get endpoint: Final markdown_content being sent to frontend (first 500 chars): {book.markdown_content[:500]}")
+        # For more detailed debugging of image tags (HTML style):
+        html_img_tags_found = re.findall(r"<img [^>]*src\s*=\s*['\"]([^'\"]+)['\"][^>]*>", book.markdown_content)
+        if html_img_tags_found:
+            logger.info(f"Get endpoint: Found HTML <img src=...> attributes in final markdown: {html_img_tags_found}")
+        else:
+            logger.info("Get endpoint: No HTML <img> tags found in final markdown_content.")
+        
+        # For more detailed debugging of image tags (Markdown style):
+        markdown_img_tags_found = re.findall(r"!\[[^\]]*\]\(([^)]+)\)", book.markdown_content)
+        if markdown_img_tags_found:
+            logger.info(f"Get endpoint: Found Markdown ![]() image links in final markdown: {markdown_img_tags_found}")
+        else:
+            logger.info("Get endpoint: No Markdown ![]() image links found in final markdown_content.")
+    else:
+        logger.info("Get endpoint: Final markdown_content is None.")
+    # --- END OF ADDED LOGGING ---
 
     logger.info(f"Get endpoint: Returning book data for ID {book_id}")
-    return book # Return the populated Book model instance
+    return book
 
 
 # --- Add this helper function if it's not already present in this file ---
