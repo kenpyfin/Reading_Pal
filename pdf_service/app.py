@@ -51,18 +51,18 @@ OLLAMA_REFORMAT_MODEL = os.getenv('OLLAMA_REFORMAT_MODEL') # Use the general LLM
 BACKEND_CALLBACK_URL = os.getenv("BACKEND_CALLBACK_URL")
 
 # Get Gemini API Key
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") # ADD THIS LINE to load Gemini key
+GEMINI_API_KEY_REFORMAT = os.getenv("GEMINI_API_KEY_REFORMAT") # ADD THIS LINE to load Gemini key
 
 # Configure Gemini API if key is present
-if GEMINI_API_KEY:
+if GEMINI_API_KEY_REFORMAT:
     try:
-        genai.configure(api_key=GEMINI_API_KEY)
+        genai.configure(api_key=GEMINI_API_KEY_REFORMAT)
         logger.info("Google Gemini API configured successfully.")
     except Exception as e:
         logger.warning(f"Failed to configure Google Gemini API: {e}. Gemini reformatting will not be available.")
-        GEMINI_API_KEY = None # Ensure it's None if configuration fails
+        GEMINI_API_KEY_REFORMAT = None # Ensure it's None if configuration fails
 else:
-    logger.info("GEMINI_API_KEY not found. Google Gemini reformatting will not be available.")
+    logger.info("GEMINI_API_KEY_REFORMAT not found. Google Gemini reformatting will not be available.")
 
 
 # --- Helper function to sanitize filename ---
@@ -139,20 +139,16 @@ def reformat_markdown_with_ollama(md_text):
     reformatted_chunks = []
     
     # Enhanced System Prompt for Ollama
-    system_prompt = """You are a meticulous and precise Markdown reformatting tool. Your ONLY task is to reformat the given Markdown text to improve its readability and ensure consistent, standard Markdown syntax.
-
-**CRITICAL INSTRUCTIONS - ADHERE STRICTLY:**
-1.  **NO CONTENT ALTERATION:** You MUST preserve ALL original text content VERBATIM. This includes all words, sentences, paragraphs, headings, list items, code within code blocks, table cell content, etc. Do NOT summarize, expand, rephrase, or change the meaning of ANY content.
-2.  **EXACT IMAGE LINK PRESERVATION:** Image links (e.g., `![](path/to/image.png)` or `![alt text](path/to/image.png)`) MUST be preserved EXACTLY as they appear in the input. Do not modify paths, alt text, or the link syntax in any way.
-3.  **STANDARD MARKDOWN SYNTAX:** Ensure all output uses standard, common Markdown syntax. If you encounter malformed or non-standard syntax in the input, correct it to standard Markdown while preserving the original intent and content.
-4.  **CONSISTENT FORMATTING:** Apply consistent formatting for lists (e.g., use '-' or '*' consistently for unordered lists, and '1.' for ordered lists), code blocks (ensure proper triple backticks and language specifiers if present), and blockquotes.
-5.  **HEADING LEVELS:** Maintain the original heading levels (e.g., `#`, `##`, `###`). Do not change the semantic structure indicated by headings.
-6.  **OUTPUT ONLY MARKDOWN:** Your entire output MUST be ONLY the reformatted Markdown text. Do NOT include any conversational text, apologies, explanations, or any text before or after the Markdown content.
-7.  **WHITESPACE MANAGEMENT:** Normalize excessive blank lines between paragraphs and elements. Ensure appropriate single blank lines for separation around block elements like headings, lists, code blocks, and paragraphs for readability. Do not add excessive newlines.
-8.  **TABLES:** If Markdown tables are present, ensure they are correctly formatted using standard Markdown table syntax (pipes and hyphens). Preserve all table content.
-9.  **HTML TAGS:** If any raw HTML tags are present in the input Markdown, preserve them as they are. Do not attempt to convert them to Markdown or remove them, unless they are clearly malformed and breaking standard Markdown rendering.
-
-Reformat the following Markdown text according to these strict instructions:
+    system_prompt = """You are an expert in Markdown. Your task is to reformat the given Markdown text to improve its readability, consistency, and structure.
+Strictly adhere to the following:
+1.  Preserve ALL original content, including text, headings, lists, code blocks, tables, and image links (e.g., ![](image.png)). Do NOT alter or remove any content.
+2.  Ensure standard Markdown syntax is used. Correct any non-standard or malformed Markdown.
+3.  Improve formatting for lists, code blocks, and blockquotes for clarity.
+4.  Maintain the original heading levels.
+5.  Do NOT add any conversational text, apologies, or explanations. Output ONLY the reformatted Markdown text.
+6.  If the input is already well-formatted, return it as is.
+7.  Pay close attention to image links like `![](path/to/image.png)` or `![alt text](path/to/image.png)` and ensure they are preserved exactly as they appear in the input.
+Reformat this markdown:
 """
 
     logger.info(f"Starting Ollama reformatting loop for {len(chunks)} chunks using model {OLLAMA_REFORMAT_MODEL}.")
@@ -171,7 +167,7 @@ Reformat the following Markdown text according to these strict instructions:
                 options={
                     'temperature': 0.05, # Very low temperature for deterministic output
                     'num_predict': -1,    # Allow model to generate as much as needed (up to its context limit)
-                    # 'top_k': 10,        # Optional: Further restrict token choice
+                    'context_length': 52022,        
                     # 'top_p': 0.5,       # Optional: Further restrict token choice
                 }
             )
@@ -278,8 +274,8 @@ def reformat_markdown_with_gemini(md_text: str) -> str:
     """
     Reformats markdown text using the Google Gemini API.
     """
-    if not GEMINI_API_KEY:
-        logger.warning("GEMINI_API_KEY not set or configuration failed. Skipping Gemini markdown reformatting.")
+    if not GEMINI_API_KEY_REFORMAT:
+        logger.warning("GEMINI_API_KEY_REFORMAT not set or configuration failed. Skipping Gemini markdown reformatting.")
         return md_text
 
     try:
@@ -455,9 +451,9 @@ async def perform_pdf_processing(job_id: str, temp_pdf_path: str, sanitized_titl
 
         # Reformat markdown
         reformatted_md_text = ""
-        if GEMINI_API_KEY: # Check if Gemini API key is available and configured
+        if GEMINI_API_KEY_REFORMAT: # Check if Gemini API key is available and configured
             logger.info(f"Job {job_id}: Attempting markdown reformatting with Google Gemini...")
-            reformatted_md_text = reformat_markdown_with_gemini(md_text)
+            reformatted_md_text = reformat_markdown_with_ollama(md_text)
         elif OLLAMA_API_BASE and OLLAMA_REFORMAT_MODEL: # Fallback to Ollama if configured
             logger.info(f"Job {job_id}: Gemini not available/configured. Attempting markdown reformatting with Ollama...")
             reformatted_md_text = reformat_markdown_with_ollama(md_text)
