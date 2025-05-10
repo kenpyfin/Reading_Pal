@@ -21,19 +21,19 @@ class NoteBase(BaseModel):
     book_id: str = Field(...) # Reference to the book ID (as string)
     content: str = Field(...) # The note content
     source_text: Optional[str] = None # Add field to store the source text from book
-    # Add the new field for scroll percentage (0.0 to 1.0)
-    scroll_percentage: Optional[float] = None # ADD THIS LINE
+    scroll_percentage: Optional[float] = None 
+    global_character_offset: Optional[int] = None # ADD THIS LINE
 
 class NoteCreate(NoteBase):
     # created_at and updated_at will be set by the backend
-    # NoteCreate inherits scroll_percentage from NoteBase
+    # NoteCreate inherits scroll_percentage and global_character_offset from NoteBase
     pass
 
 class NoteUpdate(BaseModel):
     content: Optional[str] = None
-    source_text: Optional[str] = None # Allow updating source_text if needed (less likely)
-    # Allow updating scroll_percentage if needed (less likely, typically set on creation)
-    scroll_percentage: Optional[float] = None # ADD THIS LINE
+    source_text: Optional[str] = None 
+    scroll_percentage: Optional[float] = None 
+    global_character_offset: Optional[int] = None # ADD THIS LINE
 
 class Note(NoteBase):
     # Use Annotated with BeforeValidator to handle ObjectId parsing from various inputs (like strings)
@@ -58,7 +58,8 @@ class Note(NoteBase):
                 "book_id": "60c72b2f9b1d4b3b8c8b4567",
                 "content": "This is a note about the first chapter.",
                 "source_text": "This is the text that was selected in the book.",
-                "scroll_percentage": 0.15, # ADD THIS LINE
+                "scroll_percentage": 0.15,
+                "global_character_offset": 1234, # ADD THIS LINE
                 "created_at": "2023-10-27T10:00:00.000Z",
                 "updated_at": "2023-10-27T10:00:00.000Z"
             }

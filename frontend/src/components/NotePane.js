@@ -101,6 +101,8 @@ const NotePane = forwardRef(({
   };
 
   const handleNoteClickInternal = (note) => {
+      // ADD THIS LOG
+      console.log("[NotePane - handleNoteClickInternal] Clicked note object:", JSON.stringify(note, null, 2));
       // Use global_character_offset for jumping if available
       if (note.global_character_offset !== null && note.global_character_offset !== undefined && onNoteClick) {
           onNoteClick(note.global_character_offset); // Pass global_character_offset
