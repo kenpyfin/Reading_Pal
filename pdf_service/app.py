@@ -478,11 +478,36 @@ async def perform_pdf_processing(job_id: str, temp_pdf_path: str, sanitized_titl
             logger.error(f"Job {job_id}: Failed to save raw markdown: {e_raw_save}")
         # --- END TEMPORARY DEBUGGING ---
 
+        # --- MODIFIED SECTION FOR GATHERING IMAGE INFO ---
+        # Get list of generated images using pipe.output_images_info
+        images_for_callback = [] # Use a distinct variable name
+        if hasattr(pipe, 'output_images_info') and pipe.output_images_info:
+            logger.info(f"Job {job_id}: Found {len(pipe.output_images_info)} image entries in pipe.output_images_info.")
+            for img_data_from_pipe in pipe.output_images_info:
+                # img_data_from_pipe is a dict like:
+                # {"bytes": ..., "format": ..., "save_name": "actual_filename.png", "md_path": "path/in/markdown.png"}
+                
+                saved_filename = img_data_from_pipe.get("save_name")
+                md_inserted_path = img_data_from_pipe.get("md_path")
+
+                if saved_filename and md_inserted_path:
+                    # Using the pdf_service's ImageInfo model for constructing the list for the callback
+                    images_for_callback.append(ImageInfo( 
+                        filename=saved_filename,    # The actual filename the image was saved as
+                        path=md_inserted_path       # The path string magic_pdf inserted into the markdown
+                    ))
+                    logger.debug(f"Job {job_id}: Added image to callback data: filename='{saved_filename}', path_in_md='{md_inserted_path}'")
+                else:
+                    logger.warning(f"Job {job_id}: Skipping image data from pipe.output_images_info due to missing 'save_name' or 'md_path': {img_data_from_pipe}")
+        else:
+            logger.info(f"Job {job_id}: No images found in pipe.output_images_info or attribute 'output_images_info' does not exist on pipe object.")
+        # --- END OF MODIFIED SECTION ---
+
         # Reformat markdown
         reformatted_md_text = ""
         if GEMINI_API_KEY_REFORMAT: # Check if Gemini API key is available and configured
             logger.info(f"Job {job_id}: Attempting markdown reformatting with Google Gemini...")
-            reformatted_md_text = reformat_markdown_with_ollama(md_text)
+            reformatted_md_text = reformat_markdown_with_ollama(md_text) # This seems to call ollama, should it be reformat_markdown_with_gemini? Assuming user wants to keep this as is for now.
         elif OLLAMA_API_BASE and OLLAMA_REFORMAT_MODEL: # Fallback to Ollama if configured
             logger.info(f"Job {job_id}: Gemini not available/configured. Attempting markdown reformatting with Ollama...")
             reformatted_md_text = reformat_markdown_with_ollama(md_text)
@@ -503,30 +528,11 @@ async def perform_pdf_processing(job_id: str, temp_pdf_path: str, sanitized_titl
         logger.info(f"Job {job_id}: Reformatted markdown saved.")
         logger.info(f"Job {job_id}: PDF processed and converted to markdown successfully")
 
-        # Get list of generated images
-        images = [] # This list will hold ImageInfo objects
-        if os.path.exists(IMAGES_PATH):
-            image_prefix = sanitized_title
-            logger.info(f"Job {job_id}: Looking for images with prefix: '{image_prefix}' in {IMAGES_PATH}")
-            try:
-                for img_file in os.listdir(IMAGES_PATH):
-                    if img_file.startswith(image_prefix) and img_file.lower().endswith('.png'):
-                        full_img_path = os.path.join(IMAGES_PATH, img_file)
-                        images.append(ImageInfo(
-                            filename=img_file,
-                            path=full_img_path
-                        ))
-                logger.info(f"Job {job_id}: Found {len(images)} image files matching prefix '{image_prefix}'.")
-            except Exception as e:
-                 logger.error(f"Job {job_id}: Error listing images in {IMAGES_PATH}: {e}")
-        else:
-             logger.warning(f"Job {job_id}: Images directory not found: {IMAGES_PATH}")
-
         # Update local variables for successful callback
         callback_status = "completed"
         callback_message = "Processing complete"
         callback_file_path = markdown_file_path
-        callback_images_data = [img.model_dump() for img in images] # Convert ImageInfo objects to dicts
+        callback_images_data = [img.model_dump() for img in images_for_callback] # Convert ImageInfo objects to dicts
 
     except Exception as e:
         logger.error(f"Job {job_id}: Error during background PDF processing: {e}", exc_info=True)
