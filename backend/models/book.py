@@ -21,6 +21,11 @@ def validate_objectid(v: Any) -> ObjectId:
 def serialize_objectid(v: ObjectId) -> str:
     return str(v)
 
+# --- Add new model for storing detailed image info in DB ---
+class ImageInfoForDB(BaseModel):
+    filename: str # The final, sanitized filename stored on disk and used for serving
+    original_path_in_markdown: str # The exact path string as it appeared in the raw markdown from magic_pdf
+
 class Book(BaseModel):
     # Use Annotated and BeforeValidator for Pydantic v2 ObjectId handling
     # Use Field alias for MongoDB's _id, default_factory=ObjectId for new documents
@@ -43,6 +48,9 @@ class Book(BaseModel):
 
     # Use 'processing_error' as per DB schema
     processing_error: Optional[str] = None # Store error message if processing fails
+
+    # --- New field to store detailed image information for precise replacement ---
+    processed_images_info: Optional[List[ImageInfoForDB]] = None # List of objects with original path and final filename
 
     # --- Fields populated on retrieval for response, not stored directly ---
     markdown_content: Optional[str] = None # Populated when fetching a single book by reading the file
@@ -68,10 +76,13 @@ class Book(BaseModel):
                 "status": "completed",
                 "markdown_filename": "Sample_Book.md", # Example server filename
                 "image_filenames": ["Sample_Book_img_001.png"], # Example server filenames
+                "processed_images_info": [
+                    {"filename": "Sample_Book_img_001.png", "original_path_in_markdown": "images/Sample_Book_img_001.png"}
+                ],
                 "created_at": "2023-10-27T10:00:00Z", # Example timestamp
                 "updated_at": "2023-10-27T10:05:00Z", # Example timestamp
                 "processing_error": None,
-                "markdown_content": "# Sample Book\n\nThis is the content...",
+                "markdown_content": "# Sample Book\n\nThis is the content with ![alt text](/images/Sample_Book_img_001.png)...",
                 "image_urls": ["/images/Sample_Book_img_001.png"]
             }
         },
