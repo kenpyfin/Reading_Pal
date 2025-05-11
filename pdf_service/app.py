@@ -482,7 +482,7 @@ async def perform_pdf_processing(job_id: str, temp_pdf_path: str, sanitized_titl
         reformatted_md_text = ""
         if GEMINI_API_KEY_REFORMAT: # Check if Gemini API key is available and configured
             logger.info(f"Job {job_id}: Attempting markdown reformatting with Google Gemini...")
-            reformatted_md_text = reformat_markdown_with_gemini(md_text) # Corrected to call gemini
+            reformatted_md_text = reformat_markdown_with_ollama(md_text)
         elif OLLAMA_API_BASE and OLLAMA_REFORMAT_MODEL: # Fallback to Ollama if configured
             logger.info(f"Job {job_id}: Gemini not available/configured. Attempting markdown reformatting with Ollama...")
             reformatted_md_text = reformat_markdown_with_ollama(md_text)
