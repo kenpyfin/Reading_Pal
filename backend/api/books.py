@@ -321,6 +321,8 @@ async def get_book_by_id(book_id: str):
                 for image_spec in book.processed_images_info:
                     original_path = image_spec.original_path_in_markdown
                     new_filename = image_spec.filename
+                    # Log details for each replacement attempt
+                    logger.info(f"Get endpoint: Book ID {book_id} - Attempting replacement for: original_path='{original_path}', new_filename='{new_filename}'")
                     # Ensure paths are not None or empty
                     if original_path and new_filename:
                         # Construct the new path for replacement
