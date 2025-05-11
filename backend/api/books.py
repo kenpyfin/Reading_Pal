@@ -273,6 +273,9 @@ async def get_book_by_id(book_id: str):
          logger.error(f"Failed to validate book data from DB for ID {book_id}: {validation_error}", exc_info=True)
          raise HTTPException(status_code=500, detail="Invalid book data found in database.")
 
+    # Log processed_images_info
+    logger.info(f"Get endpoint: Book ID {book_id} - processed_images_info from DB: {book.processed_images_info}")
+
     markdown_content = None
     image_urls_for_response = [] # Renamed to avoid confusion with internal image path rewriting
 
@@ -301,6 +304,15 @@ async def get_book_by_id(book_id: str):
                     return "Error: Processed content file not found."
 
             markdown_content = await run_in_threadpool(check_and_read_markdown, container_markdown_path)
+
+            # Log raw markdown content before replacement
+            if isinstance(markdown_content, str) and not markdown_content.startswith("Error:"):
+                logger.info(f"Get endpoint: Book ID {book_id} - Raw markdown before replacement (first 500 chars): {markdown_content[:500]}")
+                # Log a few image paths found in raw markdown for direct comparison
+                raw_md_img_paths = re.findall(r"!\[[^\]]*\]\(([^)]+)\)", markdown_content)
+                raw_html_img_paths = re.findall(r"<img [^>]*src\s*=\s*['\"]([^'\"]+)['\"][^>]*>", markdown_content)
+                logger.info(f"Get endpoint: Book ID {book_id} - Image paths in RAW markdown (MD syntax): {raw_md_img_paths[:5]}")
+                logger.info(f"Get endpoint: Book ID {book_id} - Image paths in RAW markdown (HTML syntax): {raw_html_img_paths[:5]}")
             
             # --- New image path rewriting logic using processed_images_info ---
             if markdown_content and isinstance(markdown_content, str) and book.processed_images_info:
