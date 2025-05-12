@@ -178,7 +178,7 @@ Reformat the following Markdown text according to these strict instructions:
                     'num_predict': -1,    # Allow model to generate as much as needed (up to its context limit)
                     # Adjust context_length to a value appropriate for the model (e.g., phi models often have 2k or 4k context)
                     # Old: 'context_length': 52022,
-                    'context_length': 4096, # Adjusted to a common context size for smaller models
+                    'context_length': 20000, # Adjusted to a common context size for smaller models
                     # 'top_p': 0.5,       # Optional: Further restrict token choice if needed
                 }
             )
@@ -507,7 +507,7 @@ async def perform_pdf_processing(job_id: str, temp_pdf_path: str, sanitized_titl
         reformatted_md_text = ""
         if GEMINI_API_KEY_REFORMAT: # Check if Gemini API key is available and configured
             logger.info(f"Job {job_id}: Attempting markdown reformatting with Google Gemini...")
-            reformatted_md_text = reformat_markdown_with_ollama(md_text) # This seems to call ollama, should it be reformat_markdown_with_gemini? Assuming user wants to keep this as is for now.
+            reformatted_md_text = reformat_markdown_with_gemini(md_text) # This seems to call ollama, should it be reformat_markdown_with_gemini? Assuming user wants to keep this as is for now.
         elif OLLAMA_API_BASE and OLLAMA_REFORMAT_MODEL: # Fallback to Ollama if configured
             logger.info(f"Job {job_id}: Gemini not available/configured. Attempting markdown reformatting with Ollama...")
             reformatted_md_text = reformat_markdown_with_ollama(md_text)
