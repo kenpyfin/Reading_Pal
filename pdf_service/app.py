@@ -517,21 +517,70 @@ async def perform_pdf_processing(job_id: str, temp_pdf_path: str, sanitized_titl
         
         logger.info(f"Job {job_id}: Markdown reformatting process chosen. Result length: {len(reformatted_md_text)} chars.")
 
+        # --- NEW: Rewrite image paths in markdown to be web-accessible ---
+        if hasattr(pipe, 'output_images_info') and pipe.output_images_info and isinstance(reformatted_md_text, str):
+            logger.info(f"Job {job_id}: Starting image path rewriting in final markdown content.")
+            current_md_content = reformatted_md_text
+            replacements_done_in_pdf_service = 0
+
+            for img_data_from_pipe in pipe.output_images_info:
+                original_md_path = img_data_from_pipe.get("md_path") # e.g., "images/figure1.png"
+                final_saved_filename = img_data_from_pipe.get("save_name") # e.g., "MyBook_figure1.png"
+
+                if original_md_path and final_saved_filename:
+                    web_path_for_markdown = f"/images/{final_saved_filename}" # Target: "/images/MyBook_figure1.png"
+                    
+                    # Escape original_md_path for use in regex
+                    escaped_original_md_path = re.escape(original_md_path)
+
+                    # Regex for Markdown: ![alt text](original_md_path) or ![alt text](<original_md_path>)
+                    md_pattern = r"(!\[[^\]]*\]\()(<)?" + escaped_original_md_path + r"(?(2)>)(\))"
+                    current_md_content, count_md = re.subn(md_pattern, rf"\1{web_path_for_markdown}\4", current_md_content)
+                    
+                    # Regex for HTML: <img src="original_md_path">
+                    html_pattern = r'(<img[^>]*src\s*=\s*["\'])' + escaped_original_md_path + r'(["\'])'
+                    current_md_content, count_html = re.subn(html_pattern, rf"\1{web_path_for_markdown}\2", current_md_content)
+                    
+                    if count_md > 0 or count_html > 0:
+                        logger.info(f"Job {job_id}: PDF Service replaced '{original_md_path}' with '{web_path_for_markdown}' (MD: {count_md}, HTML: {count_html}).")
+                        replacements_done_in_pdf_service += (count_md + count_html)
+            
+            if replacements_done_in_pdf_service > 0:
+                reformatted_md_text = current_md_content # Update with rewritten paths
+                logger.info(f"Job {job_id}: Total {replacements_done_in_pdf_service} image paths rewritten by PDF service.")
+            else:
+                logger.info(f"Job {job_id}: No image paths needed rewriting by PDF service, or no image info found for rewriting.")
+        # --- END OF NEW IMAGE PATH REWRITING ---
 
         # Save markdown content to a file using the sanitized title
         markdown_file_path = os.path.join(MARKDOWN_PATH, f"{sanitized_title}.md")
-        logger.info(f"Job {job_id}: Preparing to save reformatted markdown to: {markdown_file_path}")
+        logger.info(f"Job {job_id}: Preparing to save final (paths rewritten) markdown to: {markdown_file_path}")
 
         with open(markdown_file_path, 'w', encoding='utf-8') as f:
-            f.write(reformatted_md_text)
+            f.write(reformatted_md_text) # This now contains web-ready paths
 
-        logger.info(f"Job {job_id}: Reformatted markdown saved.")
+        logger.info(f"Job {job_id}: Final markdown saved.")
         logger.info(f"Job {job_id}: PDF processed and converted to markdown successfully")
 
         # Update local variables for successful callback
         callback_status = "completed"
         callback_message = "Processing complete"
         callback_file_path = markdown_file_path
+        
+        # --- Modify how images_for_callback is populated ---
+        temp_images_for_callback = [] 
+        if hasattr(pipe, 'output_images_info') and pipe.output_images_info:
+            for img_data_from_pipe in pipe.output_images_info:
+                saved_filename = img_data_from_pipe.get("save_name")
+                if saved_filename:
+                    web_path = f"/images/{saved_filename}" # Construct the web path
+                    temp_images_for_callback.append(ImageInfo( 
+                        filename=saved_filename,
+                        path=web_path # Send the web path
+                    ))
+        images_for_callback = temp_images_for_callback # Assign to the variable used later
+        # --- End of modification for images_for_callback ---
+
         callback_images_data = [img.model_dump() for img in images_for_callback] # Convert ImageInfo objects to dicts
 
     except Exception as e:

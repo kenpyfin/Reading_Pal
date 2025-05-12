@@ -273,11 +273,11 @@ async def get_book_by_id(book_id: str):
          logger.error(f"Failed to validate book data from DB for ID {book_id}: {validation_error}", exc_info=True)
          raise HTTPException(status_code=500, detail="Invalid book data found in database.")
 
-    # Log processed_images_info
-    logger.info(f"Get endpoint: Book ID {book_id} - processed_images_info from DB: {book.processed_images_info}")
+    # --- REMOVE LOGGING for book.processed_images_info ---
+    # logger.info(f"Get endpoint: Book ID {book_id} - processed_images_info from DB: {book.processed_images_info}")
 
     markdown_content = None
-    image_urls_for_response = [] # Renamed to avoid confusion with internal image path rewriting
+    image_urls_for_response = [] 
 
     # Only attempt to read/generate if processing is completed and markdown_filename exists
     if book.status == 'completed' and book.markdown_filename:
@@ -312,105 +312,18 @@ async def get_book_by_id(book_id: str):
                 raw_md_img_paths = re.findall(r"!\[[^\]]*\]\(([^)]+)\)", markdown_content)
                 raw_html_img_paths = re.findall(r"<img [^>]*src\s*=\s*['\"]([^'\"]+)['\"][^>]*>", markdown_content)
                 logger.info(f"Get endpoint: Book ID {book_id} - Image paths in RAW markdown (MD syntax): {raw_md_img_paths[:5]}")
+                logger.info(f"Get endpoint: Book ID {book_id} - Image paths in RAW markdown (MD syntax): {raw_md_img_paths[:5]}")
                 logger.info(f"Get endpoint: Book ID {book_id} - Image paths in RAW markdown (HTML syntax): {raw_html_img_paths[:5]}")
             
-            # --- New image path rewriting logic using processed_images_info ---
-            if markdown_content and isinstance(markdown_content, str) and book.processed_images_info:
-                temp_markdown_content = markdown_content
-                replacements_made = 0
-                for image_spec in book.processed_images_info:
-                    original_path = image_spec.original_path_in_markdown
-                    new_filename = image_spec.filename
-                    # Log details for each replacement attempt
-                    logger.info(f"Get endpoint: Book ID {book_id} - Attempting replacement for: original_path='{original_path}', new_filename='{new_filename}'")
-                    # Ensure paths are not None or empty
-                    if original_path and new_filename:
-                        # Construct the new path for replacement
-                        new_web_path = f"/images/{new_filename}"
-                        
-                        # Escape the original_path for string replacement if it might contain special characters
-                        # For simple string replacement, direct usage is often fine.
-                        # If original_path could be a regex pattern, it would need re.escape().
-                        # Here, we assume it's a literal string to be replaced.
-                        
-                        # Perform replacement for Markdown image syntax: ![alt](original_path)
-                        # We need to be careful with how 'original_path' is formatted.
-                        # If original_path is "images/figure1.png", we replace "images/figure1.png".
-                        # Markdown: ![...](original_path) -> ![...](/images/new_filename)
-                        # HTML: <img src="original_path"> -> <img src="/images/new_filename">
-
-                        # To avoid issues with special characters in `original_path` if it were used in regex,
-                        # simple string replacement is safer if we are sure about the exact string.
-                        # However, markdown can have variations like `![alt text](<original_path>)`
-                        # Let's try a targeted replacement.
-                        
-                        # Replacement for Markdown: ![alt text](original_path)
-                        # Need to handle potential URL encoding or special characters in original_path if they exist.
-                        # For now, assume original_path is a simple string.
-                        # Pattern: find `(original_path)` or `(<original_path>)`
-                        
-                        # Simpler direct string replacement:
-                        # Replace `(original_path)` with `(/images/new_filename)`
-                        # Replace `="original_path"` with `="/images/new_filename"`
-                        
-                        # Markdown image links: ![alt text](path_to_image)
-                        # We need to replace 'path_to_image' which is `original_path`
-                        # with `/images/new_filename`.
-                        
-                        # Example: original_path = "image/fig1.png", new_filename = "book_fig1.png"
-                        # Markdown: ![](image/fig1.png) -> ![](/images/book_fig1.png)
-                        # HTML: <img src="image/fig1.png"> -> <img src="/images/book_fig1.png">
-
-                        # We must replace the exact string `original_path`
-                        # This is safer than complex regex if `original_path_in_markdown` is truly the exact string.
-
-                        # Replace in Markdown image links: ](original_path)
-                        # To avoid replacing parts of other URLs, be specific.
-                        # Consider variations: ](original_path "title")
-                        
-                        # Let's replace the `original_path` string when it's within typical image link constructs.
-                        # This is still a bit heuristic. The ideal solution is for magic_pdf to use placeholders.
-                        
-                        # Attempt 1: Direct replacement of the original_path string.
-                        # This might be too broad if original_path is a common substring.
-                        # temp_markdown_content = temp_markdown_content.replace(original_path, new_web_path)
-
-                        # Attempt 2: More targeted replacement for common markdown and HTML patterns.
-                        # Markdown: ![...](original_path) or ![...](<original_path>)
-                        # HTML: src="original_path" or src='original_path'
-                        
-                        # For Markdown: replace `](original_path)` with `](/images/new_filename)`
-                        # and `](<original_path>)` with `](/images/new_filename)`
-                        # For HTML: replace `src="original_path"` with `src="/images/new_filename"`
-                        # and `src='original_path'` with `src='/images/new_filename'`
-
-                        # Escape original_path for use in regex, as it might contain special characters
-                        escaped_original_path = re.escape(original_path)
-
-                        # Markdown pattern: (!\[[^\]]*\]\()(<)?(escaped_original_path)(?(2)>)(\))
-                        # This looks for ![alt](original_path) or ![alt](<original_path>)
-                        md_pattern = r"(!\[[^\]]*\]\()(<)?" + escaped_original_path + r"(?(2)>)(\))"
-                        temp_markdown_content, count = re.subn(md_pattern, rf"\1{new_web_path}\4", temp_markdown_content)
-                        if count > 0: replacements_made += count
-
-                        # HTML pattern: (<img[^>]*src\s*=\s*["'])(escaped_original_path)(["'])
-                        html_pattern = r'(<img[^>]*src\s*=\s*["\'])' + escaped_original_path + r'(["\'])'
-                        temp_markdown_content, count = re.subn(html_pattern, rf"\1{new_web_path}\2", temp_markdown_content)
-                        if count > 0: replacements_made += count
-                        
-                        if replacements_made > 0:
-                             logger.info(f"Get endpoint: Replaced '{original_path}' with '{new_web_path}' for image '{new_filename}'.")
-                
-                if replacements_made > 0:
-                    logger.info(f"Get endpoint: Total {replacements_made} image paths rewritten in markdown for book {book_id} using processed_images_info.")
-                    markdown_content = temp_markdown_content
-                else:
-                    logger.info(f"Get endpoint: No image paths were rewritten using processed_images_info for book {book_id}. Original paths might not have been found, or processed_images_info was empty/mismatched.")
-            elif markdown_content and isinstance(markdown_content, str) and not book.processed_images_info:
-                logger.info(f"Get endpoint: Book {book_id} has markdown content but no processed_images_info. Skipping new replacement logic.")
+            # --- REMOVE THE ENTIRE IMAGE PATH REWRITING BLOCK ---
+            # if markdown_content and isinstance(markdown_content, str) and book.processed_images_info:
+            #    ... (all the re.subn logic) ...
+            # elif markdown_content and isinstance(markdown_content, str) and not book.processed_images_info:
+            #    logger.info(f"Get endpoint: Book {book_id} has markdown content but no processed_images_info. Skipping new replacement logic.")
+            logger.info(f"Get endpoint: Markdown content for book {book_id} is now assumed to have web-ready image paths from the file itself.")
 
 
-    if book.status == 'completed' and book.image_filenames: # image_filenames should still be populated and can be used for generating image_urls
+    if book.status == 'completed' and book.image_filenames:
          image_urls_for_response = [f"/images/{filename}" for filename in book.image_filenames if filename]
          logger.info(f"Get endpoint: Generated {len(image_urls_for_response)} image URLs for response model from image_filenames.")
     elif book.status == 'completed' and not book.image_filenames:
@@ -423,22 +336,16 @@ async def get_book_by_id(book_id: str):
     book.markdown_content = markdown_content
     book.image_urls = image_urls_for_response # Use the correctly named variable
 
+    book.markdown_content = markdown_content
+    book.image_urls = image_urls_for_response # Use the correctly named variable
+
     # --- ADDED LOGGING ---
     if book.markdown_content:
         logger.info(f"Get endpoint: Final markdown_content being sent to frontend (first 500 chars): {book.markdown_content[:500]}")
-        # For more detailed debugging of image tags (HTML style):
         html_img_tags_found = re.findall(r"<img [^>]*src\s*=\s*['\"]([^'\"]+)['\"][^>]*>", book.markdown_content)
-        if html_img_tags_found:
-            logger.info(f"Get endpoint: Found HTML <img src=...> attributes in final markdown: {html_img_tags_found}")
-        else:
-            logger.info("Get endpoint: No HTML <img> tags found in final markdown_content.")
-        
-        # For more detailed debugging of image tags (Markdown style):
+        logger.info(f"Get endpoint: Found HTML <img src=...> attributes in final markdown: {html_img_tags_found[:5]}")
         markdown_img_tags_found = re.findall(r"!\[[^\]]*\]\(([^)]+)\)", book.markdown_content)
-        if markdown_img_tags_found:
-            logger.info(f"Get endpoint: Found Markdown ![]() image links in final markdown: {markdown_img_tags_found}")
-        else:
-            logger.info("Get endpoint: No Markdown ![]() image links found in final markdown_content.")
+        logger.info(f"Get endpoint: Found Markdown ![]() image links in final markdown: {markdown_img_tags_found[:5]}")
     else:
         logger.info("Get endpoint: Final markdown_content is None.")
     # --- END OF ADDED LOGGING ---
@@ -596,26 +503,29 @@ async def pdf_processing_callback(payload: PDFServiceCallbackData = Body(...)):
                 else:
                     logger.warning(f"Callback: Job {payload.job_id} - Skipping image info due to missing filename or path: {img_info.model_dump_json()}")
             
+            # We only need to store the final filenames now
+            image_filenames = [img_info.filename for img_info in payload.images if img_info.filename]
             update_data["image_filenames"] = image_filenames
-            update_data["processed_images_info"] = processed_images_info_for_db # Add this new field
-            logger.info(f"Callback: Extracted {len(image_filenames)} image filenames and {len(processed_images_info_for_db)} processed image info objects.")
+            logger.info(f"Callback: Extracted {len(image_filenames)} image filenames.")
         else:
-            update_data["image_filenames"] = [] # Ensure it's an empty list if no images
-            update_data["processed_images_info"] = [] # Ensure it's an empty list
+            update_data["image_filenames"] = []
+        
+        # --- REMOVE processed_images_info logic ---
+        # update_data["processed_images_info"] = [] # This line is removed
 
     elif payload.status == "failed":
         update_data["processing_error"] = payload.processing_error or "Processing failed without specific error message from PDF service."
         logger.warning(f"Callback: Job {payload.job_id} failed. Error: {update_data['processing_error']}")
-        # Ensure markdown and image filenames are cleared or set to None if the job failed
         update_data["markdown_filename"] = None
         update_data["image_filenames"] = []
-        update_data["processed_images_info"] = [] # Clear this on failure too
+        # update_data["processed_images_info"] = [] # This line is removed
 
-
-    else: # Handle unexpected status values
+    else: 
         logger.warning(f"Callback: Received unexpected status '{payload.status}' for job_id {payload.job_id}. Treating as failed.")
         update_data["status"] = "failed"
         update_data["processing_error"] = f"Received unexpected status '{payload.status}' from PDF service. Original message: {payload.message}"
+        update_data["markdown_filename"] = None 
+        update_data["image_filenames"] = []     
 
     try:
         updated_count = await update_book(book_id_str, update_data)

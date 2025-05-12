@@ -16,15 +16,19 @@ const BookPane = forwardRef(({ markdownContent, imageUrls, onTextSelect }, ref) 
   const transformUri = (uri) => {
     if (!uri) return uri; // Return original if URI is empty or null
 
-    // Extract the filename from the URI.
+    // If the URI already starts with /images/, it's likely already processed
+    // by the pdf-service/backend to be a web-accessible path.
+    if (uri.startsWith('/images/')) {
+      return uri;
+    }
+
+    // Fallback for other cases (e.g., relative paths if any slip through, or just filenames)
     // This handles cases where URI might be an absolute path from the PDF service's
     // perspective (e.g., "/pdf_service_storage/images/image.png") or just a filename
     // (e.g., "image.png").
     const filename = uri.substring(uri.lastIndexOf('/') + 1);
 
     // Prepend the public path for images served by Nginx.
-    // This assumes Nginx is configured to serve images from a specific directory
-    // (e.g., the mounted IMAGES_PATH) under the "/images/" route.
     return `/images/${filename}`;
   };
 
@@ -34,13 +38,12 @@ const BookPane = forwardRef(({ markdownContent, imageUrls, onTextSelect }, ref) 
       {markdownContent ? (
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
-          rehypePlugins={[rehypeRaw]} // ADD THIS PLUGIN to allow raw HTML (our span)
-          transformImageUri={transformUri} // USE THE TRANSFORM FUNCTION HERE
+          rehypePlugins={[rehypeRaw]} 
+          transformImageUri={transformUri} // USE THE UPDATED TRANSFORM FUNCTION
           children={markdownContent}
           components={{
             img: ({ node, ...props }) => {
-              // After transformImageUri, props.src will be the correct public URL
-              // (e.g., /images/filename.png)
+              // props.src will now be correctly formatted by transformUri
               return <img {...props} style={{ maxWidth: '100%', height: 'auto' }} />;
             },
           }}
