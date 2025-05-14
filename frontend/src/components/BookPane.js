@@ -5,13 +5,16 @@ import rehypeRaw from 'rehype-raw'; // Import rehype-raw
 
 const BookPane = forwardRef(({ markdownContent, imageUrls, onTextSelect }, ref) => {
   const [fontSize, setFontSize] = useState(16); // Default font size in pixels
+  const FONT_SIZE_STEP = 1;
+  const MIN_FONT_SIZE = 10;
+  const MAX_FONT_SIZE = 32;
 
   const increaseFontSize = () => {
-    setFontSize(prevSize => prevSize + 1);
+    setFontSize(prevSize => Math.min(prevSize + FONT_SIZE_STEP, MAX_FONT_SIZE));
   };
 
   const decreaseFontSize = () => {
-    setFontSize(prevSize => Math.max(10, prevSize - 1)); // Prevent font size from becoming too small
+    setFontSize(prevSize => Math.max(MIN_FONT_SIZE, prevSize - FONT_SIZE_STEP));
   };
 
   const handleMouseUp = () => {
@@ -43,14 +46,27 @@ const BookPane = forwardRef(({ markdownContent, imageUrls, onTextSelect }, ref) 
   };
 
   return (
-    <div className="book-pane" ref={ref} onMouseUp={handleMouseUp}>
-      <div className="font-controls" style={{ marginBottom: '10px', display: 'flex', alignItems: 'center' }}>
+    // Add position: 'relative' to allow absolute positioning of children
+    <div className="book-pane" ref={ref} onMouseUp={handleMouseUp} style={{ position: 'relative', paddingTop: '40px' /* Add padding to prevent overlap */ }}>
+      {/* Adjusted font controls styling and placement */}
+      <div 
+        className="font-controls" 
+        style={{ 
+          position: 'absolute', 
+          top: '10px', 
+          right: '10px', 
+          display: 'flex', 
+          alignItems: 'center',
+          zIndex: 10 // Ensure it's above the markdown content
+        }}
+      >
         <button onClick={decreaseFontSize} style={{ marginRight: '5px' }}>A-</button>
-        <span style={{ margin: '0 10px' }}>{fontSize}px</span>
+        <span style={{ margin: '0 10px', fontSize: '14px' /* Slightly smaller display for the size itself */ }}>{fontSize}px</span>
         <button onClick={increaseFontSize} style={{ marginLeft: '5px' }}>A+</button>
-        <h2 style={{ marginLeft: '20px', marginBottom: '0' }}>Book Content</h2>
+        {/* Removed <h2>Book Content</h2> */}
       </div>
-      <div style={{ fontSize: `${fontSize}px` }}> {/* Apply font size here */}
+      {/* Apply font size to this div which wraps the markdown content */}
+      <div style={{ fontSize: `${fontSize}px` }}> 
         {markdownContent ? (
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
