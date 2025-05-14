@@ -8,6 +8,8 @@ function BookList() {
   const [books, setBooks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  // Add a loading state for delete operation to disable button
+  const [deletingId, setDeletingId] = useState(null);
 
   // Function to fetch the list of books
   const fetchBooks = async () => {
