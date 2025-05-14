@@ -869,7 +869,29 @@ function BookView() {
 
   return (
     <div className="book-view-container" ref={bookViewContainerRef}> {/* Add ref to the main container */}
-        {/* New wrapper for book pane area to control its flex properties */}
+        {/* Add Bookmark Modal - Rendered conditionally */}
+        {showAddBookmarkModal && (
+          <div className="modal-overlay">
+            <div className="modal-content">
+              <h2>Add Bookmark</h2>
+              <input
+                type="text"
+                value={newBookmarkName}
+                onChange={(e) => setNewBookmarkName(e.target.value)}
+                placeholder="Enter bookmark name"
+                className="bookmark-name-input"
+                aria-label="Bookmark name"
+              />
+              {bookmarkError && <p className="error-message">{bookmarkError}</p>}
+              <div className="modal-actions">
+                <button onClick={handleSaveBookmark} className="button-primary">Save</button>
+                <button onClick={closeAddBookmarkModal} className="button-secondary">Cancel</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Book Pane Area */}
         <div 
           className="book-pane-area" 
           ref={bookPaneAreaRef} // Ref for the resizable area
@@ -883,6 +905,14 @@ function BookView() {
         >
           {/* .book-pane-wrapper is the existing structure inside book-pane-area */}
           <div className="book-pane-wrapper"> 
+            {/* Controls Header for Book Pane - ADD THIS SECTION */}
+            <div className="book-pane-controls-header">
+              <button onClick={openAddBookmarkModal} className="control-button">
+                Add Bookmark
+              </button>
+              {/* You can add other controls here, like font size adjusters */}
+            </div>
+
             <div className="book-pane-container" ref={bookPaneContainerRef}> {/* Ref for scrollable content */}
               <BookPane
                 markdownContent={highlightedPageContent} 
