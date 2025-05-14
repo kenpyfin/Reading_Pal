@@ -2,7 +2,8 @@ import os
 import logging
 from motor.motor_asyncio import AsyncIOMotorClient
 from dotenv import load_dotenv
-from bson import ObjectId # Import ObjectId for handling MongoDB _id
+from bson import ObjectId # Ensure ObjectId is imported
+from bson.errors import InvalidId # Import InvalidId for specific error handling
 from typing import Optional, List, Dict, Any # Import types
 from datetime import datetime # Import datetime
 
@@ -145,8 +146,33 @@ async def update_book(book_id: str, update_data: dict):
         return False # Indicate failure
 
 
-# --- Keep Note Database Operations ---
+async def delete_book_record(book_id: str) -> bool:
+    """
+    Deletes a book record from the database by its ID.
+    Returns True if deletion was successful, False otherwise.
+    """
+    database = get_database()
+    if database is None:
+        logger.error("Database not initialized for delete_book_record.")
+        return False
+    
+    try:
+        object_id = ObjectId(book_id)
+        delete_result = await database.books.delete_one({"_id": object_id})
+        if delete_result.deleted_count == 0:
+            logger.warning(f"No book record found with ID {book_id} to delete.")
+            return False
+        logger.info(f"Book record with ID {book_id} deleted successfully from MongoDB.")
+        return True
+    except InvalidId:
+        logger.error(f"Invalid Book ID format for deletion: {book_id}")
+        return False
+    except Exception as e:
+        logger.error(f"Error deleting book record {book_id} from MongoDB: {e}", exc_info=True)
+        return False
 
+# --- Keep Note Database Operations ---
+# ... (rest of the note functions remain unchanged)
 async def save_note(note_data: dict):
     """Saves a new note to the database."""
     database = get_database()
@@ -190,9 +216,12 @@ async def get_note_by_id(note_id: str):
     try:
         # Convert the string ID to MongoDB's ObjectId
         obj_id = ObjectId(note_id)
-    except Exception:
+    except InvalidId: # Catch specific InvalidId error
         logger.error(f"Invalid note ID format: {note_id}")
-        return None # Return None if the ID format is invalid
+        return None 
+    except Exception as e: # Catch other potential errors
+        logger.error(f"Error converting note ID {note_id} to ObjectId: {e}", exc_info=True)
+        return None
 
     try:
         note = await database.notes.find_one({"_id": obj_id})

@@ -6,26 +6,24 @@ import os
 import logging
 import requests # Import requests
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, status, Body
-from typing import List, Optional, Dict, Any # Import Optional, Dict, Any
-from bson import ObjectId
+from typing import List, Optional, Dict, Any 
+from bson import ObjectId # Keep ObjectId import
+from bson.errors import InvalidId # Import InvalidId
 from fastapi.concurrency import run_in_threadpool
-from datetime import datetime # Import datetime
-import re # Import re for sanitization
-from pydantic import BaseModel, Field # Import Pydantic BaseModel and Field
+from datetime import datetime 
+import re 
+from pydantic import BaseModel, Field 
 
-# Import models and db functions
 from backend.models.book import Book
-# Import specific DB functions needed
 from backend.db.mongodb import (
     save_book,
     get_book,
-    get_books, # Import get_books
-    get_book_by_job_id, # Import get_book_by_job_id
-    update_book, # Import update_book
+    get_books, 
+    get_book_by_job_id, 
+    update_book, 
+    delete_book_record, # Add delete_book_record
     get_database
 )
-# Assuming pdf_client service exists and is imported if needed directly
-# from backend.services.pdf_client import process_pdf_with_service # Keep if used
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

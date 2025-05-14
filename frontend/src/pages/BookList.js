@@ -32,13 +32,12 @@ function BookList() {
       setError(`Failed to load books: ${err.message || 'Unknown error'}`);
       setBooks([]); // Clear books on error
     } finally {
-      setLoading(false);
+      setLoading(false); // Initial loading complete
     }
   };
 
-  // Function to check the status of a single book by its job_id
   const checkBookStatus = async (bookId, jobId) => {
-      if (!jobId) return null; // Cannot check status without a job ID
+      if (!jobId) return null; 
 
       try {
           // Call the new backend status endpoint which proxies to the PDF service
@@ -65,16 +64,13 @@ function BookList() {
 
       } catch (err) {
           console.error(`Error during status check for job ${jobId} (Book ID: ${bookId}):`, err);
-          // Return null if status check fails
           return null;
       }
   };
 
-
-  // Initial fetch when the component mounts
   useEffect(() => {
     fetchBooks();
-  }, []); // Empty dependency array means this runs once on component mount
+  }, []); 
 
   // Polling effect for books that are 'processing' or 'pending'
   useEffect(() => {
