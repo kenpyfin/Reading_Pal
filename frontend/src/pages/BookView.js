@@ -201,7 +201,7 @@ function BookView() {
 
   // Effect for handling pagination logic AND highlighting when bookData, currentPage, or notes change
   useEffect(() => {
-    logger.debug("[BookView - Highlighting Effect] Running. Current Page:", currentPage, "Notes count:", notes.length);
+    logger.debug("[BookView - Highlighting Effect] Running. Current Page:", currentPage, "Notes count:", notes.length, "PendingScrollOffsetInPage:", pendingScrollOffsetInPage, "PendingScrollToPercentage:", pendingScrollToPercentage);
     if (fullMarkdownContent.current) {
       const totalChars = fullMarkdownContent.current.length;
       const numPages = Math.max(1, Math.ceil(totalChars / CHARACTERS_PER_PAGE));
@@ -215,15 +215,17 @@ function BookView() {
       
       const pageStartGlobalOffset = (validCurrentPage - 1) * CHARACTERS_PER_PAGE;
       const pageEndGlobalOffset = pageStartGlobalOffset + CHARACTERS_PER_PAGE;
-      logger.debug(`[BookView - Highlighting Effect] Page ${currentPage}: Global Offset Range [${pageStartGlobalOffset} - ${pageEndGlobalOffset})`);
+      // logger.debug(`[BookView - Highlighting Effect] Page ${currentPage}: Global Offset Range [${pageStartGlobalOffset} - ${pageEndGlobalOffset})`); // Redundant with below
       
       const plainPageText = fullMarkdownContent.current.substring(pageStartGlobalOffset, pageEndGlobalOffset);
       setCurrentPageContent(plainPageText); 
       logger.debug(`[BookView - Highlighting Effect] Plain text for page ${currentPage} (len: ${plainPageText.length}): "${plainPageText.substring(0, 100)}..."`);
 
 
-      // Apply highlighting
+      // Apply highlighting (existing logic for notes)
       if (notes && notes.length > 0) {
+        // ... (existing note highlighting logic remains unchanged) ...
+        // (Make sure this logic correctly sets setHighlightedPageContent(newHighlightedString);)
         const relevantNotes = notes
           .filter(note => {
             if (note.global_character_offset === undefined || note.global_character_offset === null || !note.source_text || note.source_text.length === 0) {
@@ -231,68 +233,39 @@ function BookView() {
             }
             const noteStartGlobal = note.global_character_offset;
             const noteEndGlobal = noteStartGlobal + note.source_text.length;
-            // Check for overlap: (StartA < EndB) and (StartB < EndA)
             const overlaps = Math.max(pageStartGlobalOffset, noteStartGlobal) < Math.min(pageEndGlobalOffset, noteEndGlobal);
-            if (!overlaps) {
-                // logger.debug(`[BookView - Highlighting Effect] Note ID ${note.id} (offset ${noteStartGlobal}, len ${note.source_text.length}) does NOT overlap with page range [${pageStartGlobalOffset}-${pageEndGlobalOffset})`);
-            }
             return overlaps;
           })
-          .sort((a, b) => a.global_character_offset - b.global_character_offset); // Sort by start offset
+          .sort((a, b) => a.global_character_offset - b.global_character_offset);
         
-        logger.debug(`[BookView - Highlighting Effect] Found ${relevantNotes.length} relevant notes for page ${currentPage}:`, relevantNotes.map(n => ({id: n.id, offset: n.global_character_offset, len: n.source_text.length })));
-
         let newHighlightedString = "";
-        let lastProcessedIndexInPage = 0; // Tracks position in plainPageText
+        let lastProcessedIndexInPage = 0;
 
         relevantNotes.forEach(note => {
-          logger.debug(`[BookView - Highlighting Effect] Processing note ID ${note.id}: global_offset=${note.global_character_offset}, source_text_len=${note.source_text?.length}, source_text (first 30): "${note.source_text?.substring(0,30)}"`);
           const noteStartGlobal = note.global_character_offset;
           const noteLength = note.source_text.length; 
-
           let noteStartInPage = noteStartGlobal - pageStartGlobalOffset;
-          
-          // Append the part of plainPageText before the current note's highlight
-          // Ensure noteStartInPage is not less than lastProcessedIndexInPage to handle overlapping notes correctly (though current sort helps)
           const actualSegmentStartInPage = Math.max(noteStartInPage, lastProcessedIndexInPage);
           
           if (actualSegmentStartInPage > lastProcessedIndexInPage) {
             newHighlightedString += plainPageText.substring(lastProcessedIndexInPage, actualSegmentStartInPage);
-            logger.debug(`[BookView - Highlighting Effect] Appended pre-text for note ${note.id}: from ${lastProcessedIndexInPage} to ${actualSegmentStartInPage}`);
           }
           
-          // Determine the actual segment of the note's source_text that is visible on this page
-          // The start of the highlight within the page's plain text
           const highlightSegmentStartOnPage = Math.max(0, noteStartInPage);
-
-          // The end of the highlight within the page's plain text
-          // It's the minimum of: (note's end relative to page start) AND (page's end)
-          const highlightSegmentEndOnPage = Math.min(
-            noteStartInPage + noteLength, // note's end relative to page start
-            plainPageText.length          // page's end
-          );
+          const highlightSegmentEndOnPage = Math.min(noteStartInPage + noteLength, plainPageText.length);
           
-          // Ensure we only try to highlight if the segment is valid and actually on this page
           if (highlightSegmentStartOnPage < highlightSegmentEndOnPage && highlightSegmentStartOnPage < plainPageText.length) {
             const textToHighlight = plainPageText.substring(highlightSegmentStartOnPage, highlightSegmentEndOnPage);
-            logger.debug(`[BookView - Highlighting Effect] Highlighting for note ${note.id}: from ${highlightSegmentStartOnPage} to ${highlightSegmentEndOnPage}. Text: "${textToHighlight.substring(0,50)}..."`);
             newHighlightedString += `<span class="highlighted-note-text" data-note-id="${note.id}">${textToHighlight}</span>`;
             lastProcessedIndexInPage = highlightSegmentEndOnPage;
           } else {
-             logger.debug(`[BookView - Highlighting Effect] Skipping highlight for note ${note.id} as its segment [${highlightSegmentStartOnPage}-${highlightSegmentEndOnPage}] is not valid or not on page.`);
-             // If we skipped, ensure lastProcessedIndexInPage is at least where this note would have started,
-             // to prevent reprocessing this area if it didn't actually add text.
              lastProcessedIndexInPage = Math.max(lastProcessedIndexInPage, actualSegmentStartInPage);
           }
         });
 
-        // Append any remaining text after the last highlight
         if (lastProcessedIndexInPage < plainPageText.length) {
           newHighlightedString += plainPageText.substring(lastProcessedIndexInPage);
-          logger.debug(`[BookView - Highlighting Effect] Appended post-text: from ${lastProcessedIndexInPage} to ${plainPageText.length}`);
         }
-        
-        logger.debug(`[BookView - Highlighting Effect] Final newHighlightedString for page ${currentPage} (first 100 chars): "${newHighlightedString.substring(0,100)}..."`);
         setHighlightedPageContent(newHighlightedString);
 
       } else { // No notes or no relevant notes
@@ -300,21 +273,31 @@ function BookView() {
         setHighlightedPageContent(plainPageText); 
       }
       
+      // Conditional scroll to top:
+      // Only scroll to the top of the new page if no other specific scroll operation
+      // (like from a bookmark jump or note jump) is pending for this page load.
       if (bookPaneContainerRef.current) {
-        if (pendingScrollOffsetInPage === null) {
+        if (pendingScrollOffsetInPage === null && pendingScrollToPercentage === null) {
+            // This means we've changed page (e.g., via Next/Prev buttons or direct page input),
+            // and no specific scroll target (offset for notes, or percentage for bookmarks)
+            // was set for this particular page load. So, default to scrolling to the top.
             isProgrammaticScroll.current = true;
             bookPaneContainerRef.current.scrollTop = 0;
+            logger.debug("[BookView - Highlighting Effect] Scrolled to top of new page as no other scroll (offset/percentage) is pending.");
+            // Reset isProgrammaticScroll after a short delay
             setTimeout(() => { isProgrammaticScroll.current = false; }, 100);
+        } else {
+            logger.debug("[BookView - Highlighting Effect] A scroll (offset for note, or percentage for bookmark) is pending. Skipping automatic scroll to top by Highlighting Effect.");
         }
       }
     } else { // No fullMarkdownContent.current
       setCurrentPageContent('');
       setHighlightedPageContent('');
       setTotalPages(1);
-      setCurrentPage(1);
+      setCurrentPage(1); // Reset to page 1 if content disappears
     }
-  // Add `notes` and `pendingScrollOffsetInPage` to dependency array
-  }, [bookData, currentPage, notes, pendingScrollOffsetInPage]); // fullMarkdownContent.current is a ref, not a state/prop for deps
+  // Add pendingScrollToPercentage to the dependency array
+  }, [bookData, currentPage, notes, pendingScrollOffsetInPage, pendingScrollToPercentage]);
 
 
   useEffect(() => {
