@@ -100,10 +100,6 @@ except Exception as e:
     logger.critical(f"Failed to initialize storage paths: {e}")
     sys.exit(1)
 
-class ImageInfo(BaseModel):
-    filename: str
-    path: str
-
 # --- Updated ProcessResponse model for async initiation ---
 class ProcessResponse(BaseModel):
     success: bool
@@ -400,7 +396,6 @@ async def perform_pdf_processing(job_id: str, temp_pdf_path: str, sanitized_titl
     callback_status = "processing" # Default status
     callback_message = "Processing started"
     callback_file_path = None
-    callback_images_data = [] # Will store list of image dicts
     processing_error_detail = None
 
     try:
@@ -565,22 +560,6 @@ async def perform_pdf_processing(job_id: str, temp_pdf_path: str, sanitized_titl
         callback_status = "completed"
         callback_message = "Processing complete"
         callback_file_path = markdown_file_path
-        
-        # --- Modify how images_for_callback is populated ---
-        temp_images_for_callback = [] 
-        if hasattr(pipe, 'output_images_info') and pipe.output_images_info:
-            for img_data_from_pipe in pipe.output_images_info:
-                saved_filename = img_data_from_pipe.get("save_name")
-                if saved_filename:
-                    web_path = f"/images/{saved_filename}" # Construct the web path
-                    temp_images_for_callback.append(ImageInfo( 
-                        filename=saved_filename,
-                        path=web_path # Send the web path
-                    ))
-        images_for_callback = temp_images_for_callback # Assign to the variable used later
-        # --- End of modification for images_for_callback ---
-
-        callback_images_data = [img.model_dump() for img in images_for_callback] # Convert ImageInfo objects to dicts
 
     except Exception as e:
         logger.error(f"Job {job_id}: Error during background PDF processing: {e}", exc_info=True)
@@ -615,7 +594,6 @@ async def perform_pdf_processing(job_id: str, temp_pdf_path: str, sanitized_titl
 
         if callback_status == "completed":
             callback_data["file_path"] = callback_file_path
-            callback_data["images"] = callback_images_data # Already a list of dicts
         
         try:
             response = requests.post(callback_url, json=callback_data, timeout=10) # Add a timeout
