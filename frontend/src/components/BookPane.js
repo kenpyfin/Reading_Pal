@@ -1,9 +1,19 @@
-import React, { forwardRef } from 'react';
+import React, { forwardRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw'; // Import rehype-raw
 
 const BookPane = forwardRef(({ markdownContent, imageUrls, onTextSelect }, ref) => {
+  const [fontSize, setFontSize] = useState(16); // Default font size in pixels
+
+  const increaseFontSize = () => {
+    setFontSize(prevSize => prevSize + 1);
+  };
+
+  const decreaseFontSize = () => {
+    setFontSize(prevSize => Math.max(10, prevSize - 1)); // Prevent font size from becoming too small
+  };
+
   const handleMouseUp = () => {
     const selection = window.getSelection();
     const selectedText = selection.toString().trim();
@@ -34,10 +44,16 @@ const BookPane = forwardRef(({ markdownContent, imageUrls, onTextSelect }, ref) 
 
   return (
     <div className="book-pane" ref={ref} onMouseUp={handleMouseUp}>
-      <h2>Book Content</h2>
-      {markdownContent ? (
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
+      <div className="font-controls" style={{ marginBottom: '10px', display: 'flex', alignItems: 'center' }}>
+        <button onClick={decreaseFontSize} style={{ marginRight: '5px' }}>A-</button>
+        <span style={{ margin: '0 10px' }}>{fontSize}px</span>
+        <button onClick={increaseFontSize} style={{ marginLeft: '5px' }}>A+</button>
+        <h2 style={{ marginLeft: '20px', marginBottom: '0' }}>Book Content</h2>
+      </div>
+      <div style={{ fontSize: `${fontSize}px` }}> {/* Apply font size here */}
+        {markdownContent ? (
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
           rehypePlugins={[rehypeRaw]} 
           transformImageUri={transformUri} // USE THE UPDATED TRANSFORM FUNCTION
           children={markdownContent}
@@ -48,9 +64,10 @@ const BookPane = forwardRef(({ markdownContent, imageUrls, onTextSelect }, ref) 
             },
           }}
         />
-      ) : (
-        <p>No content loaded.</p>
-      )}
+        ) : (
+          <p>No content loaded.</p>
+        )}
+      </div>
     </div>
   );
 });
