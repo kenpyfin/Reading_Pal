@@ -521,7 +521,6 @@ async def perform_pdf_processing(job_id: str, temp_pdf_path: str, sanitized_titl
         if hasattr(pipe, 'output_images_info') and pipe.output_images_info and isinstance(reformatted_md_text, str):
             logger.info(f"Job {job_id}: Starting image path rewriting in final markdown content.")
             current_md_content = reformatted_md_text
-            replacements_done_in_pdf_service = 0
 
             for img_data_from_pipe in pipe.output_images_info:
                 original_md_path = img_data_from_pipe.get("md_path") # e.g., "images/figure1.png"
@@ -529,27 +528,27 @@ async def perform_pdf_processing(job_id: str, temp_pdf_path: str, sanitized_titl
 
                 if original_md_path and final_saved_filename:
                     web_path_for_markdown = f"/images/{final_saved_filename}" # Target: "/images/MyBook_figure1.png"
-                    
-                    # Escape original_md_path for use in regex
-                    escaped_original_md_path = re.escape(original_md_path)
 
-                    # Regex for Markdown: ![alt text](original_md_path) or ![alt text](<original_md_path>)
-                    md_pattern = r"(!\[[^\]]*\]\()(<)?" + escaped_original_md_path + r"(?(2)>)(\))"
-                    current_md_content, count_md = re.subn(md_pattern, rf"\1{web_path_for_markdown}\4", current_md_content)
+                    current_md_content = current_md_content.replace(original_md_path, web_path_for_markdown)
                     
-                    # Regex for HTML: <img src="original_md_path">
-                    html_pattern = r'(<img[^>]*src\s*=\s*["\'])' + escaped_original_md_path + r'(["\'])'
-                    current_md_content, count_html = re.subn(html_pattern, rf"\1{web_path_for_markdown}\2", current_md_content)
+                    # # Escape original_md_path for use in regex
+                    # escaped_original_md_path = re.escape(original_md_path)
+
+                    # # Regex for Markdown: ![alt text](original_md_path) or ![alt text](<original_md_path>)
+                    # md_pattern = r"(!\[[^\]]*\]\()(<)?" + escaped_original_md_path + "\)"
+                    # current_md_content, count_md = re.subn(md_pattern, rf"\1{web_path_for_markdown}\4", current_md_content)
                     
-                    if count_md > 0 or count_html > 0:
-                        logger.info(f"Job {job_id}: PDF Service replaced '{original_md_path}' with '{web_path_for_markdown}' (MD: {count_md}, HTML: {count_html}).")
-                        replacements_done_in_pdf_service += (count_md + count_html)
+                    # # Regex for HTML: <img src="original_md_path">
+                    # html_pattern = r'(<img[^>]*src\s*=\s*["\'])' + escaped_original_md_path + r'(["\'])'
+                    # current_md_content, count_html = re.subn(html_pattern, rf"\1{web_path_for_markdown}\2", current_md_content)
+                    
+                    # if count_md > 0 or count_html > 0:
+                    #     logger.info(f"Job {job_id}: PDF Service replaced '{original_md_path}' with '{web_path_for_markdown}' (MD: {count_md}, HTML: {count_html}).")
+                    #     replacements_done_in_pdf_service += (count_md + count_html)
             
-            if replacements_done_in_pdf_service > 0:
-                reformatted_md_text = current_md_content # Update with rewritten paths
-                logger.info(f"Job {job_id}: Total {replacements_done_in_pdf_service} image paths rewritten by PDF service.")
-            else:
-                logger.info(f"Job {job_id}: No image paths needed rewriting by PDF service, or no image info found for rewriting.")
+
+            reformatted_md_text = current_md_content # Update with rewritten paths
+
         # --- END OF NEW IMAGE PATH REWRITING ---
 
         # Save markdown content to a file using the sanitized title
