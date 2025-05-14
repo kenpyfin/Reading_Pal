@@ -50,7 +50,8 @@ function BookView() {
   const [showAddBookmarkModal, setShowAddBookmarkModal] = useState(false);
   const [newBookmarkName, setNewBookmarkName] = useState('');
   const [bookmarkError, setBookmarkError] = useState(null);
-  // const [bookmarks, setBookmarks] = useState([]); // If you plan to list bookmarks in this view
+  const [bookmarks, setBookmarks] = useState([]); 
+  const [pendingScrollToPercentage, setPendingScrollToPercentage] = useState(null); // New state for bookmark jump
 
   // State and Refs for Resizing
   const [bookPaneFlexBasis, setBookPaneFlexBasis] = useState('50%'); // Initial width as percentage
@@ -96,9 +97,29 @@ function BookView() {
     }
   };
 
+  const fetchBookmarks = async () => {
+    if (!bookId) return;
+    try {
+      const response = await fetch(`/api/bookmarks/book/${bookId}`);
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(`Failed to fetch bookmarks: ${errorData.detail || response.statusText}`);
+      }
+      const bookmarksData = await response.json();
+      // Sort bookmarks, e.g., by creation date or name
+      bookmarksData.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+      setBookmarks(bookmarksData);
+      logger.info("Fetched bookmarks:", bookmarksData);
+    } catch (err) {
+      logger.error('Error fetching bookmarks:', err);
+      setBookmarks([]); // Reset bookmarks on error
+    }
+  };
+
   useEffect(() => {
     if (bookId) {
       fetchBook();
+      fetchBookmarks(); 
     }
   }, [bookId]);
 
@@ -703,6 +724,31 @@ function BookView() {
     }
   }, [currentPageContent, pendingScrollOffsetInPage]); 
 
+  useEffect(() => {
+    // This effect applies scrolling when a pendingScrollToPercentage is set,
+    // typically after a page change initiated by selecting a bookmark.
+    // It waits for currentPageContent to be updated, indicating the new page is rendered.
+    if (pendingScrollToPercentage !== null && bookPaneContainerRef.current && (currentPageContent.length > 0 || pendingScrollToPercentage === 0) ) {
+      const element = bookPaneContainerRef.current;
+      logger.info(`[PendingScrollPercentageEffect] Applying scroll to percentage: ${pendingScrollToPercentage} on page ${currentPage}`);
+      
+      if (element.scrollHeight > element.clientHeight) { // Check if scrollable
+        const targetScrollTop = pendingScrollToPercentage * (element.scrollHeight - element.clientHeight);
+        isProgrammaticScroll.current = true;
+        element.scrollTop = targetScrollTop;
+      } else { // Not scrollable or content fits
+        isProgrammaticScroll.current = true;
+        element.scrollTop = 0; // Go to top if not scrollable
+      }
+      
+      // Reset pending scroll percentage
+      setPendingScrollToPercentage(null);
+      // Reset programmatic scroll flag after a short delay
+      const timer = setTimeout(() => { isProgrammaticScroll.current = false; }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [currentPageContent, pendingScrollToPercentage, currentPage]); 
+
 
   const syncScroll = useCallback(
     debounce((scrollingPaneRef, targetPaneRef) => {
@@ -753,6 +799,48 @@ function BookView() {
       };
     }
   }, [syncScroll]); 
+
+  const handleBookmarkSelect = (event) => {
+    const selectedBookmarkId = event.target.value;
+    if (!selectedBookmarkId) return;
+
+    const selectedBookmark = bookmarks.find(b => b.id === selectedBookmarkId);
+    if (selectedBookmark) {
+      logger.info("Jumping to bookmark:", selectedBookmark);
+
+      // Check if page needs to change
+      if (selectedBookmark.page_number !== currentPage) {
+        setCurrentPage(selectedBookmark.page_number);
+        // Store the scroll percentage to be applied after page content loads
+        if (selectedBookmark.scroll_percentage !== null && selectedBookmark.scroll_percentage !== undefined) {
+          setPendingScrollToPercentage(selectedBookmark.scroll_percentage);
+        } else {
+          setPendingScrollToPercentage(0); // Default to top if not specified
+        }
+      } else {
+        // Already on the correct page, scroll directly
+        if (bookPaneContainerRef.current && selectedBookmark.scroll_percentage !== null && selectedBookmark.scroll_percentage !== undefined) {
+          const element = bookPaneContainerRef.current;
+          if (element.scrollHeight > element.clientHeight) { // Check if scrollable
+            const targetScrollTop = selectedBookmark.scroll_percentage * (element.scrollHeight - element.clientHeight);
+            isProgrammaticScroll.current = true;
+            element.scrollTop = targetScrollTop;
+            setTimeout(() => { isProgrammaticScroll.current = false; }, 100);
+          } else { // Not scrollable or content fits
+            isProgrammaticScroll.current = true;
+            element.scrollTop = 0; // Go to top if not scrollable
+            setTimeout(() => { isProgrammaticScroll.current = false; }, 100);
+          }
+        } else if (bookPaneContainerRef.current) { // Scroll to top if percentage is null/undefined
+            isProgrammaticScroll.current = true;
+            bookPaneContainerRef.current.scrollTop = 0;
+            setTimeout(() => { isProgrammaticScroll.current = false; }, 100);
+        }
+      }
+      // Reset the select to the placeholder option after selection
+      event.target.value = "";
+    }
+  };
 
   const handlePreviousPage = () => {
     setCurrentPage((prev) => Math.max(1, prev - 1));
@@ -818,7 +906,7 @@ function BookView() {
       // setBookmarks(prevBookmarks => [...prevBookmarks, savedBookmark].sort((a, b) => new Date(a.created_at) - new Date(b.created_at)));
       logger.info("Bookmark saved successfully:", savedBookmark);
       closeAddBookmarkModal();
-      // Consider adding a user-friendly success notification here
+      fetchBookmarks(); // Refresh bookmarks list after saving a new one
     } catch (error) {
       logger.error("Error saving bookmark:", error);
       setBookmarkError(error.message);
@@ -910,6 +998,22 @@ function BookView() {
               <button onClick={openAddBookmarkModal} className="control-button">
                 Add Bookmark
               </button>
+              {/* Add Bookmark Dropdown */}
+              {bookmarks.length > 0 && (
+                <select 
+                  onChange={handleBookmarkSelect} 
+                  className="bookmark-select control-button" // Added control-button for consistent styling
+                  defaultValue="" // Ensure placeholder is selected initially
+                  aria-label="Jump to bookmark"
+                >
+                  <option value="" disabled>Jump to Bookmark...</option>
+                  {bookmarks.map(bookmark => (
+                    <option key={bookmark.id} value={bookmark.id}>
+                      {bookmark.name ? `${bookmark.name} (P${bookmark.page_number})` : `Page ${bookmark.page_number} (Unnamed)`}
+                    </option>
+                  ))}
+                </select>
+              )}
               {/* You can add other controls here, like font size adjusters */}
             </div>
 

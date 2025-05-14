@@ -422,3 +422,30 @@
 .control-button:hover {
   background-color: #0056b3;
 }
+
+/* frontend/src/pages/BookView.css */
+
+/* ... existing styles ... */
+
+.bookmark-select {
+  margin-left: 10px; /* Space from the Add Bookmark button */
+  /* Inherits .control-button styles if class is applied, otherwise define: */
+  /* padding: 7px 10px; */
+  /* background-color: #007bff; */ /* Or a different color for select */
+  /* color: white; */
+  /* border: 1px solid #007bff; */
+  /* border-radius: 4px; */
+  /* font-size: 0.9em; */
+  /* cursor: pointer; */
+  /* line-height: 1.5; */ /* From .control-button */
+  max-width: 200px; /* Prevent it from becoming too wide */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Optional: Style for options if needed, though browser defaults are usually fine */
+.bookmark-select option {
+  background-color: white; /* Ensure options have a standard background */
+  color: black; /* Ensure options have standard text color */
+}
