@@ -274,20 +274,28 @@ function BookView() {
       }
       
       // Conditional scroll to top:
-      // Only scroll to the top of the new page if no other specific scroll operation
-      // (like from a bookmark jump or note jump) is pending for this page load.
       if (bookPaneContainerRef.current) {
+        // This effect should scroll to top IF:
+        // 1. No note-specific scroll is pending for this page load (pendingScrollOffsetInPage is null).
+        // 2. No bookmark-specific scroll percentage is pending for this page load (pendingScrollToPercentage is null).
+        // 3. AND no other programmatic scroll has *just* occurred (isProgrammaticScroll.current is false).
         if (pendingScrollOffsetInPage === null && pendingScrollToPercentage === null) {
-            // This means we've changed page (e.g., via Next/Prev buttons or direct page input),
-            // and no specific scroll target (offset for notes, or percentage for bookmarks)
-            // was set for this particular page load. So, default to scrolling to the top.
-            isProgrammaticScroll.current = true;
-            bookPaneContainerRef.current.scrollTop = 0;
-            logger.debug("[BookView - Highlighting Effect] Scrolled to top of new page as no other scroll (offset/percentage) is pending.");
-            // Reset isProgrammaticScroll after a short delay
-            setTimeout(() => { isProgrammaticScroll.current = false; }, 100);
+            if (!isProgrammaticScroll.current) { // Check if another scroll isn't already in progress/just finished
+                logger.debug("[BookView - Highlighting Effect] Conditions met for scroll-to-top (no pending offset/percentage, and no other recent programmatic scroll). Scrolling to top.");
+                isProgrammaticScroll.current = true; // This effect is now initiating a programmatic scroll
+                bookPaneContainerRef.current.scrollTop = 0;
+                // Reset isProgrammaticScroll after this effect's action
+                setTimeout(() => { 
+                    isProgrammaticScroll.current = false; 
+                    logger.debug("[BookView - Highlighting Effect] Reset isProgrammaticScroll from scroll-to-top action.");
+                }, 100); // Short delay for this specific action
+            } else {
+                logger.debug("[BookView - Highlighting Effect] Conditions for scroll-to-top met (no pending offset/percentage), BUT isProgrammaticScroll.current is true. Assuming another action just scrolled. Skipping scroll-to-top by this effect.");
+                // If another action (e.g., same-page bookmark jump) set isProgrammaticScroll.current to true,
+                // that action is responsible for resetting it. This effect should not interfere.
+            }
         } else {
-            logger.debug("[BookView - Highlighting Effect] A scroll (offset for note, or percentage for bookmark) is pending. Skipping automatic scroll to top by Highlighting Effect.");
+            logger.debug("[BookView - Highlighting Effect] A scroll (offset for note, or percentage for bookmark on new page) is pending. Skipping automatic scroll to top by Highlighting Effect.");
         }
       }
     } else { // No fullMarkdownContent.current
@@ -748,14 +756,16 @@ function BookView() {
 
   const syncScroll = useCallback(
     debounce((scrollingPaneRef, targetPaneRef) => {
-      if (isProgrammaticScroll.current) {
-        return;
-      }
+      // if (isProgrammaticScroll.current) { // Original check, might be too simple
+      //   return;
+      // }
+
       if (!scrollingPaneRef.current || !targetPaneRef.current) return;
 
       const scrollingElement = scrollingPaneRef.current;
       const targetElement = targetPaneRef.current;
 
+      // If the pane being scrolled is not actually scrollable, don't attempt to sync.
       if (scrollingElement.scrollHeight <= scrollingElement.clientHeight) return;
       
       const scrollPercentage = scrollingElement.scrollTop / (scrollingElement.scrollHeight - scrollingElement.clientHeight);
@@ -764,16 +774,32 @@ function BookView() {
       if (targetElement.scrollHeight > targetElement.clientHeight) {
         targetScrollTop = scrollPercentage * (targetElement.scrollHeight - targetElement.clientHeight);
       } else {
+        // If target is not scrollable, decide where to "place" it based on source scroll.
+        // e.g., if source is scrolled past halfway, show bottom of target, else top.
         targetScrollTop = scrollPercentage > 0.5 ? targetElement.scrollHeight : 0;
       }
 
+      // Only scroll if the difference is significant, to avoid jitter
       if (Math.abs(targetElement.scrollTop - targetScrollTop) > 5) { 
-        isProgrammaticScroll.current = true;
+        // If a major programmatic scroll (like a bookmark jump) is already in progress,
+        // this syncScroll is a secondary adjustment. It should occur, but not
+        // take over the isProgrammaticScroll flag from the primary operation.
+        const primaryScrollInProgress = isProgrammaticScroll.current;
+
+        if (!primaryScrollInProgress) {
+            // If no primary scroll is happening, this sync is its own programmatic scroll.
+            isProgrammaticScroll.current = true;
+        }
+        
         targetElement.scrollTop = targetScrollTop;
-        setTimeout(() => { isProgrammaticScroll.current = false; }, 50); 
+
+        if (!primaryScrollInProgress) {
+            // Only let syncScroll reset the flag if it was the one to set it.
+            setTimeout(() => { isProgrammaticScroll.current = false; }, 50); 
+        }
       }
-    }, 50), 
-    []
+    }, 50), // Debounce time
+    [] // No dependencies, as it uses refs and isProgrammaticScroll.current
   );
 
   useEffect(() => {
