@@ -730,24 +730,37 @@ function BookView() {
     // It waits for currentPageContent to be updated, indicating the new page is rendered.
     if (pendingScrollToPercentage !== null && bookPaneContainerRef.current && (currentPageContent.length > 0 || pendingScrollToPercentage === 0) ) {
       const element = bookPaneContainerRef.current;
-      logger.info(`[PendingScrollPercentageEffect] Applying scroll to percentage: ${pendingScrollToPercentage} on page ${currentPage}`);
+      logger.info(`[BookView - PendingScrollPercentageEffect] Applying scroll to percentage: ${pendingScrollToPercentage} on page ${currentPage}`);
       
+      // Ensure isProgrammaticScroll is true before this scroll operation
+      // It should have been set by handleBookmarkSelect
+      if (!isProgrammaticScroll.current) {
+        logger.warn("[BookView - PendingScrollPercentageEffect] isProgrammaticScroll was false. Setting to true.");
+        isProgrammaticScroll.current = true;
+      }
+
       if (element.scrollHeight > element.clientHeight) { // Check if scrollable
         const targetScrollTop = pendingScrollToPercentage * (element.scrollHeight - element.clientHeight);
-        isProgrammaticScroll.current = true;
         element.scrollTop = targetScrollTop;
+        logger.debug(`[BookView - PendingScrollPercentageEffect] Scrolled to ${targetScrollTop}px`);
       } else { // Not scrollable or content fits
-        isProgrammaticScroll.current = true;
         element.scrollTop = 0; // Go to top if not scrollable
+        logger.debug(`[BookView - PendingScrollPercentageEffect] Pane not scrollable. Scrolled to top.`);
       }
       
       // Reset pending scroll percentage
       setPendingScrollToPercentage(null);
       // Reset programmatic scroll flag after a short delay
-      const timer = setTimeout(() => { isProgrammaticScroll.current = false; }, 100);
+      // This delay should be longer than any potential debounce in syncScroll
+      const timer = setTimeout(() => { 
+        isProgrammaticScroll.current = false; 
+        logger.debug("[BookView - PendingScrollPercentageEffect] Reset isProgrammaticScroll to false.");
+      }, 150); // Increased delay slightly
       return () => clearTimeout(timer);
+    } else if (pendingScrollToPercentage !== null) {
+      logger.debug(`[BookView - PendingScrollPercentageEffect] Conditions not met for scroll: pendingScrollToPercentage=${pendingScrollToPercentage}, bookPaneContainerRef.current=${!!bookPaneContainerRef.current}, currentPageContent.length=${currentPageContent.length}`);
     }
-  }, [currentPageContent, pendingScrollToPercentage, currentPage]); 
+  }, [currentPageContent, pendingScrollToPercentage, currentPage]); // Dependencies remain the same
 
 
   const syncScroll = useCallback(
@@ -806,39 +819,49 @@ function BookView() {
 
     const selectedBookmark = bookmarks.find(b => b.id === selectedBookmarkId);
     if (selectedBookmark) {
-      logger.info("Jumping to bookmark:", selectedBookmark);
+      logger.info(`[BookView - handleBookmarkSelect] Jumping to bookmark: ID=${selectedBookmark.id}, Name='${selectedBookmark.name}', Page=${selectedBookmark.page_number}, Scroll%=${selectedBookmark.scroll_percentage}`);
 
-      // Check if page needs to change
+      // Always set isProgrammaticScroll to true before initiating any page change or scroll
+      isProgrammaticScroll.current = true;
+
       if (selectedBookmark.page_number !== currentPage) {
-        setCurrentPage(selectedBookmark.page_number);
-        // Store the scroll percentage to be applied after page content loads
+        logger.debug(`[BookView - handleBookmarkSelect] Target page ${selectedBookmark.page_number} is different. Changing page.`);
+        // Set pending scroll percentage first, then change page.
+        // The useEffect for pendingScrollToPercentage will handle the actual scroll after page content loads.
         if (selectedBookmark.scroll_percentage !== null && selectedBookmark.scroll_percentage !== undefined) {
           setPendingScrollToPercentage(selectedBookmark.scroll_percentage);
         } else {
           setPendingScrollToPercentage(0); // Default to top if not specified
         }
+        setCurrentPage(selectedBookmark.page_number);
       } else {
         // Already on the correct page, scroll directly
-        if (bookPaneContainerRef.current && selectedBookmark.scroll_percentage !== null && selectedBookmark.scroll_percentage !== undefined) {
+        logger.debug(`[BookView - handleBookmarkSelect] Already on target page ${currentPage}. Scrolling directly.`);
+        if (bookPaneContainerRef.current) {
           const element = bookPaneContainerRef.current;
+          const targetScroll = selectedBookmark.scroll_percentage !== null && selectedBookmark.scroll_percentage !== undefined ? selectedBookmark.scroll_percentage : 0;
+
           if (element.scrollHeight > element.clientHeight) { // Check if scrollable
-            const targetScrollTop = selectedBookmark.scroll_percentage * (element.scrollHeight - element.clientHeight);
-            isProgrammaticScroll.current = true;
+            const targetScrollTop = targetScroll * (element.scrollHeight - element.clientHeight);
             element.scrollTop = targetScrollTop;
-            setTimeout(() => { isProgrammaticScroll.current = false; }, 100);
+            logger.debug(`[BookView - handleBookmarkSelect] Scrolled to ${targetScrollTop}px (Percentage: ${targetScroll})`);
           } else { // Not scrollable or content fits
-            isProgrammaticScroll.current = true;
             element.scrollTop = 0; // Go to top if not scrollable
-            setTimeout(() => { isProgrammaticScroll.current = false; }, 100);
+            logger.debug(`[BookView - handleBookmarkSelect] Pane not scrollable. Scrolled to top.`);
           }
-        } else if (bookPaneContainerRef.current) { // Scroll to top if percentage is null/undefined
-            isProgrammaticScroll.current = true;
-            bookPaneContainerRef.current.scrollTop = 0;
-            setTimeout(() => { isProgrammaticScroll.current = false; }, 100);
+        } else {
+          logger.warn("[BookView - handleBookmarkSelect] bookPaneContainerRef.current is null. Cannot scroll directly.");
         }
+        // Reset isProgrammaticScroll after a short delay for same-page scrolls
+        setTimeout(() => { isProgrammaticScroll.current = false; }, 100);
       }
       // Reset the select to the placeholder option after selection
-      event.target.value = "";
+      // This makes it an "action" dropdown rather than a stateful one.
+      if (event.target) { // Ensure event.target exists
+        event.target.value = "";
+      }
+    } else {
+      logger.warn(`[BookView - handleBookmarkSelect] Bookmark with ID ${selectedBookmarkId} not found.`);
     }
   };
 
