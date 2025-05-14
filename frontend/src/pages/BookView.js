@@ -46,6 +46,12 @@ function BookView() {
   // Ref for the temporary highlight span used for scrolling to a note
   const scrollTargetHighlightRef = useRef(null);
 
+  // State for Add Bookmark Modal
+  const [showAddBookmarkModal, setShowAddBookmarkModal] = useState(false);
+  const [newBookmarkName, setNewBookmarkName] = useState('');
+  const [bookmarkError, setBookmarkError] = useState(null);
+  // const [bookmarks, setBookmarks] = useState([]); // If you plan to list bookmarks in this view
+
   // State and Refs for Resizing
   const [bookPaneFlexBasis, setBookPaneFlexBasis] = useState('50%'); // Initial width as percentage
   const bookViewContainerRef = useRef(null); // Ref for the main flex container
@@ -754,6 +760,69 @@ function BookView() {
 
   const handleNextPage = () => {
     setCurrentPage((prev) => Math.min(totalPages, prev + 1));
+  };
+
+  const openAddBookmarkModal = () => {
+    setNewBookmarkName(''); // Clear previous name
+    setBookmarkError(null); // Clear previous error
+    setShowAddBookmarkModal(true);
+  };
+
+  const closeAddBookmarkModal = () => {
+    setShowAddBookmarkModal(false);
+  };
+
+  const handleSaveBookmark = async () => {
+    if (!newBookmarkName.trim()) {
+      setBookmarkError("Bookmark name cannot be empty.");
+      return;
+    }
+    setBookmarkError(null); // Clear error if any
+
+    let currentScrollPercentage = 0; // Default to 0
+    if (bookPaneContainerRef.current) {
+      const { scrollTop, scrollHeight, clientHeight } = bookPaneContainerRef.current;
+      if (scrollHeight > clientHeight) { // Avoid division by zero if not scrollable
+        currentScrollPercentage = scrollTop / (scrollHeight - clientHeight); // Value between 0.0 and 1.0
+      } else if (scrollHeight === clientHeight && scrollHeight > 0) { // Content fits perfectly or is empty but scrollable
+        currentScrollPercentage = 0; // Or 1.0 if you consider a full view as 100% "scrolled"
+      }
+    }
+
+    const bookmarkData = {
+      book_id: bookId,
+      name: newBookmarkName.trim(),
+      page_number: currentPage, // Assumes currentPage state is correctly maintained
+      scroll_percentage: currentScrollPercentage,
+    };
+
+    logger.debug("Attempting to save bookmark with data:", bookmarkData);
+
+    try {
+      const response = await fetch('/api/bookmarks/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(bookmarkData),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        logger.error("Failed to save bookmark - API error:", errorData);
+        throw new Error(errorData.detail || "Failed to save bookmark");
+      }
+
+      const savedBookmark = await response.json();
+      // Optionally, refresh bookmarks list here if displaying them on BookView
+      // setBookmarks(prevBookmarks => [...prevBookmarks, savedBookmark].sort((a, b) => new Date(a.created_at) - new Date(b.created_at)));
+      logger.info("Bookmark saved successfully:", savedBookmark);
+      closeAddBookmarkModal();
+      // Consider adding a user-friendly success notification here
+    } catch (error) {
+      logger.error("Error saving bookmark:", error);
+      setBookmarkError(error.message);
+    }
   };
 
   if (loading) return <div style={{ padding: '20px' }}>Loading book...</div>;
