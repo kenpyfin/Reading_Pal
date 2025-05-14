@@ -259,3 +259,107 @@ async def update_note(note_id: str, update_data: dict):
     except Exception as e:
         logger.error(f"Error updating note {note_id}: {e}", exc_info=True)
         return None
+
+# --- Bookmark Database Operations ---
+
+async def create_bookmark(bookmark_data: dict) -> Optional[Dict[str, Any]]:
+    """Creates a new bookmark in the database."""
+    database = get_database()
+    if database is None:
+        logger.error("Database not initialized for create_bookmark.")
+        return None
+    
+    # Ensure timestamps are set
+    now = datetime.utcnow()
+    bookmark_data.setdefault('created_at', now)
+    bookmark_data.setdefault('updated_at', now)
+
+    try:
+        result = await database.bookmarks.insert_one(bookmark_data)
+        if result.inserted_id:
+            created_bookmark = await database.bookmarks.find_one({"_id": result.inserted_id})
+            return created_bookmark
+        return None
+    except Exception as e:
+        logger.error(f"Error creating bookmark: {e}", exc_info=True)
+        return None
+
+async def get_bookmarks_by_book_id(book_id: str) -> List[Dict[str, Any]]:
+    """Retrieves all bookmarks for a given book_id."""
+    database = get_database()
+    if database is None:
+        logger.error(f"Database not initialized for get_bookmarks_by_book_id (book_id: {book_id}).")
+        return []
+    
+    bookmarks = []
+    try:
+        # Assuming book_id in bookmarks collection is stored as the string ID from the Book model
+        cursor = database.bookmarks.find({"book_id": book_id}).sort("created_at", 1) # Sort by creation time
+        async for bookmark in cursor:
+            bookmarks.append(bookmark)
+        return bookmarks
+    except Exception as e:
+        logger.error(f"Error fetching bookmarks for book_id {book_id}: {e}", exc_info=True)
+        return []
+
+async def get_bookmark_by_id(bookmark_id: str) -> Optional[Dict[str, Any]]:
+    """Retrieves a single bookmark by its ID."""
+    database = get_database()
+    if database is None:
+        logger.error(f"Database not initialized for get_bookmark_by_id (bookmark_id: {bookmark_id}).")
+        return None
+    try:
+        if not ObjectId.is_valid(bookmark_id):
+            logger.warning(f"Invalid bookmark_id format: {bookmark_id}")
+            return None
+        obj_id = ObjectId(bookmark_id)
+        bookmark = await database.bookmarks.find_one({"_id": obj_id})
+        return bookmark
+    except Exception as e:
+        logger.error(f"Error fetching bookmark by id {bookmark_id}: {e}", exc_info=True)
+        return None
+
+async def delete_bookmark_by_id(bookmark_id: str) -> bool:
+    """Deletes a bookmark by its ID."""
+    database = get_database()
+    if database is None:
+        logger.error(f"Database not initialized for delete_bookmark_by_id (bookmark_id: {bookmark_id}).")
+        return False
+    try:
+        if not ObjectId.is_valid(bookmark_id):
+            logger.warning(f"Invalid bookmark_id format for deletion: {bookmark_id}")
+            return False
+        obj_id = ObjectId(bookmark_id)
+        result = await database.bookmarks.delete_one({"_id": obj_id})
+        return result.deleted_count > 0
+    except Exception as e:
+        logger.error(f"Error deleting bookmark {bookmark_id}: {e}", exc_info=True)
+        return False
+
+async def update_bookmark_name(bookmark_id: str, name: str) -> Optional[Dict[str, Any]]:
+    """Updates the name of a bookmark."""
+    database = get_database()
+    if database is None:
+        logger.error(f"Database not initialized for update_bookmark_name (bookmark_id: {bookmark_id}).")
+        return None
+    try:
+        if not ObjectId.is_valid(bookmark_id):
+            logger.warning(f"Invalid bookmark_id format for update: {bookmark_id}")
+            return None
+        
+        obj_id = ObjectId(bookmark_id)
+        update_result = await database.bookmarks.update_one(
+            {"_id": obj_id},
+            {"$set": {"name": name, "updated_at": datetime.utcnow()}}
+        )
+        
+        if update_result.matched_count == 0:
+            logger.warning(f"No bookmark found with ID {bookmark_id} to update name.")
+            return None # Bookmark not found
+        
+        # Fetch and return the updated document
+        updated_bookmark = await database.bookmarks.find_one({"_id": obj_id})
+        return updated_bookmark
+    except Exception as e:
+        logger.error(f"Error updating bookmark name for {bookmark_id}: {e}", exc_info=True)
+        return None

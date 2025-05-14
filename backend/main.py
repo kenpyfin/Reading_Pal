@@ -71,11 +71,13 @@ async def health_check():
 from backend.api import books # Import the books router
 from backend.api import notes # Import the notes router
 from backend.api import llm # Import the llm router
+from backend.api import bookmarks as bookmarks_router # Adjust import path if needed
 from backend.services.cleanup_service import run_cleanup_task # Import the cleanup task
 
 app.include_router(books.router, prefix="/api/books", tags=["books"]) # Add /api prefix here
 app.include_router(notes.router, prefix="/api/notes", tags=["notes"]) # Add /api prefix here
 app.include_router(llm.router, prefix="/api/llm", tags=["llm"]) # Add /api prefix here
+app.include_router(bookmarks_router.router, prefix="/api/bookmarks", tags=["bookmarks"])
 
 # Add database connection logic (connect on startup/shutdown)
 from backend.db.mongodb import connect_to_mongo, close_mongo_connection
