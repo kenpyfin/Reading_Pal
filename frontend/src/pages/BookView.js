@@ -46,6 +46,16 @@ function BookView() {
   // Ref for the temporary highlight span used for scrolling to a note
   const scrollTargetHighlightRef = useRef(null);
 
+  // State and Refs for Resizing
+  const [bookPaneFlexBasis, setBookPaneFlexBasis] = useState('50%'); // Initial width as percentage
+  const bookViewContainerRef = useRef(null); // Ref for the main flex container
+  const bookPaneAreaRef = useRef(null);      // Ref for the book-pane-area div
+
+  const isResizing = useRef(false);
+  const dragStartX = useRef(0);
+  const initialBookPaneWidthPx = useRef(0);
+
+
   const fetchBook = async () => {
     setLoading(true);
     setError(null);
@@ -85,6 +95,60 @@ function BookView() {
       fetchBook();
     }
   }, [bookId]);
+
+  // Resizer Event Handlers
+  const handleDocumentMouseMove = useCallback((e) => {
+      if (!isResizing.current || !bookViewContainerRef.current || !bookPaneAreaRef.current) {
+          return;
+      }
+      e.preventDefault();
+
+      const deltaX = e.clientX - dragStartX.current;
+      let newWidthPx = initialBookPaneWidthPx.current + deltaX;
+
+      const containerWidth = bookViewContainerRef.current.offsetWidth;
+      // Define minimum width for each pane (e.g., 200px or 20% of container width, whichever is larger)
+      const minPaneWidth = Math.max(200, containerWidth * 0.20); 
+      const maxPaneWidth = containerWidth - minPaneWidth; 
+
+      newWidthPx = Math.max(minPaneWidth, Math.min(newWidthPx, maxPaneWidth));
+      setBookPaneFlexBasis(`${newWidthPx}px`); // Set flex-basis in pixels
+  }, []); 
+
+  const handleDocumentMouseUp = useCallback(() => {
+      if (!isResizing.current) {
+          return;
+      }
+      isResizing.current = false;
+      document.body.classList.remove('resizing-no-select');
+      document.removeEventListener('mousemove', handleDocumentMouseMove);
+      document.removeEventListener('mouseup', handleDocumentMouseUp);
+  }, [handleDocumentMouseMove]); 
+
+  const handleMouseDownOnResizer = useCallback((e) => {
+      if (!bookPaneAreaRef.current) return;
+
+      isResizing.current = true;
+      dragStartX.current = e.clientX;
+      initialBookPaneWidthPx.current = bookPaneAreaRef.current.offsetWidth;
+      e.preventDefault(); 
+
+      document.body.classList.add('resizing-no-select');
+      document.addEventListener('mousemove', handleDocumentMouseMove);
+      document.addEventListener('mouseup', handleDocumentMouseUp);
+  }, [handleDocumentMouseMove, handleDocumentMouseUp]);
+
+  // Cleanup useEffect for global event listeners
+  useEffect(() => {
+      return () => {
+          if (isResizing.current) {
+              document.body.classList.remove('resizing-no-select');
+              document.removeEventListener('mousemove', handleDocumentMouseMove);
+              document.removeEventListener('mouseup', handleDocumentMouseUp);
+          }
+      };
+  }, [handleDocumentMouseMove, handleDocumentMouseUp]);
+
 
   // Fetch notes when bookId changes
   useEffect(() => {
@@ -735,47 +799,79 @@ function BookView() {
   }
 
   return (
-    <div className="book-view-container">
-        <div className="book-pane-wrapper">
-          <div className="book-pane-container" ref={bookPaneContainerRef}>
-            <BookPane
-              markdownContent={highlightedPageContent} 
-              imageUrls={bookData.image_urls}
-              onTextSelect={handleTextSelect}
-            />
-          </div>
-          <div className="pagination-controls">
-            <button onClick={handlePreviousPage} disabled={currentPage === 1}>
-              Previous
-            </button>
-            <form onSubmit={handleGoToPage} className="page-input-form">
-              <span> Page </span>
-              <input
-                type="number"
-                value={pageInput}
-                onChange={handlePageInputChange}
-                onBlur={handleGoToPage} 
-                min="1"
-                max={totalPages}
-                className="page-input"
+    <div className="book-view-container" ref={bookViewContainerRef}> {/* Add ref to the main container */}
+        {/* New wrapper for book pane area to control its flex properties */}
+        <div 
+          className="book-pane-area" 
+          ref={bookPaneAreaRef} // Ref for the resizable area
+          style={{ 
+            flexBasis: bookPaneFlexBasis,
+            flexShrink: 0, // Prevent shrinking beyond flex-basis
+            display: 'flex', // To make its child (.book-pane-wrapper) fill it
+            flexDirection: 'column',
+            overflow: 'hidden' // Important
+          }}
+        >
+          {/* .book-pane-wrapper is the existing structure inside book-pane-area */}
+          <div className="book-pane-wrapper"> 
+            <div className="book-pane-container" ref={bookPaneContainerRef}> {/* Ref for scrollable content */}
+              <BookPane
+                markdownContent={highlightedPageContent} 
+                imageUrls={bookData.image_urls}
+                onTextSelect={handleTextSelect}
               />
-              <span> of {totalPages} </span>
-            </form>
-            <button onClick={handleNextPage} disabled={currentPage === totalPages}>
-              Next
-            </button>
+            </div>
+            <div className="pagination-controls">
+              <button onClick={handlePreviousPage} disabled={currentPage === 1}>
+                Previous
+              </button>
+              <form onSubmit={handleGoToPage} className="page-input-form">
+                <span> Page </span>
+                <input
+                  type="number"
+                  value={pageInput}
+                  onChange={handlePageInputChange}
+                  onBlur={handleGoToPage} 
+                  min="1"
+                  max={totalPages}
+                  className="page-input"
+                />
+                <span> of {totalPages} </span>
+              </form>
+              <button onClick={handleNextPage} disabled={currentPage === totalPages}>
+                Next
+              </button>
+            </div>
           </div>
         </div>
-        <div className="note-pane-wrapper">
-          <div className="note-pane-container" ref={notePaneContainerRef}>
-            <NotePane
-              bookId={bookId}
-              selectedBookText={selectedBookText}
-              selectedScrollPercentage={selectedScrollPercentage}
-              selectedGlobalCharOffset={selectedGlobalCharOffset} 
-              onNoteClick={handleNoteClick} 
-              onNewNoteSaved={handleNewNoteSaved} 
-            />
+
+        {/* Resizer Handle */}
+        <div className="resizer-handle" onMouseDown={handleMouseDownOnResizer}></div>
+
+        {/* New wrapper for note pane area to control its flex properties */}
+        <div 
+          className="note-pane-area"
+          style={{
+            flexGrow: 1,
+            flexShrink: 1,
+            flexBasis: '0%', // Allow it to grow into remaining space
+            display: 'flex', // To make its child (.note-pane-wrapper) fill it
+            flexDirection: 'column',
+            overflow: 'hidden' // Important
+          }}
+        >
+          {/* .note-pane-wrapper is the existing structure inside note-pane-area */}
+          <div className="note-pane-wrapper"> 
+            <div className="note-pane-container" ref={notePaneContainerRef}> {/* Ref for scrollable content */}
+              <NotePane
+                bookId={bookId}
+                selectedBookText={selectedBookText}
+                selectedScrollPercentage={selectedScrollPercentage}
+                selectedGlobalCharOffset={selectedGlobalCharOffset} 
+                onNoteClick={handleNoteClick} 
+                onNewNoteSaved={handleNewNoteSaved} 
+              />
+            </div>
           </div>
         </div>
     </div>

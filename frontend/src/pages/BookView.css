@@ -2,33 +2,58 @@
 
 .book-view-container {
   display: flex;
+  flex-direction: row; /* Ensure horizontal layout */
   height: 100vh; /* Full viewport height, adjust if you have a global header/navbar */
   width: 100%;
-  overflow: hidden; /* Prevent main container scroll, children will handle their own scroll */
+  overflow: hidden; 
 }
 
-/* Define .book-pane-wrapper and .note-pane-wrapper */
+/* New styles for the resizable areas */
+.book-pane-area {
+  /* flex-basis is set by inline style */
+  /* flex-shrink: 0; is set by inline style */
+  display: flex; /* Important for its children to fill it */
+  flex-direction: column;
+  overflow: hidden; /* Prevent this area from causing scrollbars */
+  position: relative; /* If needed for child positioning */
+}
+
+.note-pane-area {
+  /* flex-grow: 1; flex-shrink: 1; flex-basis: 0%; are set by inline style */
+  display: flex; /* Important for its children to fill it */
+  flex-direction: column;
+  overflow: hidden; /* Prevent this area from causing scrollbars */
+  position: relative; /* If needed for child positioning */
+}
+    
+/* Ensure existing wrappers fill their new parent areas */
 .book-pane-wrapper,
 .note-pane-wrapper {
-  flex: 1; /* Each wrapper takes equal width in the .book-view-container */
-  display: flex; /* Use flexbox for children */
-  flex-direction: column; /* Stack children (content container, controls) vertically */
-  overflow: hidden; /* Prevent these wrappers from scrolling; their children will scroll */
+  /* flex: 1; /* Each wrapper takes equal width INITIALLY if not overridden by parent area */
+               /* This should now be flex-grow: 1 to fill the parent area */
+  flex-grow: 1;
+  display: flex; 
+  flex-direction: column; 
+  overflow: hidden; 
 }
 
+/* .note-pane-wrapper specific border (already exists, ensure it's not conflicting) */
 .note-pane-wrapper {
-  border-left: 1px solid #ccc; /* Separator line for the note pane wrapper */
+  border-left: 1px solid #ccc; 
 }
+/* If the resizer handle provides the visual separation, you might remove/adjust the border-left on .note-pane-wrapper */
+
 
 .book-pane-container,
 .note-pane-container {
-  flex-grow: 1; /* Allow this container to grow and take available vertical space */
-  overflow-y: auto; /* Enable vertical scrolling FOR THIS CONTAINER */
+  flex-grow: 1; 
+  overflow-y: auto; 
   padding: 20px;
-  box-sizing: border-box; /* Include padding in element's total width and height */
+  box-sizing: border-box; 
 }
 
 /* Pagination controls styling */
+/* ... keep existing .pagination-controls and its children styles ... */
 .pagination-controls {
   display: flex;
   justify-content: center;
@@ -36,7 +61,7 @@
   padding: 8px 0;
   border-top: 1px solid #eee;
   background-color: #f9f9f9;
-  flex-shrink: 0; /* Prevent controls from shrinking if space is tight */
+  flex-shrink: 0; 
 }
 
 .pagination-controls .page-input-form { /* Style for the form wrapping the input */
@@ -62,7 +87,7 @@
   margin: 0;
 }
 .pagination-controls .page-input[type=number] {
-  -moz-appearance: textfield; /* Firefox */
+  -moz-appearance: textfield; 
 }
 
 
@@ -71,7 +96,6 @@
   color: white;
   border: none;
   padding: 8px 15px;
-  /* margin: 0 10px; */ /* Margin is now on the form or individual buttons if needed */
   border-radius: 4px;
   cursor: pointer;
   font-size: 0.9em;
@@ -88,6 +112,42 @@
   color: #333;
 }
 
+
+/* Resizer Handle Styles */
+.resizer-handle {
+  width: 10px;
+  background-color: #e0e0e0; 
+  cursor: col-resize;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-left: 1px solid #bdbdbd;
+  border-right: 1px solid #bdbdbd;
+  z-index: 10;
+}
+
+.resizer-handle::before {
+  content: '•••';
+  display: block;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  font-size: 10px;
+  color: #757575;
+  line-height: 0.5;
+}
+
+/* Class added to body during resize */
+.resizing-no-select {
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  cursor: col-resize !important; /* Force cursor globally during resize */
+}
+
+/* ... rest of your existing BookView.css styles ... */
+/* Ensure that .book-pane, .note-item, .new-note-form etc. are correctly styled within their scrolling containers */
 
 /* Optional: Basic styling for content within panes */
 /* Styling for h2 elements within the BookPane (e.g., markdown content) */
