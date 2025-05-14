@@ -497,7 +497,9 @@ async def perform_pdf_processing(job_id: str, temp_pdf_path: str, sanitized_titl
                 final_saved_filename = img_data_from_pipe.get("save_name") # e.g., "MyBook_figure1.png"
 
                 if original_md_path and final_saved_filename:
-                    web_path_for_markdown = f"/images/{final_saved_filename}" # Target: "/images/MyBook_figure1.png"
+                    # Replace the IMAGES_PATH prefix in the original path with the web-accessible /images prefix
+                    # This handles potential subdirectories within IMAGES_PATH correctly.
+                    web_path_for_markdown = original_md_path.replace(IMAGES_PATH, "/images")
 
                     current_md_content = current_md_content.replace(original_md_path, web_path_for_markdown)
                     
