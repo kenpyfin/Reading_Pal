@@ -105,11 +105,30 @@ function BookView() {
         const errorData = await response.json();
         throw new Error(`Failed to fetch bookmarks: ${errorData.detail || response.statusText}`);
       }
-      const bookmarksData = await response.json();
-      // Sort bookmarks, e.g., by creation date or name
-      bookmarksData.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-      setBookmarks(bookmarksData);
-      logger.info("Fetched bookmarks:", bookmarksData);
+      let bookmarksData = await response.json();
+      logger.info("Raw bookmarks data from API:", JSON.stringify(bookmarksData, null, 2)); // Log raw data
+
+      // Ensure each bookmark object has an 'id' property.
+      // Pydantic's `alias="_id"` for the `id` field in the `Bookmark` model
+      // should mean that FastAPI returns "id" in the JSON.
+      // However, if it's returning "_id" and not "id", we map it here.
+      const processedBookmarks = bookmarksData.map(bookmark => {
+        if (bookmark._id && !bookmark.id) { // If _id exists but id does not
+          logger.warn(`[BookView - fetchBookmarks] Mapping _id to id for bookmark: ${bookmark._id}`);
+          return { ...bookmark, id: String(bookmark._id) }; // Ensure id is a string
+        }
+        // If bookmark.id already exists, ensure it's a string (it should be from Pydantic)
+        if (bookmark.id && typeof bookmark.id !== 'string') {
+          logger.warn(`[BookView - fetchBookmarks] bookmark.id was not a string, converting: ${bookmark.id}`);
+          return { ...bookmark, id: String(bookmark.id) };
+        }
+        return bookmark;
+      });
+
+      processedBookmarks.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+      setBookmarks(processedBookmarks);
+      logger.info("Processed and set bookmarks:", processedBookmarks);
+
     } catch (err) {
       logger.error('Error fetching bookmarks:', err);
       setBookmarks([]); // Reset bookmarks on error
