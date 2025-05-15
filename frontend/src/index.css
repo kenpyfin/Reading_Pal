@@ -146,3 +146,22 @@ code {
 }
 
 /* === End BookList Styles === */
+
+/* Generic Delete Button Style */
+.delete-button {
+  background-color: #ff4d4f; /* A common red for delete */
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 4px 8px; /* Small padding for a compact button */
+  font-size: 0.8em; /* Smaller font size */
+  cursor: pointer;
+  margin-left: 10px; /* Default margin, can be overridden */
+  line-height: 1.2; /* Adjust for better text centering */
+  transition: background-color 0.2s ease-in-out;
+  flex-shrink: 0; /* Prevent button from shrinking in flex containers */
+}
+
+.delete-button:hover {
+  background-color: #d9363e; /* Darker red on hover */
+}

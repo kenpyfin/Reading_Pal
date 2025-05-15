@@ -399,17 +399,26 @@
 /* Styling for the new button container (optional, adjust as needed) */
 .book-pane-controls-header {
   display: flex;
-  justify-content: flex-end; /* Aligns button to the right */
-  align-items: center; /* Vertically align items */
-  padding: 10px 15px; /* Adjust padding */
-  background-color: #f8f9fa; /* Light background */
-  border-bottom: 1px solid #dee2e6; /* Subtle border */
-  flex-shrink: 0; /* Prevent this bar from shrinking */
+  /* justify-content: flex-end; */ /* Changed to space-between if you want controls spread out */
+  justify-content: space-between; /* Example: Pushes Add/Jump left, Manage right */
+  align-items: center; 
+  padding: 10px 15px; 
+  background-color: #f8f9fa; 
+  border-bottom: 1px solid #dee2e6; 
+  flex-shrink: 0; 
 }
 
-.control-button { /* General styling for control buttons if not already present */
+/* Group for left-aligned controls if using space-between */
+.book-pane-controls-header .left-controls {
+    display: flex;
+    align-items: center;
+}
+/* .control-button and .bookmark-select will be children of .left-controls or directly in header */
+
+
+.control-button { 
   padding: 8px 15px;
-  margin-left: 10px; /* Space if multiple buttons */
+  margin-left: 10px; 
   background-color: #007bff;
   color: white;
   border: none;
@@ -418,6 +427,9 @@
   font-size: 0.9em;
   text-decoration: none; /* If used as a link */
   line-height: 1.5; /* Ensure text is vertically centered */
+}
+.control-button:first-child { /* Remove margin-left for the first button in a group */
+    margin-left: 0;
 }
 .control-button:hover {
   background-color: #0056b3;
@@ -448,4 +460,43 @@
 .bookmark-select option {
   background-color: white; /* Ensure options have a standard background */
   color: black; /* Ensure options have standard text color */
+}
+
+
+/* Styles for Manage Bookmarks Modal */
+.manage-bookmarks-modal .manage-bookmarks-list { /* Target class on modal-content */
+  list-style: none;
+  padding: 0;
+  margin-top: 15px;
+  margin-bottom: 20px;
+  max-height: 300px; /* Adjust as needed */
+  overflow-y: auto;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+}
+
+.manage-bookmarks-modal .manage-bookmark-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.manage-bookmarks-modal .manage-bookmark-item:last-child {
+  border-bottom: none;
+}
+
+.manage-bookmarks-modal .manage-bookmark-item span {
+  flex-grow: 1;
+  margin-right: 10px;
+  font-size: 0.95em;
+  color: #333;
+}
+
+/* .delete-bookmark-button can inherit from .delete-button in index.css */
+/* If specific overrides are needed for .delete-bookmark-button, add them here */
+.delete-bookmark-button {
+  /* Example: */
+  /* padding: 3px 6px; */ /* Make it slightly smaller than note delete button */
 }

@@ -98,18 +98,25 @@
     display: block; /* Ensure it takes its own line */
 }
 
-/* Clickable note styling (enhances BookView.css) */
-.clickable-note {
+.clickable-note .note-content-clickable { /* Apply cursor to the content part */
     cursor: pointer;
 }
 
 .clickable-note:hover {
-    background-color: #e9ecef; /* Slightly darker hover than note-item's base */
-    border-color: #ced4da; /* Darken border on hover */
+    background-color: #e9ecef; 
+    border-color: #ced4da; 
 }
 
+/* .delete-note-button can inherit from .delete-button in index.css */
+/* If specific overrides are needed for .delete-note-button, add them here */
+/* For example: */
+.delete-note-button {
+  /* align-self: center; */ /* If you want it centered with potentially multi-line text */
+}
+
+
 /* General error message styling if needed for note saving errors, etc. */
-.note-pane .error-message { /* A general error class if used outside LLM */
+.note-pane .error-message { 
     color: #dc3545;
     font-size: 0.9em;
     margin-top: 5px;
