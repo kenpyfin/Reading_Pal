@@ -1,69 +1,106 @@
-import React, { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom'; // Import Link for navigation
 
-// Define polling interval (e.g., every 5 seconds)
-const POLLING_INTERVAL = 5000; // 5 seconds
+import React, { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+
+const POLLING_INTERVAL = 5000;
 
 function BookList() {
   const [books, setBooks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  // Add a loading state for delete operation to disable button
   const [deletingId, setDeletingId] = useState(null);
+  const [renamingId, setRenamingId] = useState(null); // New state for rename operation
+  const [hoveredBookId, setHoveredBookId] = useState(null); // New state for hover
 
-  // Function to fetch the list of books
+  // --- Style definitions for buttons and actions container ---
+  const actionsContainerBaseStyle = {
+    position: 'absolute',
+    right: '10px',
+    top: '50%',
+    transform: 'translateY(-50%)',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    transition: 'opacity 0.2s ease-in-out, visibility 0.2s ease-in-out',
+    opacity: 0,
+    visibility: 'hidden',
+    zIndex: 1, // Ensure buttons are above other elements if any overlap
+  };
+
+  const actionsContainerVisibleStyle = {
+    opacity: 1,
+    visibility: 'visible',
+  };
+
+  const baseButtonStyle = {
+    padding: '6px 10px',
+    fontSize: '13px',
+    border: '1px solid #d9d9d9',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    backgroundColor: '#ffffff',
+    transition: 'background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease',
+    lineHeight: '1.5',
+    boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+  };
+  
+  const renameButtonStyle = {
+    ...baseButtonStyle,
+    color: '#333',
+  };
+  
+  const renameButtonHoverStyle = { // Specific hover style for rename button
+    backgroundColor: '#f0f0f0', // Lighter grey
+    borderColor: '#c0c0c0',
+    boxShadow: '0 2px 4px rgba(0,0,0,0.07)',
+  };
+
+  const deleteButtonStyle = {
+    ...baseButtonStyle,
+    color: '#ff4d4f',
+    borderColor: '#ff7875',
+  };
+
+  const deleteButtonHoverStyle = { // Specific hover style for delete button
+    backgroundColor: '#fff1f0',
+    borderColor: '#ff4d4f',
+    boxShadow: '0 2px 4px rgba(0,0,0,0.07)',
+  };
+  // --- End of style definitions ---
+
   const fetchBooks = async () => {
-    setLoading(true);
-    setError(null);
+    // setLoading(true); // setLoading is handled in the initial useEffect
+    // setError(null);  // setError is handled in the initial useEffect
     try {
-      // Call backend API to fetch the list of books
-      // Use the /api prefix as configured in the backend and nginx
-      const response = await fetch('/api/books/'); // Fetch from the root books endpoint
-
+      const response = await fetch('/api/books/');
       if (!response.ok) {
          const errorData = await response.json();
          throw new Error(`HTTP error! status: ${response.status} - ${errorData.detail || response.statusText}`);
       }
       const data = await response.json();
-      console.log("Initial fetch /api/books/ data:", data); // ADDED LOG: Log initial data
-      // The data now includes 'status' and 'job_id' from the backend list endpoint
+      console.log("Initial fetch /api/books/ data:", data);
       setBooks(data);
-
     } catch (err) {
       console.error('Failed to fetch books:', err);
       setError(`Failed to load books: ${err.message || 'Unknown error'}`);
-      setBooks([]); // Clear books on error
+      setBooks([]);
     } finally {
-      setLoading(false); // Initial loading complete
+      setLoading(false);
     }
   };
 
   const checkBookStatus = async (bookId, jobId) => {
-      if (!jobId) return null; 
-
+      if (!jobId) return null;
       try {
-          // Call the new backend status endpoint which proxies to the PDF service
-          // This endpoint returns the PDF service's status format
           const response = await fetch(`/api/books/status/${jobId}`);
-
           if (!response.ok) {
-              // Log the error but don't necessarily stop polling or mark as failed immediately
-              // The backend status endpoint should handle cases where the job ID is not found
-              // or the PDF service is down.
               const errorData = await response.json();
               console.error(`Failed to check status for job ${jobId} (Book ID: ${bookId}):`, errorData.detail || response.statusText);
-              // Return null if status check fails or job not found in PDF service
               return null;
           }
-
           const updatedBookData = await response.json();
-          console.log(`Status update received for job ${jobId} (Book ID: ${bookId}):`, updatedBookData); // ADDED LOG: Log status update data
-
-          // The response from /api/books/status/{job_id} contains job_id, status, etc.
-          // It does NOT contain the MongoDB _id (which is book.id here).
-          // We need to return the data received from the status endpoint.
+          console.log(`Status update received for job ${jobId} (Book ID: ${bookId}):`, updatedBookData);
           return updatedBookData;
-
       } catch (err) {
           console.error(`Error during status check for job ${jobId} (Book ID: ${bookId}):`, err);
           return null;
@@ -71,134 +108,240 @@ function BookList() {
   };
 
   useEffect(() => {
+    setLoading(true); // Set loading true only on initial mount fetch
+    setError(null);
     fetchBooks();
-  }, []); 
+  }, []);
 
-  // Polling effect for books that are 'processing' or 'pending'
   useEffect(() => {
-      // Find books that are currently processing or pending from the *current* state
       const pollableBooks = books.filter(book =>
           (book.status === 'processing' || book.status === 'pending') && book.job_id
       );
-
       if (pollableBooks.length === 0) {
           console.log("No books pending or processing, stopping polling.");
-          return; // No interval needed, or clear existing one
+          return;
       }
-
       console.log(`Found ${pollableBooks.length} books pending/processing. Starting polling...`);
-
-      // Set up the polling interval
       const intervalId = setInterval(async () => {
           console.log("Polling for book status updates...");
-
-          // Fetch status for all pollable books concurrently
-          // checkBookStatus fetches from /api/books/status/{job_id}
-          // which returns the PDF service status format: { success, message, job_id, status, title?, file_path?, images? }
           const statusUpdates = await Promise.all(
-              // Pass book._id for logging, job_id for the fetch
-              pollableBooks.map(book => checkBookStatus(book._id, book.job_id))
+              pollableBooks.map(book => checkBookStatus(book.id, book.job_id)) // Use book.id (which is _id string)
           );
-
-          // Filter out failed status checks (null results from checkBookStatus)
-          // and create a map keyed by job_id for easy lookup
           const updatesByJobId = new Map();
           statusUpdates.filter(update => update && update.job_id).forEach(update => {
               updatesByJobId.set(update.job_id, update);
           });
-
           if (updatesByJobId.size > 0) {
               setBooks(currentBooks => {
-                  let changed = false; // Flag to track if state actually changed
+                  let changed = false;
                   const nextBooks = currentBooks.map(book => {
                       const update = updatesByJobId.get(book.job_id);
-
-                      // If there's an update for this book's job_id AND the status is different
                       if (update && book.status !== update.status) {
-                          console.log(`Updating book ${book._id} (job ${book.job_id}) status from ${book.status} to ${update.status}`);
+                          console.log(`Updating book ${book.id} (job ${book.job_id}) status from ${book.status} to ${update.status}`);
                           changed = true;
-                          // Update ONLY the status. Other details (filenames) are updated
-                          // in the DB by the backend /status endpoint. A subsequent fetch
-                          // or page navigation will get the updated details.
                           return {
-                              ...book, // Keep original book data (_id, title, original_filename, job_id)
-                              status: update.status, // Update the status
-                              // Optionally update message if available in status response
+                              ...book,
+                              status: update.status,
                               ...(update.message && { message: update.message }),
-                              // Do NOT merge file_path, images, or title from the status update here.
-                              // The /api/books/{book_id} endpoint will provide the final data
-                              // including markdown_content and image_urls once status is 'completed'.
                           };
                       }
-                      return book; // Keep the current book data if no update or status hasn't changed
+                      return book;
                   });
-
-                  // Only update state if something actually changed
                   return changed ? nextBooks : currentBooks;
               });
           }
-          // If no successful updates were received, the interval continues if there are still processing books
-          // (checked at the start of the next tick).
-
-      }, POLLING_INTERVAL); // Poll every POLLING_INTERVAL milliseconds
-
-      // Cleanup function to clear the interval when the component unmounts
-      // or when the list of pollable books changes (e.g., all finish)
+      }, POLLING_INTERVAL);
       return () => {
           console.log("Clearing polling interval.");
           clearInterval(intervalId);
       };
-
-  // Dependency array includes 'books' so the effect re-runs if the book list changes
-  // (e.g., a new book is added, or a book's status changes causing pollableBooks to change)
   }, [books]);
 
+  const handleDeleteBook = async (bookId, bookTitle) => {
+    if (!window.confirm(`Are you sure you want to delete the book "${bookTitle}"? This action cannot be undone.`)) {
+        return;
+    }
+    setDeletingId(bookId);
+    setError(null); // Clear previous errors
+    try {
+        const response = await fetch(`/api/books/${bookId}`, {
+            method: 'DELETE',
+        });
+        if (response.status === 204) { // Successfully deleted
+            setBooks(prevBooks => prevBooks.filter(book => book.id !== bookId));
+            console.log(`Book "${bookTitle}" (ID: ${bookId}) deleted successfully.`);
+        } else if (!response.ok) {
+            const errorData = await response.json().catch(() => ({ detail: 'Failed to delete book and parse error response.' }));
+            throw new Error(`HTTP error! status: ${response.status} - ${errorData.detail || 'Unknown error'}`);
+        } else {
+             console.warn(`Unexpected response status after delete: ${response.status}`);
+             setBooks(prevBooks => prevBooks.filter(book => book.id !== bookId)); // Fallback
+        }
+    } catch (err) {
+        console.error(`Failed to delete book ${bookId}:`, err);
+        setError(`Failed to delete book "${bookTitle}": ${err.message}`);
+    } finally {
+        setDeletingId(null);
+    }
+  };
 
-  if (loading) {
+  const handleRenameBook = async (bookId, currentTitle) => {
+    const newTitle = window.prompt("Enter the new title for the book:", currentTitle);
+    if (newTitle === null || newTitle.trim() === "" || newTitle.trim() === currentTitle) {
+        if (newTitle !== null && newTitle.trim() !== "" && newTitle.trim() === currentTitle) {
+            console.log("New title is the same as the current title. No action taken.");
+        } else {
+            console.log("Rename cancelled or new title is empty.");
+        }
+        return;
+    }
+
+    setRenamingId(bookId);
+    setError(null); // Clear previous errors
+    try {
+        const response = await fetch(`/api/books/${bookId}/rename`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ new_title: newTitle.trim() }),
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({ detail: 'Failed to rename book and parse error response.' }));
+            throw new Error(`HTTP error! status: ${response.status} - ${errorData.detail || 'Unknown error'}`);
+        }
+
+        const updatedBook = await response.json(); // Backend returns the updated book object
+        setBooks(prevBooks => prevBooks.map(book => (book.id === bookId ? updatedBook : book)));
+        console.log(`Book "${currentTitle}" (ID: ${bookId}) renamed to "${updatedBook.title}" successfully.`);
+
+    } catch (err) {
+        console.error(`Failed to rename book ${bookId}:`, err);
+        setError(`Failed to rename book "${currentTitle}": ${err.message}`);
+    } finally {
+        setRenamingId(null);
+    }
+  };
+
+  if (loading && books.length === 0) { // Show loading only if books array is empty initially
     return <div style={{ padding: '20px' }}>Loading books...</div>;
   }
 
-  if (error) {
+  // Display error message, but still render the book list if books are available
+  if (error && books.length === 0) { // Only show full page error if no books can be displayed
     return <div style={{ padding: '20px', color: 'red' }}>Error: {error}</div>;
   }
 
+
   return (
-    <div className="book-list-container"> {/* Use the class for styling */}
-      <h2>Available Books</h2>
-      {books.length === 0 ? (
-        <p>No books found. <Link to="/upload">Upload a PDF</Link> to get started!</p>
+    <div className="book-list-container" style={{ fontFamily: 'Arial, sans-serif', padding: '20px' }}>
+      <h2 style={{ marginBottom: '20px', color: '#333' }}>Available Books</h2>
+      {error && <p style={{ color: 'red', marginBottom: '15px' }}>Error: {error}</p>} {/* Display error message above list */}
+      {books.length === 0 && !loading ? (
+        <p>No books found. <Link to="/upload" style={{ color: '#007bff' }}>Upload a PDF</Link> to get started!</p>
       ) : (
-        <ul>
+        <ul style={{ listStyleType: 'none', paddingLeft: '0' }}>
           {books.map(book => (
-            // Use Link to navigate to the BookView page for each book
-            // Use book._id for the key and the URL - this is the MongoDB _id
-            // ADDED LOG: Log book._id and book object before rendering list item
-            console.log("Rendering list item for book:", book, "ID:", book._id),
-            <li key={book._id}> {/* Changed book.id to book._id */}
-              {/* Only make the link clickable if the book is completed */}
-              {book.status === 'completed' ? (
-                 <Link to={`/book/${book._id}`}> {/* Changed book.id to book._id */}
-                    {book.title || book.original_filename}
-                 </Link>
-              ) : (
-                 <span>
-                     {book.title || book.original_filename}
-                     {/* Display the processing status */}
-                     {/* Add data-status attribute for CSS targeting */}
-                     <span data-status={book.status || 'unknown'}>
-                         {book.status || 'unknown'} {/* Display status text */}
-                         {(book.status === 'processing' || book.status === 'pending') && '...'} {/* Add ellipsis for processing/pending */}
-                         {book.status === 'failed' && ' - Failed'} {/* Simplified failed message */}
-                     </span>
-                 </span>
-              )}
+            // Use book.id for the key and the URL - this is the MongoDB _id string from backend
+            // The backend /api/books/ endpoint maps _id to id.
+            console.log("Rendering list item for book:", book, "ID:", book.id),
+            <li
+              key={book.id} // Use book.id (which is the string representation of _id)
+              onMouseEnter={() => setHoveredBookId(book.id)}
+              onMouseLeave={() => setHoveredBookId(null)}
+              style={{
+                position: 'relative', // Needed for absolute positioning of actions
+                padding: '12px 15px',
+                borderBottom: '1px solid #e0e0e0',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                transition: 'background-color 0.2s ease',
+                backgroundColor: hoveredBookId === book.id ? '#f9f9f9' : 'transparent',
+              }}
+            >
+              <div style={{ flexGrow: 1, marginRight: '100px' }}> {/* Ensure space for buttons */}
+                {book.status === 'completed' ? (
+                   <Link to={`/book/${book.id}`} style={{ textDecoration: 'none', color: '#007bff', fontWeight: '500' }}>
+                      {book.title || book.original_filename}
+                   </Link>
+                ) : (
+                   <span style={{ color: '#555', fontWeight: '500' }}>
+                       {book.title || book.original_filename}
+                       <span data-status={book.status || 'unknown'} style={{ marginLeft: '8px', fontSize: '0.9em', color: '#777' }}>
+                           {' '}({book.status || 'unknown'}
+                           {(book.status === 'processing' || book.status === 'pending') && '...'})
+                           {book.status === 'failed' && ' - Failed'}
+                       </span>
+                   </span>
+                )}
+              </div>
+
+              <div
+                style={{
+                  ...actionsContainerBaseStyle,
+                  ...(hoveredBookId === book.id ? actionsContainerVisibleStyle : {}),
+                }}
+              >
+                <button
+                  title="Rename Book"
+                  onClick={(e) => { e.stopPropagation(); handleRenameBook(book.id, book.title || book.original_filename);}}
+                  disabled={renamingId === book.id || deletingId === book.id || book.status === 'processing' || book.status === 'pending'}
+                  style={renamingId === book.id ? {...renameButtonStyle, backgroundColor: renameButtonHoverStyle.backgroundColor} : renameButtonStyle}
+                  onMouseEnter={(e) => {
+                    if (!(renamingId === book.id || deletingId === book.id || book.status === 'processing' || book.status === 'pending')) {
+                        e.currentTarget.style.backgroundColor = renameButtonHoverStyle.backgroundColor;
+                        e.currentTarget.style.borderColor = renameButtonHoverStyle.borderColor;
+                        e.currentTarget.style.boxShadow = renameButtonHoverStyle.boxShadow;
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!(renamingId === book.id)) { // Keep active style if renaming
+                        e.currentTarget.style.backgroundColor = renameButtonStyle.backgroundColor;
+                        e.currentTarget.style.borderColor = renameButtonStyle.border; // Should be renameButtonStyle.borderColor or baseButtonStyle.border
+                        e.currentTarget.style.boxShadow = baseButtonStyle.boxShadow;
+                    }
+                  }}
+                >
+                  {renamingId === book.id ? 'Renaming...' : 'Rename'}
+                </button>
+                <button
+                  title="Delete Book"
+                  onClick={(e) => { e.stopPropagation(); handleDeleteBook(book.id, book.title || book.original_filename);}}
+                  disabled={deletingId === book.id || renamingId === book.id || book.status === 'processing' || book.status === 'pending'}
+                  style={deletingId === book.id ? {...deleteButtonStyle, backgroundColor: deleteButtonHoverStyle.backgroundColor} : deleteButtonStyle}
+                   onMouseEnter={(e) => {
+                    if (!(renamingId === book.id || deletingId === book.id || book.status === 'processing' || book.status === 'pending')) {
+                        e.currentTarget.style.backgroundColor = deleteButtonHoverStyle.backgroundColor;
+                        e.currentTarget.style.borderColor = deleteButtonHoverStyle.borderColor;
+                        e.currentTarget.style.boxShadow = deleteButtonHoverStyle.boxShadow;
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                     if (!(deletingId === book.id)) { // Keep active style if deleting
+                        e.currentTarget.style.backgroundColor = deleteButtonStyle.backgroundColor;
+                        e.currentTarget.style.borderColor = deleteButtonStyle.border; // Should be deleteButtonStyle.borderColor or baseButtonStyle.border
+                        e.currentTarget.style.boxShadow = baseButtonStyle.boxShadow;
+                    }
+                  }}
+                >
+                  {deletingId === book.id ? 'Deleting...' : 'Delete'}
+                </button>
+              </div>
             </li>
           ))}
         </ul>
       )}
-      {/* Wrap the Upload Link in a div with the specified class */}
-      <div className="upload-link-container">
-         <Link to="/upload">Upload a New PDF</Link>
+      <div className="upload-link-container" style={{ marginTop: '25px' }}>
+         <Link to="/upload" style={{
+             display: 'inline-block',
+             padding: '10px 15px',
+             backgroundColor: '#007bff',
+             color: 'white',
+             textDecoration: 'none',
+             borderRadius: '4px'
+         }}>Upload a New PDF</Link>
       </div>
     </div>
   );

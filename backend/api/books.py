@@ -5,7 +5,7 @@ import asyncio # Import asyncio
 import os
 import logging
 import requests # Import requests
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, status, Body
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, status, Body, Response
 from typing import List, Optional, Dict, Any 
 from bson import ObjectId # Keep ObjectId import
 from bson.errors import InvalidId # Import InvalidId
@@ -541,5 +541,155 @@ async def pdf_processing_callback(payload: PDFServiceCallbackData = Body(...)):
         # Even on internal error, acknowledge to PDF service to prevent retries if the issue is persistent.
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
                             detail="Internal server error processing callback.")
+
+# Add this new Pydantic model for the rename payload
+class BookRenamePayload(BaseModel):
+    new_title: str
+
+# Add new endpoint for renaming a book
+@router.put("/{book_id}/rename", response_model=Book)
+async def rename_book(book_id: str, payload: BookRenamePayload = Body(...)):
+    logger.info(f"Attempting to rename book ID: {book_id} to '{payload.new_title}'")
+    # db = get_database() # get_database() is not used directly here, db functions are.
+    
+    try:
+        # Validate ObjectId
+        if not ObjectId.is_valid(book_id):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid book ID format.")
+    except InvalidId: # Catch InvalidId specifically if ObjectId.is_valid doesn't catch all cases or for robustness
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid book ID format.")
+
+    existing_book_data = await get_book(book_id) # Fetches raw dict
+    if not existing_book_data:
+        logger.warning(f"Rename: Book not found in DB for ID: {book_id}")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found")
+
+    try:
+        existing_book = Book.model_validate(existing_book_data)
+    except Exception as e:
+        logger.error(f"Rename: Error converting existing book data (ID: {book_id}) to Book model: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error processing book data")
+
+    old_sanitized_title = existing_book.sanitized_title
+    old_markdown_filename = existing_book.markdown_filename
+
+    new_sanitized_title = sanitize_filename(payload.new_title)
+    new_markdown_filename = f"{new_sanitized_title}.md" if new_sanitized_title else None
+
+    # Rename markdown file on filesystem
+    if CONTAINER_MARKDOWN_PATH and old_markdown_filename and new_markdown_filename and old_markdown_filename != new_markdown_filename:
+        old_file_path = os.path.join(CONTAINER_MARKDOWN_PATH, old_markdown_filename)
+        new_file_path = os.path.join(CONTAINER_MARKDOWN_PATH, new_markdown_filename)
+        try:
+            if await run_in_threadpool(os.path.exists, old_file_path):
+                await run_in_threadpool(os.rename, old_file_path, new_file_path)
+                logger.info(f"Renamed markdown file from {old_file_path} to {new_file_path}")
+            else:
+                logger.warning(f"Old markdown file not found at {old_file_path}, cannot rename. Book ID: {book_id}")
+        except OSError as e:
+            logger.error(f"Error renaming markdown file for book ID {book_id} from {old_file_path} to {new_file_path}: {e}", exc_info=True)
+            # Decide if this should be a hard failure. For now, logging and continuing.
+            # To make it a hard failure, you could raise an HTTPException here.
+
+    update_data_for_db = {
+        "title": payload.new_title,
+        "sanitized_title": new_sanitized_title,
+        "markdown_filename": new_markdown_filename,
+        "updated_at": datetime.utcnow()
+    }
+
+    updated_count = await update_book(book_id, update_data_for_db)
+    if not updated_count:
+        logger.warning(f"Rename: Book with ID {book_id} was not updated in DB. It might have been deleted or data was identical (except updated_at).")
+    
+    updated_book_data = await get_book(book_id) # Re-fetch the book
+    if not updated_book_data:
+        logger.error(f"Rename: Book with ID {book_id} not found after update attempt.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found after update attempt.")
+        
+    try:
+        response_book = Book.model_validate(updated_book_data)
+    except Exception as validation_error:
+        logger.error(f"Rename: Failed to validate re-fetched book data for ID {book_id}: {validation_error}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to validate updated book data.")
+    
+    logger.info(f"Book ID {book_id} successfully renamed to '{response_book.title}'.")
+    return response_book
+
+
+# Add new endpoint for deleting a book
+@router.delete("/{book_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_book_route(book_id: str):
+    logger.info(f"Attempting to delete book ID: {book_id}")
+    # db = get_database() # Not used directly
+
+    try:
+        if not ObjectId.is_valid(book_id):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid book ID format.")
+    except InvalidId:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid book ID format.")
+
+    book_data = await get_book(book_id) # Fetches raw dict
+    if not book_data:
+        logger.warning(f"Delete: Book not found in DB for ID: {book_id}. No action taken.")
+        # Return 204 as per HTTP spec for DELETE if resource is already gone
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    book_to_delete = None # Initialize to None
+    try:
+        book_to_delete = Book.model_validate(book_data)
+    except Exception as e:
+        logger.error(f"Delete: Error converting book data (ID: {book_id}) for deletion to Book model: {e}", exc_info=True)
+        # If model conversion fails but data was fetched, we might still want to proceed with deletion
+        # based on book_id and whatever info we have (like filenames from the raw dict).
+        # For now, let's assume if model validation fails, we might not have reliable filenames.
+        # A safer approach might be to just delete the DB record if model validation fails.
+        # However, the current logic tries to use book_to_delete.markdown_filename etc.
+        # Let's make book_to_delete from the raw dict if model validation fails.
+        book_to_delete_dict = book_data # Use the raw dict
+        logger.warning(f"Delete: Using raw dict for book ID {book_id} due to model validation error. File cleanup might be incomplete if filenames are missing/incorrect in raw data.")
+        # To allow file cleanup attempt, we'll use the dict directly for attributes if book_to_delete is None
+        markdown_filename_to_delete = book_to_delete_dict.get("markdown_filename")
+        image_filenames_to_delete = book_to_delete_dict.get("image_filenames")
+
+    if book_to_delete: # If model validation was successful
+        markdown_filename_to_delete = book_to_delete.markdown_filename
+        image_filenames_to_delete = book_to_delete.image_filenames
+
+
+    # Delete markdown file
+    if CONTAINER_MARKDOWN_PATH and markdown_filename_to_delete:
+        markdown_file_path = os.path.join(CONTAINER_MARKDOWN_PATH, markdown_filename_to_delete)
+        try:
+            if await run_in_threadpool(os.path.exists, markdown_file_path):
+                await run_in_threadpool(os.remove, markdown_file_path)
+                logger.info(f"Deleted markdown file: {markdown_file_path}")
+            else:
+                logger.warning(f"Markdown file not found for deletion: {markdown_file_path}. Book ID: {book_id}")
+        except OSError as e:
+            logger.error(f"Error deleting markdown file {markdown_file_path} for book ID {book_id}: {e}", exc_info=True)
+
+    # Delete image files
+    if CONTAINER_IMAGES_PATH and image_filenames_to_delete and isinstance(image_filenames_to_delete, list):
+        for image_filename in image_filenames_to_delete:
+            if image_filename: # Ensure filename is not empty or None
+                image_file_path = os.path.join(CONTAINER_IMAGES_PATH, image_filename)
+                try:
+                    if await run_in_threadpool(os.path.exists, image_file_path):
+                        await run_in_threadpool(os.remove, image_file_path)
+                        logger.info(f"Deleted image file: {image_file_path}")
+                    else:
+                        logger.warning(f"Image file not found for deletion: {image_file_path}. Book ID: {book_id}")
+                except OSError as e:
+                    logger.error(f"Error deleting image file {image_file_path} for book ID {book_id}: {e}", exc_info=True)
+
+    deleted_count = await delete_book_record(book_id)
+    if not deleted_count:
+        logger.warning(f"Delete: No book record found to delete with ID: {book_id}, or delete operation failed in DB (already deleted?).")
+        # Still return 204 as the resource is gone.
+    else:
+        logger.info(f"Successfully deleted book record with ID: {book_id} from database.")
+
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 # ... (rest of the file) ...
