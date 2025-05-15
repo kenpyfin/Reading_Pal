@@ -823,6 +823,7 @@ function BookView() {
   }, [syncScroll]); 
 
   const handleBookmarkSelect = (event) => {
+    logger.info("[BookView - handleBookmarkSelect] Dropdown changed. Selected value:", event.target.value); // <<< ADD THIS LINE
     const selectedBookmarkId = event.target.value;
     if (!selectedBookmarkId) return;
 
