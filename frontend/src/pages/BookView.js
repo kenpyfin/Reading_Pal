@@ -1114,34 +1114,36 @@ function BookView() {
           <div className="book-pane-wrapper"> 
             {/* Controls Header for Book Pane - ADD THIS SECTION */}
             <div className="book-pane-controls-header">
-              <button onClick={openAddBookmarkModal} className="control-button">
-                Add Bookmark
+              <div className="left-controls">
+                <button onClick={openAddBookmarkModal} className="control-button">
+                  Add Bookmark
+                </button>
+                {/* Add Bookmark Dropdown */}
+                {bookmarks.length > 0 && (
+                  <select 
+                    onChange={handleBookmarkSelect} 
+                    className="bookmark-select control-button" // Added control-button for consistent styling
+                    defaultValue="" // Ensure placeholder is selected initially
+                    aria-label="Jump to bookmark"
+                  >
+                    <option value="" disabled>Jump to Bookmark...</option>
+                    {bookmarks.map((bookmark, index) => {
+                      // ADD THIS LOG to see what's being assigned to the value attribute
+                      logger.debug(`[BookView - Rendering Bookmark Option ${index}] ID: "${bookmark.id}", Type: ${typeof bookmark.id}, Name: "${bookmark.name}"`);
+                      return (
+                        <option key={bookmark.id} value={bookmark.id}>
+                          {bookmark.name ? `${bookmark.name} (P${bookmark.page_number})` : `Page ${bookmark.page_number} (Unnamed)`}
+                        </option>
+                      );
+                    })}
+                  </select>
+                )}
+              </div>
+              {/* Add Manage Bookmarks Button */}
+              <button onClick={() => setShowManageBookmarksModal(true)} className="control-button">
+                Manage Bookmarks
               </button>
-              {/* Add Bookmark Dropdown */}
-              {bookmarks.length > 0 && (
-                <select 
-                  onChange={handleBookmarkSelect} 
-                  className="bookmark-select control-button" // Added control-button for consistent styling
-                  defaultValue="" // Ensure placeholder is selected initially
-                  aria-label="Jump to bookmark"
-                >
-                  <option value="" disabled>Jump to Bookmark...</option>
-                  {bookmarks.map((bookmark, index) => {
-                    // ADD THIS LOG to see what's being assigned to the value attribute
-                    logger.debug(`[BookView - Rendering Bookmark Option ${index}] ID: "${bookmark.id}", Type: ${typeof bookmark.id}, Name: "${bookmark.name}"`);
-                    return (
-                      <option key={bookmark.id} value={bookmark.id}>
-                        {bookmark.name ? `${bookmark.name} (P${bookmark.page_number})` : `Page ${bookmark.page_number} (Unnamed)`}
-                      </option>
-                    );
-                  })}
-                </select>
-              )}
             </div>
-            {/* Add Manage Bookmarks Button */}
-            <button onClick={() => setShowManageBookmarksModal(true)} className="control-button">
-              Manage Bookmarks
-            </button>
           </div>
 
             <div className="book-pane-container" ref={bookPaneContainerRef}> {/* Ref for scrollable content */}
