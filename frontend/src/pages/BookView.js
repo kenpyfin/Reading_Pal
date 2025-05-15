@@ -62,6 +62,8 @@ function BookView() {
   const dragStartX = useRef(0);
   const initialBookPaneWidthPx = useRef(0);
 
+  const [showManageBookmarksModal, setShowManageBookmarksModal] = useState(false); // ADD THIS STATE
+
 
   const fetchBook = async () => {
     setLoading(true);
@@ -132,6 +134,30 @@ function BookView() {
     } catch (err) {
       logger.error('Error fetching bookmarks:', err);
       setBookmarks([]); // Reset bookmarks on error
+    }
+  };
+
+  const handleDeleteBookmark = async (bookmarkIdToDelete) => {
+    if (!window.confirm("Are you sure you want to delete this bookmark?")) {
+      return;
+    }
+    logger.info(`[BookView - handleDeleteBookmark] Attempting to delete bookmark ID: ${bookmarkIdToDelete}`);
+    try {
+      const response = await fetch(`/api/bookmarks/${bookmarkIdToDelete}`, {
+        method: 'DELETE',
+      });
+      if (!response.ok) {
+        if (response.status === 404) {
+          throw new Error(`Bookmark not found (ID: ${bookmarkIdToDelete}). It might have already been deleted.`);
+        }
+        const errorData = await response.json().catch(() => ({ detail: "Failed to delete bookmark. Server error." }));
+        throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
+      }
+      setBookmarks(prevBookmarks => prevBookmarks.filter(bookmark => bookmark.id !== bookmarkIdToDelete));
+      logger.info(`Bookmark with ID ${bookmarkIdToDelete} deleted successfully from UI.`);
+    } catch (err) {
+      logger.error('Error deleting bookmark:', err);
+      alert(`Error deleting bookmark: ${err.message}`);
     }
   };
 
@@ -1040,6 +1066,38 @@ function BookView() {
           </div>
         )}
 
+      {/* Manage Bookmarks Modal - ADD THIS */}
+      {showManageBookmarksModal && (
+        <div className="modal-overlay">
+          <div className="modal-content manage-bookmarks-modal">
+            <h2>Manage Bookmarks</h2>
+            {bookmarks.length === 0 ? (
+              <p>No bookmarks to manage.</p>
+            ) : (
+              <ul className="manage-bookmarks-list">
+                {bookmarks.map(bookmark => (
+                  <li key={bookmark.id} className="manage-bookmark-item">
+                    <span>
+                      {bookmark.name ? `${bookmark.name} (P${bookmark.page_number})` : `Page ${bookmark.page_number} (Unnamed)`}
+                    </span>
+                    <button
+                      onClick={() => handleDeleteBookmark(bookmark.id)}
+                      className="delete-button delete-bookmark-button"
+                      title="Delete this bookmark"
+                    >
+                      ✕
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="modal-actions">
+              <button onClick={() => setShowManageBookmarksModal(false)} className="button-secondary">Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
         {/* Book Pane Area */}
         <div 
           className="book-pane-area" 
@@ -1079,8 +1137,12 @@ function BookView() {
                   })}
                 </select>
               )}
-              {/* You can add other controls here, like font size adjusters */}
             </div>
+            {/* Add Manage Bookmarks Button */}
+            <button onClick={() => setShowManageBookmarksModal(true)} className="control-button">
+              Manage Bookmarks
+            </button>
+          </div>
 
             <div className="book-pane-container" ref={bookPaneContainerRef}> {/* Ref for scrollable content */}
               <BookPane

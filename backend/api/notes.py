@@ -1,11 +1,11 @@
 import logging
-from fastapi import APIRouter, HTTPException, status
-from typing import List, Optional # Import Optional
-from bson import ObjectId # Import ObjectId
-from datetime import datetime # Import datetime
+from fastapi import APIRouter, HTTPException, status, Path # Added Path
+from typing import List, Optional 
+from bson import ObjectId 
+from datetime import datetime 
 
 # Change relative imports to absolute imports
-from backend.db.mongodb import save_note, get_notes_by_book_id, update_note, get_note_by_id
+from backend.db.mongodb import save_note, get_notes_by_book_id, update_note, get_note_by_id, delete_note_by_id # Added delete_note_by_id
 from backend.models.note import Note, NoteCreate, NoteUpdate
 
 logger = logging.getLogger(__name__)
@@ -127,21 +127,28 @@ async def update_existing_note(note_id: str, note_update: NoteUpdate):
         logger.error(f"Error updating note {note_id}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Internal server error: {e}")
 
-# Note: DELETE endpoint is not strictly required by Phase 3 description but is common.
-# If needed, add:
-# @router.delete("/{note_id}", status_code=status.HTTP_204_NO_CONTENT)
-# async def delete_note(note_id: str):
-#     """Deletes a note by its ID."""
-#     if not ObjectId.is_valid(note_id):
-#         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid note ID format")
-#     try:
-#         # Need a delete_note function in db.mongodb
-#         # result = await delete_note_from_db(note_id)
-#         # if result.deleted_count == 0:
-#         #     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found")
-#         pass # Placeholder
-#     except ConnectionError:
-#          raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Database connection not available.")
-#     except Exception as e:
-#         logger.error(f"Error deleting note {note_id}: {e}")
-#         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Internal server error: {e}")
+@router.delete("/{note_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_note(note_id: str = Path(..., description="The ID of the note to delete")):
+    """
+    Deletes a specific note by its ID.
+    """
+    logger.info(f"Received request to delete note with id: {note_id}")
+    if not ObjectId.is_valid(note_id):
+        logger.warning(f"Attempted to delete note with invalid ID format: {note_id}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid note ID format.")
+
+    try:
+        deleted = await delete_note_by_id(note_id) # Use the new DB function
+        if not deleted:
+            logger.warning(f"Note with id {note_id} not found for deletion.")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Note with id {note_id} not found"
+            )
+        logger.info(f"Note with id {note_id} deleted successfully.")
+        return None # For 204 No Content
+    except ConnectionError:
+         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Database connection not available.")
+    except Exception as e:
+        logger.error(f"Error deleting note {note_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Internal server error: {e}")

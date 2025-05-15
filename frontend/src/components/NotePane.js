@@ -95,14 +95,39 @@ const NotePane = ({ // Removed ref from props
       // For example, BookView's handleNewNoteSaved could call setSelectedBookText(null), etc.
 
     } catch (err) {
-      console.error('Failed to save note:', err);
+      logger.error('Failed to save note:', err); // Use logger
       setError(`Failed to save note: ${err.message || 'Unknown error'}`);
+    }
+  };
+
+  const handleDeleteNote = async (noteIdToDelete) => {
+    if (!window.confirm("Are you sure you want to delete this note?")) {
+      return;
+    }
+    logger.info(`[NotePane - handleDeleteNote] Attempting to delete note ID: ${noteIdToDelete}`);
+    try {
+      const response = await fetch(`/api/notes/${noteIdToDelete}`, {
+        method: 'DELETE',
+      });
+      if (!response.ok) {
+        if (response.status === 404) {
+          throw new Error(`Note not found (ID: ${noteIdToDelete}). It might have already been deleted.`);
+        }
+        const errorData = await response.json().catch(() => ({ detail: "Failed to delete note. Server error." }));
+        throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
+      }
+      setNotes(prevNotes => prevNotes.filter(note => note.id !== noteIdToDelete));
+      logger.info(`Note with ID ${noteIdToDelete} deleted successfully from UI.`);
+    } catch (err) {
+      logger.error('Error deleting note:', err);
+      alert(`Error deleting note: ${err.message}`);
+      setError(`Error deleting note: ${err.message}`);
     }
   };
 
   const handleNoteClickInternal = (note) => {
       // ADD THIS LOG
-      console.log("[NotePane - handleNoteClickInternal] Clicked note object:", JSON.stringify(note, null, 2));
+      logger.debug("[NotePane - handleNoteClickInternal] Clicked note object:", JSON.stringify(note, null, 2)); // Use logger
       // Use global_character_offset for jumping if available
       if (note.global_character_offset !== null && note.global_character_offset !== undefined && onNoteClick) {
           onNoteClick(note.global_character_offset); // Pass global_character_offset
@@ -221,16 +246,26 @@ const NotePane = ({ // Removed ref from props
           <div
               key={note.id}
               className={`note-item ${(note.global_character_offset !== null && note.global_character_offset !== undefined) ? 'clickable-note' : ''}`}
-              onClick={() => handleNoteClickInternal(note)}
-              // Inline style for cursor removed, will be handled by CSS
+              // onClick is removed from here, moved to note-content-clickable div
           >
-            {note.source_text && (
-                <blockquote className="note-source-text"> {/* ADDED className */}
-                    <em>Source: "{note.source_text}"</em>
-                </blockquote>
-            )}
-            <p className="note-content-display">{note.content}</p> {/* ADDED className */}
-            <small className="note-meta-display">{new Date(note.created_at).toLocaleString()}</small> {/* ADDED className */}
+            <div className="note-actions"> {/* Wrapper for note content and delete button */}
+                <div className="note-content-clickable" onClick={() => handleNoteClickInternal(note)}>
+                    {note.source_text && (
+                        <blockquote className="note-source-text">
+                            <em>Source: "{note.source_text}"</em>
+                        </blockquote>
+                    )}
+                    <p className="note-content-display">{note.content}</p>
+                    <small className="note-meta-display">{new Date(note.created_at).toLocaleString()}</small>
+                </div>
+                <button
+                  onClick={() => handleDeleteNote(note.id)}
+                  className="delete-button delete-note-button"
+                  title="Delete this note"
+                >
+                  ✕
+                </button>
+            </div>
           </div>
         ))}
       </div>

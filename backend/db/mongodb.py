@@ -260,6 +260,28 @@ async def update_note(note_id: str, update_data: dict):
         logger.error(f"Error updating note {note_id}: {e}", exc_info=True)
         return None
 
+async def delete_note_by_id(note_id: str) -> bool:
+    """Deletes a note by its ID."""
+    database = get_database()
+    if database is None:
+        logger.error(f"Database not initialized for delete_note_by_id (note_id: {note_id}).")
+        return False
+    try:
+        if not ObjectId.is_valid(note_id):
+            logger.warning(f"Invalid note_id format for deletion: {note_id}")
+            return False
+        obj_id = ObjectId(note_id)
+        result = await database.notes.delete_one({"_id": obj_id})
+        if result.deleted_count > 0:
+            logger.info(f"Note with id {note_id} deleted successfully.")
+            return True
+        else:
+            logger.warning(f"Note with id {note_id} not found for deletion.")
+            return False
+    except Exception as e:
+        logger.error(f"Error deleting note {note_id}: {e}", exc_info=True)
+        return False
+
 # --- Bookmark Database Operations ---
 
 async def create_bookmark(bookmark_data: dict) -> Optional[Dict[str, Any]]:
