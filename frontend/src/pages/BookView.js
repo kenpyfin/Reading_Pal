@@ -1041,7 +1041,8 @@ function BookView() {
                 >
                   <option value="" disabled>Jump to Bookmark...</option>
                   {bookmarks.map(bookmark => (
-                    <option key={bookmark.id} value={bookmark.id}>
+                    <option key={bookmark.id} value={bookmark.id}> {/* Ensure value is bookmark.id */}
+                      {/* The text content of the option can be whatever you want to display */}
                       {bookmark.name ? `${bookmark.name} (P${bookmark.page_number})` : `Page ${bookmark.page_number} (Unnamed)`}
                     </option>
                   ))}
