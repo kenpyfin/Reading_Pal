@@ -1144,7 +1144,6 @@ function BookView() {
                 Manage Bookmarks
               </button>
             </div>
-          </div>
 
             <div className="book-pane-container" ref={bookPaneContainerRef}> {/* Ref for scrollable content */}
               <BookPane
