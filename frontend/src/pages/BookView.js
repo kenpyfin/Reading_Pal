@@ -823,55 +823,64 @@ function BookView() {
   }, [syncScroll]); 
 
   const handleBookmarkSelect = (event) => {
-    logger.info("[BookView - handleBookmarkSelect] Dropdown changed. Selected value:", event.target.value); // <<< ADD THIS LINE
-    const selectedBookmarkId = event.target.value;
-    if (!selectedBookmarkId) return;
+    const selectedValueFromEvent = event.target.value;
+    // Log the raw value from the event
+    logger.info("[BookView - handleBookmarkSelect] Dropdown changed. event.target.value:", selectedValueFromEvent);
 
-    const selectedBookmark = bookmarks.find(b => b.id === selectedBookmarkId);
+    // Log the structure of the first bookmark to verify 'id' field and its type
+    if (bookmarks && bookmarks.length > 0) {
+        logger.debug("[BookView - handleBookmarkSelect] First bookmark in state (bookmarks[0]):", JSON.stringify(bookmarks[0], null, 2));
+        logger.debug(`[BookView - handleBookmarkSelect] Type of event.target.value: ${typeof selectedValueFromEvent}`);
+        logger.debug(`[BookView - handleBookmarkSelect] Type of bookmarks[0].id: ${typeof bookmarks[0].id}, Value: ${bookmarks[0].id}`);
+    } else {
+        logger.debug("[BookView - handleBookmarkSelect] Bookmarks array is empty or not yet populated.");
+    }
+
+    if (!selectedValueFromEvent) { // Check if the placeholder ("Jump to Bookmark...") was re-selected or value is empty
+        logger.debug("[BookView - handleBookmarkSelect] No valid bookmark ID selected (likely placeholder).");
+        return;
+    }
+
+    const selectedBookmark = bookmarks.find(b => {
+        // Explicitly compare as strings, though both should ideally be strings already
+        // logger.debug(`[BookView - handleBookmarkSelect] Comparing in find: "${String(b.id)}" (type: ${typeof b.id}) with "${String(selectedValueFromEvent)}" (type: ${typeof selectedValueFromEvent})`);
+        return String(b.id) === String(selectedValueFromEvent);
+    });
+
     if (selectedBookmark) {
-      logger.info(`[BookView - handleBookmarkSelect] Jumping to bookmark: ID=${selectedBookmark.id}, Name='${selectedBookmark.name}', Page=${selectedBookmark.page_number}, Scroll%=${selectedBookmark.scroll_percentage}`);
+      logger.info(`[BookView - handleBookmarkSelect] Successfully found bookmark: ID=${selectedBookmark.id}, Name='${selectedBookmark.name}', Page=${selectedBookmark.page_number}, Scroll%=${selectedBookmark.scroll_percentage}`);
 
-      // Always set isProgrammaticScroll to true before initiating any page change or scroll
       isProgrammaticScroll.current = true;
 
       if (selectedBookmark.page_number !== currentPage) {
         logger.debug(`[BookView - handleBookmarkSelect] Target page ${selectedBookmark.page_number} is different. Changing page.`);
-        // Set pending scroll percentage first, then change page.
-        // The useEffect for pendingScrollToPercentage will handle the actual scroll after page content loads.
         if (selectedBookmark.scroll_percentage !== null && selectedBookmark.scroll_percentage !== undefined) {
           setPendingScrollToPercentage(selectedBookmark.scroll_percentage);
         } else {
-          setPendingScrollToPercentage(0); // Default to top if not specified
+          setPendingScrollToPercentage(0);
         }
         setCurrentPage(selectedBookmark.page_number);
       } else {
-        // Already on the correct page, scroll directly
         logger.debug(`[BookView - handleBookmarkSelect] Already on target page ${currentPage}. Scrolling directly.`);
         if (bookPaneContainerRef.current) {
           const element = bookPaneContainerRef.current;
           const targetScroll = selectedBookmark.scroll_percentage !== null && selectedBookmark.scroll_percentage !== undefined ? selectedBookmark.scroll_percentage : 0;
-
-          if (element.scrollHeight > element.clientHeight) { // Check if scrollable
-            const targetScrollTop = targetScroll * (element.scrollHeight - element.clientHeight);
-            element.scrollTop = targetScrollTop;
-            logger.debug(`[BookView - handleBookmarkSelect] Scrolled to ${targetScrollTop}px (Percentage: ${targetScroll})`);
-          } else { // Not scrollable or content fits
-            element.scrollTop = 0; // Go to top if not scrollable
-            logger.debug(`[BookView - handleBookmarkSelect] Pane not scrollable. Scrolled to top.`);
+          if (element.scrollHeight > element.clientHeight) {
+            element.scrollTop = targetScroll * (element.scrollHeight - element.clientHeight);
+          } else {
+            element.scrollTop = 0;
           }
+          logger.debug(`[BookView - handleBookmarkSelect] Scrolled directly. Target scroll percentage: ${targetScroll}`);
         } else {
           logger.warn("[BookView - handleBookmarkSelect] bookPaneContainerRef.current is null. Cannot scroll directly.");
         }
-        // Reset isProgrammaticScroll after a short delay for same-page scrolls
         setTimeout(() => { isProgrammaticScroll.current = false; }, 100);
       }
-      // Reset the select to the placeholder option after selection
-      // This makes it an "action" dropdown rather than a stateful one.
-      if (event.target) { // Ensure event.target exists
-        event.target.value = "";
+      if (event.target) {
+        event.target.value = ""; // Reset dropdown to placeholder
       }
     } else {
-      logger.warn(`[BookView - handleBookmarkSelect] Bookmark with ID ${selectedBookmarkId} not found.`);
+      logger.warn(`[BookView - handleBookmarkSelect] Bookmark with ID "${selectedValueFromEvent}" not found in current bookmarks list. List length: ${bookmarks.length}`);
     }
   };
 
