@@ -177,12 +177,15 @@ async def upload_pdf(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An unexpected error occurred during upload: {e}")
 
 
-@router.get("/", response_model=List[Book])
+@router.get("/", response_model=List[Book], response_model_by_alias=False)
 async def list_books():
     """
     Retrieves a list of all books, excluding those with 'failed' status.
+    Setting response_model_by_alias=False ensures that if the Book model
+    has a field named 'id' (e.g., id: SomeType = Field(alias='_id')),
+    the output JSON key will be 'id', not '_id'.
     """
-    logger.info("Fetching list of books (excluding failed)...")
+    logger.info("Fetching list of books (excluding failed, by_alias=False for response)...")
     try:
         # Define the projection to fetch only necessary fields
         projection = {
@@ -199,49 +202,48 @@ async def list_books():
             "processing_error": 1
         }
 
-        # Call get_books with a filter to exclude status 'failed' and include the projection
         books_docs = await get_books(filter={"status": {"$ne": "failed"}}, projection=projection)
-
         logger.info(f"Fetched {len(books_docs)} book documents from DB (excluding failed).")
+
+        # The list_books function currently constructs dictionaries with an "id" key.
+        # When response_model=List[Book] and response_model_by_alias=False are used:
+        # 1. FastAPI takes each dictionary from response_list.
+        # 2. It validates/parses this dictionary into a Book model instance.
+        #    The dict has "id", which should map to the Book model's 'id' field.
+        # 3. It then serializes this Book model instance using by_alias=False.
+        #    This means it will use the actual field name from the Book model (assumed to be 'id')
+        #    instead of its alias (assumed to be '_id').
 
         response_list = []
         for book_doc in books_docs:
-            # Ensure _id is present and convert ObjectId to string for the 'id' field in the response
-            if '_id' in book_doc:
-                book_id_str = str(book_doc['_id'])
-            else:
+            if '_id' not in book_doc:
                 logger.warning(f"Skipping book document due to missing _id: {book_doc}")
                 continue
-
-            # Explicitly create the dictionary for the response
-            # Map fields from book_doc to the structure expected by the Book model (and frontend)
-            response_item = {
-                "id": book_id_str, # Use the string ID here
+            
+            # Create a dictionary that can be validated by the Book model.
+            # The Book model expects fields according to its definition.
+            # If Book model's ID field is named 'id' and aliased to '_id',
+            # then passing 'id' here is correct for validation.
+            item_for_validation = {
+                "id": str(book_doc['_id']), # For Book model's 'id' field
                 "title": book_doc.get("title"),
                 "original_filename": book_doc.get("original_filename"),
                 "status": book_doc.get("status"),
                 "job_id": book_doc.get("job_id"),
                 "sanitized_title": book_doc.get("sanitized_title"),
-                # Use field names matching DB schema
                 "markdown_filename": book_doc.get("markdown_filename"),
                 "image_filenames": book_doc.get("image_filenames", []),
-                "created_at": book_doc.get("created_at"), # Use created_at
-                "updated_at": book_doc.get("updated_at"), # Use updated_at
-                "processing_error": book_doc.get("processing_error"), # Use processing_error
-                # Response-only fields are not needed here, set to defaults
-                "markdown_content": None,
-                "image_urls": []
+                "created_at": book_doc.get("created_at"),
+                "updated_at": book_doc.get("updated_at"),
+                "processing_error": book_doc.get("processing_error"),
+                # Response-only fields in Book model like markdown_content, image_urls
+                # will be handled by the model's defaults or excluded if not in this dict.
             }
-            # Optional: Validate this dictionary against the Book model if desired
-            # try:
-            #     Book.model_validate(response_item)
-            # except Exception as validation_error:
-            #     logger.warning(f"Skipping book due to validation error on constructed dict: {validation_error}. Data: {response_item}", exc_info=True)
-            #     continue
+            response_list.append(item_for_validation)
+            # FastAPI will take this list of dicts, validate each against Book,
+            # then serialize each Book instance using by_alias=False.
 
-            response_list.append(response_item)
-
-        logger.info(f"Returning list of {len(response_list)} processed book dictionaries.")
+        logger.info(f"Returning list of {len(response_list)} dictionaries for Book model processing.")
         return response_list
 
     except Exception as e:
