@@ -1049,12 +1049,15 @@ function BookView() {
                   aria-label="Jump to bookmark"
                 >
                   <option value="" disabled>Jump to Bookmark...</option>
-                  {bookmarks.map(bookmark => (
-                    <option key={bookmark.id} value={bookmark.id}> {/* Ensure value is bookmark.id */}
-                      {/* The text content of the option can be whatever you want to display */}
-                      {bookmark.name ? `${bookmark.name} (P${bookmark.page_number})` : `Page ${bookmark.page_number} (Unnamed)`}
-                    </option>
-                  ))}
+                  {bookmarks.map((bookmark, index) => {
+                    // ADD THIS LOG to see what's being assigned to the value attribute
+                    logger.debug(`[BookView - Rendering Bookmark Option ${index}] ID: "${bookmark.id}", Type: ${typeof bookmark.id}, Name: "${bookmark.name}"`);
+                    return (
+                      <option key={bookmark.id} value={bookmark.id}>
+                        {bookmark.name ? `${bookmark.name} (P${bookmark.page_number})` : `Page ${bookmark.page_number} (Unnamed)`}
+                      </option>
+                    );
+                  })}
                 </select>
               )}
               {/* You can add other controls here, like font size adjusters */}
