@@ -74,17 +74,40 @@
     margin-bottom: 10px; /* Space below the "Saved Notes" heading */
 }
 
+.note-item {
+    background-color: #f9f9f9;
+    border: 1px solid #eee;
+    padding: 10px 15px; /* Adjusted padding */
+    margin-bottom: 10px;
+    border-radius: 4px;
+    /* position: relative; /* Only if using absolute positioning for delete button */
+}
+
+/* New: Wrapper for note content and delete button for flex layout */
+.note-actions {
+  display: flex;
+  justify-content: space-between; /* Pushes content and button apart */
+  align-items: flex-start; /* Aligns items to the top */
+}
+
+/* New: Wrapper for the clickable note content */
+.note-content-clickable {
+  flex-grow: 1; /* Allows content to take up available space */
+  /* cursor: pointer; /* Already handled by .clickable-note */
+  margin-right: 10px; /* Space between content and delete button */
+}
+
 /* .note-item styling is primarily from BookView.css */
 /* Add specific styles for content within .note-item if needed */
-.notes-list .note-item .note-source-text { /* For source_text display within a note */
+.notes-list .note-item .note-source-text { 
     font-size: 0.9em;
-    color: #6c757d; /* Softer color */
-    border-left: 2px solid #dee2e6; /* Light border */
+    color: #6c757d; 
+    border-left: 2px solid #dee2e6; 
     padding-left: 10px;
     margin: 5px 0 10px 0;
     font-style: italic;
-    max-height: 100px; /* Limit height of quoted text in note */
-    overflow-y: auto; /* Add scroll for overflow */
+    max-height: 100px; 
+    overflow-y: auto; 
 }
 
 .notes-list .note-item .note-content-display { /* Main content of the note */
