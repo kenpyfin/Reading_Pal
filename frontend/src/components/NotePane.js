@@ -1,6 +1,7 @@
 // Import forwardRef if not already imported
 import React, { useState, useEffect, useRef } from 'react'; // Removed forwardRef
 import './NotePane.css'; // Ensure this CSS file is imported
+import logger from '../utils/logger'; // Import logger
 
 // NotePane no longer uses forwardRef as the ref is not passed from BookView for its root
 const NotePane = ({ // Removed ref from props
