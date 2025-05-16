@@ -117,7 +117,7 @@ const NotePane = ({ // Removed ref from props
         const errorData = await response.json().catch(() => ({ detail: "Failed to delete note. Server error." }));
         throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
       }
-      setNotes(prevNotes => prevNotes.filter(note => note.id !== noteIdToDelete));
+      setNotes(prevNotes => prevNotes.filter(note => note._id !== noteIdToDelete)); // USE _id FOR FILTERING
       logger.info(`Note with ID ${noteIdToDelete} deleted successfully from UI.`);
     } catch (err) {
       logger.error('Error deleting note:', err);
@@ -245,7 +245,7 @@ const NotePane = ({ // Removed ref from props
         {notes.length === 0 && !loading && <p>No notes yet. Add one above!</p>}
         {notes.map(note => (
           <div
-              key={note.id}
+              key={note._id} // USE _id FOR KEY
               className={`note-item ${(note.global_character_offset !== null && note.global_character_offset !== undefined) ? 'clickable-note' : ''}`}
               // onClick is removed from here, moved to note-content-clickable div
           >
@@ -260,7 +260,7 @@ const NotePane = ({ // Removed ref from props
                     <small className="note-meta-display">{new Date(note.created_at).toLocaleString()}</small>
                 </div>
                 <button
-                  onClick={() => handleDeleteNote(note.id)}
+                  onClick={() => handleDeleteNote(note._id)} // USE _id FOR DELETION
                   className="delete-button delete-note-button"
                   title="Delete this note"
                 >
