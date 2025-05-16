@@ -1,3 +1,15 @@
 fastapi==0.104.1
 python-multipart==0.0.6
 uvicorn==0.24.0
+python-dotenv # For load_dotenv()
+requests # For making HTTP calls (callbacks)
+torch # For magic_pdf and CUDA operations
+ollama # For Ollama integration
+google-generativeai # For Gemini integration
+# magic_pdf is not typically installed via pip directly from PyPI.
+# It's assumed to be installed from its source or a custom package.
+# If you have a specific way to install magic_pdf (e.g., a git URL or a local wheel),
+# you would add that here. For now, I'll leave it as a comment.
+# Example if installing from a git repo:
+# git+https://github.com/your-org/magic_pdf.git@main#egg=magic_pdf
+# Or if it's a local package, it might be handled by your Dockerfile or setup script.
