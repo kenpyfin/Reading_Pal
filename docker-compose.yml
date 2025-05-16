@@ -1,0 +1,87 @@
+version: '3.8'
+
+services:
+  # The pdf_service runs independently outside of this docker-compose setup.
+  # Remove the pdf_service block entirely.
+
+  backend:
+    build: ./backend
+    # When using network_mode: "host", the container shares the host's network namespace.
+    # Port mapping is not needed or allowed in this mode.
+    # ports: # Removed ports section as network_mode: "host" is used
+    #   - "${BACKEND_PORT}:8000"
+    network_mode: "host" # Add this line to use the host's network
+    volumes:
+      # Mount the images path so backend can serve them.
+      # This path must match the IMAGES_PATH configured in the root .env
+      # and used by the standalone pdf_service.
+      # IMPORTANT: Replace the placeholder with the actual value from your .env file
+      # e.g., /home/ken/big_storage/projects/reading_pal/pdf_service/storage/images:/app/storage/images
+      - ${IMAGES_PATH}:/app/storage/images # Use the IMAGES_PATH variable from .env
+      # Add mount for markdown files so backend can read them.
+      # This path must match the MARKDOWN_PATH configured in the root .env
+      # and used by the standalone pdf_service.
+      - ${MARKDOWN_PATH}:/app/storage/markdown # Use the MARKDOWN_PATH variable from .env
+    environment:
+      MONGO_URI: ${MONGO_URI}
+      DATABASE_NAME: ${DATABASE_NAME}
+      LLM_SERVICE: ${LLM_SERVICE}
+      LLM_MODEL: ${LLM_MODEL}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL} # Corrected typo if it existed
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      # PDF_CLIENT_URL now uses the value from the root .env, pointing to the standalone service
+      PDF_CLIENT_URL: ${PDF_CLIENT_URL}
+      # These environment variables should now hold the CONTAINER paths
+      IMAGES_PATH: /app/storage/images # Path within the backend container where images are mounted
+      MARKDOWN_PATH: /app/storage/markdown # Path within the backend container where markdown is mounted
+      # Remove the HOST/CONTAINER path translation variables as they are no longer needed
+      # HOST_IMAGES_PATH: ${IMAGES_PATH}
+      # CONTAINER_IMAGES_PATH: /app/storage/images
+      # HOST_MARKDOWN_PATH: ${MARKDOWN_PATH}
+      # CONTAINER_MARKDOWN_PATH: /app/storage/markdown
+      # BACKEND_PORT is still needed as an environment variable for the application running inside
+      BACKEND_PORT: ${BACKEND_PORT}
+    # Remove pdf_service dependency. Backend does not depend on frontend.
+    # depends_on:
+    #   - pdf_service
+    # Add this section to make host.docker.internal resolvable
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "${FRONTEND_PORT}:80"
+    volumes: # Add this volumes section for the frontend
+      # Mount the IMAGES_PATH to /app/storage/images inside the frontend container
+      # This allows Nginx to serve images directly from the shared volume.
+      - ${IMAGES_PATH}:/app/storage/images
+    environment:
+      # When backend uses host network, it's accessible via localhost on the host machine.
+      # The frontend container needs to access the backend via the host's IP or localhost
+      # if it also uses host networking, or via the docker network if not.
+      # Since frontend is NOT using host network, it needs to access the backend
+      # via the docker network alias 'backend' and its exposed port.
+      # However, the nginx proxy is handling the routing.
+      # The nginx proxy is configured to proxy /api/ and /images/ to http://backend:${BACKEND_PORT}/
+      # This configuration in nginx.conf is correct for the default bridge network setup.
+      # The frontend container accesses nginx on port 80, and nginx proxies to the backend service name.
+      # The REACT_APP_BACKEND_URL is used by the React app itself for direct API calls,
+      # but in this setup, all API calls go through the nginx proxy.
+      # Let's keep REACT_APP_BACKEND_URL pointing to the frontend's nginx proxy (localhost:FRONTEND_PORT)
+      # or remove it if all calls go through relative paths handled by nginx.
+      # Given the nginx config proxies /api/ and /images/, the frontend should make requests
+      # to relative paths like /api/upload-pdf or /images/some_image.png.
+      # Let's remove REACT_APP_BACKEND_URL as it's likely not needed with the nginx proxy setup.
+      # If direct calls are needed, it should point to the nginx proxy port.
+      # REACT_APP_BACKEND_URL: http://localhost:${FRONTEND_PORT} # Or remove entirely
+
+      # Make BACKEND_PORT available for envsubst in nginx.conf
+      BACKEND_PORT: ${BACKEND_PORT}
+    depends_on:
+      - backend
+    # Add this section to make host.docker.internal resolvable
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

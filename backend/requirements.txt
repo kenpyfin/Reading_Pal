@@ -1,0 +1,11 @@
+fastapi==0.110.0
+uvicorn[standard]
+python-dotenv
+httpx # For async HTTP requests, e.g., to PDF service
+requests # For synchronous HTTP requests, e.g., potentially DeepSeek API
+motor<3.0 # Use a version compatible with MongoDB 3.6 (e.g., 2.x)
+pydantic # For data validation and serialization
+anthropic # Anthropic LLM client
+ollama # Ollama LLM client
+google-generativeai # Google Gemini LLM client
+python-multipart # For handling file uploads in FastAPI
