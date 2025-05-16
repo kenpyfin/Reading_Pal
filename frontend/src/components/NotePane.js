@@ -185,7 +185,7 @@ const NotePane = ({ // Removed ref from props
 
   return (
     <div className="note-pane"> {/* Removed ref, root div of NotePane */}
-      <h2>Notes & LLM Insights</h2>
+      <h2>Notes &amp; LLM Insights</h2>
 
       {/* ADDED: Dedicated area for displaying selected text */}
       {selectedBookText && (
