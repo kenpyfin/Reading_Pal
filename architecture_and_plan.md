@@ -38,6 +38,7 @@ graph LR
     *   Manages synchronized scrolling between panes.
     *   Allows users to input notes and LLM prompts.
     *   Communicates with the Backend via REST APIs.
+    *   Provides UI controls on the BookList page for renaming and deleting books (appearing on hover, with user confirmations).
     *   **Relies on Nginx (running in the same container) to serve static files and proxy API requests.**
 *   **Backend (Python):**
     *   Acts as the central hub.
@@ -52,6 +53,8 @@ graph LR
         *   Upload PDFs.
         *   Fetch book content and metadata (including the markdown content string read from file, and image URLs derived from stored filenames).
         *   Fetch/Save/Update notes.
+        *   Rename books (updating metadata and renaming the corresponding markdown file).
+        *   Delete books (removing metadata, the markdown file, and all associated image files).
         *   Send prompts to LLM Services for reading assistance.
     *   Communicates with LLM Services (configured via `.env`) for reading assistance tasks (summaries, Q&A).
     *   Retrieves LLM responses and potentially stores them or sends them to the Frontend.
@@ -107,7 +110,7 @@ graph LR
 **5. Technology Stack**
 
 *   **Frontend:** React, HTML, CSS/JavaScript, **Nginx (for serving static files and proxying API)**
-*   **Backend:** Python (e.g., FastAPI or Flask), Requests library, PyMongo (MongoDB driver), **Relies on Nginx for static file serving**, **File system access for reading markdown files (via volume mounts)**
+*   **Backend:** Python (e.g., FastAPI or Flask), Requests library, PyMongo (MongoDB driver), **Relies on Nginx for static file serving**, **File system access for managing markdown and image files (reading, renaming, deleting via volume mounts).**
 *   **PDF Service:** Python (FastAPI), `magic_pdf`, LLM client library (Anthropic or Ollama)
 *   **Database:** MongoDB
 *   **Configuration:** `.env` files
@@ -121,6 +124,7 @@ graph LR
     *   **The Backend container and the Frontend (Nginx) container must have the `MARKDOWN_PATH` and `IMAGES_PATH` directories mounted as volumes to consistent paths (e.g., `/app/storage/markdown`, `/app/storage/images`).**
     *   **The Backend reads markdown files by joining its mounted `MARKDOWN_PATH` with the stored markdown filename.**
     *   **The Frontend's Nginx serves images statically by mapping the public `/images/` URL prefix to its mounted `IMAGES_PATH` using the stored image filenames.**
+*   **File Management for Book Operations:** Renaming a book involves renaming its markdown file on the file system. Deleting a book involves deleting its markdown file and all associated image files from the file system, in addition to removing the book's record from the database. These file operations must be handled robustly.
 *   **Dual LLM Usage:** Be mindful of the two distinct uses of LLMs: one within the PDF Service for internal reformatting, and one orchestrated by the Backend for user-facing reading assistance. They may use different providers/models. The Markdown reformatting LLM configuration is now flexible (Anthropic or Ollama).
 *   **PDF Service Communication:** The Backend needs to correctly format the request to the PDF Service's `/process-pdf` endpoint, including sending the file data **via multipart form data**.
 *   **Synchronization:** Implementing smooth and accurate synchronized scrolling between potentially different content types (Markdown vs. editable notes) is crucial. The implementation now includes saving **scroll_percentage** with notes and clicking notes to jump to location.
@@ -128,71 +132,3 @@ graph LR
 *   **Error Handling:** Robust error handling is needed for file uploads, PDF processing failures, LLM API errors, database issues, and **file system access errors when reading markdown**.
 
 ---
-
-# Reading Pal Application: Implementation Plan
-
-This plan outlines a phased approach to building the Reading Pal application based on the `pdr.md` requirements and the details from `pdf_service/app.py`.
-
-**Phase 1: Foundation & Setup**
-
-*   **Task 1.1:** Set up project repositories (Frontend, Backend, PDF Service - if separate repo).
-*   **Task 1.2:** Define and populate the `.env` file with necessary configurations (DB URI, API keys for *all* LLMs used, service URLs, absolute file paths for storage).
-*   **Task 1.3:** Set up the Backend project structure (Python environment, install dependencies like FastAPI/Flask, PyMongo, Requests).
-*   **Task 1.4:** Set up the Frontend project structure (React environment, install dependencies).
-*   **Task 1.5:** Verify MongoDB connection from the Backend. Implement a simple health check endpoint.
-*   **Task 1.6:** Set up basic logging configuration in the Backend.
-
-**Phase 2: PDF Processing Integration**
-
-*   **Task 2.1:** Ensure the PDF Service is runnable and accessible at the configured `PDF_CLIENT_URL`. Verify its `/process-pdf` endpoint is available.
-*   **Task 2.2:** Implement a Backend API endpoint (`POST /upload-pdf`) to receive PDF files from the Frontend.
-*   **Task 2.3:** Implement Backend logic to **forward the received PDF file data** to the PDF Service's `/process-pdf` endpoint using a library like `requests`.
-*   **Task 2.4:** Implement Backend logic to handle the response from the PDF Service, expecting the server-side markdown file path and a list of server-side image info (including paths and filenames).
-*   **Task 2.5:** Design the MongoDB schema for storing book metadata, the **filename** of the processed markdown file, and the **filenames** of the extracted images.
-*   **Task 2.6:** Implement Backend logic to save the processed book data (including the markdown **filename** and image **filenames**) into MongoDB.
-*   **Task 2.7:** Implement a Backend API endpoint (`GET /book/{book_id}`) to retrieve processed book data (markdown filename, image filenames) from MongoDB.
-*   **Task 2.8:** Implement Backend logic in the `/book/{book_id}` endpoint to **read the markdown content string from the file system using the stored filename and a configured base path**, and convert the retrieved server-side image **filenames** into public URLs (e.g., `/images/{filename}`) before returning the markdown content string and image URLs to the Frontend.
-*   **Task 2.9:** **Configure the Frontend's Nginx to implement a static file serving route** (e.g., `/images/{filename}`) that serves files directly from the configured `IMAGES_PATH` volume mount.
-*   **Task 2.10:** Implement a basic Frontend component for uploading PDF files and handling the response (e.g., navigating to the book view).
-*   **Task 2.11:** Implement a basic Frontend component to display Markdown content, ensuring it correctly uses the provided image URLs to load images from the Frontend's Nginx static route.
-
-**Phase 3: Reading & Note Taking UI**
-
-*   **Task 3.1:** Design and implement the dual-pane layout in the Frontend (Book Pane, Note Pane).
-*   **Task 3.2:** Integrate the Markdown display component into the Book Pane.
-*   **Task 3.3:** Implement a basic editable text area or rich text editor component for the Note Pane.
-*   **Task 3.4:** Implement Frontend logic for synchronized scrolling between the Book Pane and Note Pane based on scroll position or visible content. (This might require mapping content sections to note sections).
-*   **Task 3.5:** Design the MongoDB schema for storing notes (content, book ID, reference to book section/position, **scroll_percentage** location).
-*   **Task 3.6:** Implement Backend API endpoints for saving (`POST /notes`), fetching (`GET /notes/{book_id}`), and updating (`PUT /notes/{note_id}`) notes. Ensure the save endpoint accepts and stores the `scroll_percentage`.
-*   **Task 3.7:** Implement Frontend logic to capture the scroll percentage in the Book Pane when text is selected or a note is created, and send it along with the note data to the Backend API.
-*   **Task 3.8:** Implement Frontend logic to load and display existing notes for a given book.
-*   **Task 3.9:** Implement Frontend logic to make notes in the Note Pane clickable. When a note is clicked, if it has a stored `scroll_percentage`, trigger the Book Pane to scroll instantly to that position.
-
-**Phase 4: LLM Integration (Reading Assistance)**
-
-*   **Task 4.1:** Create a Python module/service in the Backend to abstract **Reading Assistance** LLM interactions (e.g., `llm_service.py`).
-*   **Task 4.2:** Implement logic within the Backend's LLM module to select the correct LLM provider based on `.env` configuration (`LLM_SERVICE`).
-*   **Task 4.3:** Implement functions within the Backend's LLM module for key operations (e.g., `summarize_text(text, context)`, `ask_question(prompt, context)`).
-*   **Task 4.4:** Implement Backend API endpoints to trigger **Reading Assistance** LLM operations (e.g., `POST /llm/summarize`, `POST /llm/ask`). These endpoints will receive text/prompts from the Frontend, retrieve the markdown **filename** from the stored book metadata, read the necessary context (surrounding text) from the markdown file (using the stored **filename** and a configured base path), and call the Backend's LLM module.
-*   **Task 4.5:** Implement Frontend UI elements (buttons, context menus) to allow users to select text and trigger **Reading Assistance** LLM actions.
-*   **Task 4.6:** Implement Frontend logic to send selected text/prompts to the Backend **Reading Assistance** LLM APIs.
-*   **Task 4.7:** Implement Frontend logic to receive LLM responses and display them, likely within the Note Pane or as temporary popups.
-*   **Task 4.8:** (Optional but recommended) Implement Backend logic to save **Reading Assistance** LLM interactions/responses as special types of notes in MongoDB.
-
-**Phase 5: Refinements & Additional Features**
-
-*   **Task 5.1:** Improve synchronized scrolling accuracy and robustness.
-*   **Task 5.2:** Implement note organization features (e.g., tagging, categorization).
-*   **Task 5.3:** Implement search functionality for book content (requires reading from markdown files) and notes.
-*   **Task 5.4:** Enhance UI/UX based on user feedback or design mockups.
-*   **Task 5.5:** Implement more sophisticated error handling and user feedback mechanisms in the Frontend and Backend.
-*   **Task 5.6:** Add input validation on API endpoints.
-
-**Phase 6: Testing & Deployment**
-
-*   **Task 6.1:** Write unit tests for Backend logic (API endpoints, database interactions, LLM module, static file serving, **markdown file reading**).
-*   **Task 6.2:** Write integration tests covering the flow from Frontend action -> Backend -> PDF Service -> Backend -> Database/File System -> Backend -> Frontend.
-*   **Task 6.3:** Perform manual testing of all features.
-*   **Task 6.4:** Set up deployment configurations and scripts for the Backend and Frontend applications, ensuring correct configuration of file paths and environment variables for both the Backend and the PDF Service, and ensuring the Backend has access to the shared file storage volumes.
-*   **Task 6.5:** Deploy the application to a staging or production environment.
-*   **Task 6.6:** Monitor application performance and logs.
