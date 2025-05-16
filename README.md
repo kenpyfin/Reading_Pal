@@ -49,7 +49,7 @@ This repository contains the code for the Reading Pal application, a tool for re
 ### Running the Application
 
 1.  Ensure your MongoDB instance is running and accessible from `host.docker.internal:27017`.
-2.  **Start the PDF Processing Service independently** in its required environment (e.g., `uvicorn pdf_service.app:app --host 0.0.0.0 --port 8502`). Ensure it is accessible at the `PDF_CLIENT_URL` specified in your `.env`.
+2.  **Start the PDF Processing Service independently** in its required environment (https://github.com/opendatalab/MinerU). Personally, I use Ananconda and install MinerU package. Ensure it is accessible at the `PDF_CLIENT_URL` specified in your `.env`.
 3.  Ensure the file storage directories exist on your host and the volume paths for the `backend` service in `docker-compose.yml` are correct and match the `IMAGES_PATH` in your `.env`.
 4.  Build and run the backend and frontend services using Docker Compose:
     ```bash
