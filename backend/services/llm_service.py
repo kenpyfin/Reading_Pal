@@ -23,7 +23,7 @@ logger.info(f"DEBUG: LLM_MODEL from os.getenv: '{os.getenv('LLM_MODEL')}'")
 
 
 LLM_SERVICE = os.getenv("LLM_SERVICE", "ollama")
-LLM_MODEL = os.getenv("LLM_MODEL", "deepseek-r2:14b")
+LLM_MODEL = os.getenv("LLM_MODEL", "deepseek-r1:14b")
 ollama_env_base_url = os.getenv("OLLAMA_API_BASE")
 
 
