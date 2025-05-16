@@ -16,6 +16,13 @@ The Reading Pal application aims to provide users with an efficient and engaging
   - **The backend stores these filenames in the database upon processing completion.**
   - **The backend reads the Markdown content from the file system using the stored filename and a configured base path (via volume mounts) when needed for the reading view.**
   - **The application serves the extracted images statically via a dedicated route (handled by Nginx in the frontend container) using the stored image filenames and a configured base path (via volume mounts).**
+  - **Book Management:**
+    - **Rename Book:** Users can rename books from the book list.
+      - The backend updates the book's `title` and `sanitized_title` in the database.
+      - The backend renames the corresponding Markdown file on the file system to match the new sanitized title.
+    - **Delete Book:** Users can delete books from the book list.
+      - The backend deletes the book's record from the database.
+      - The backend deletes the associated Markdown file and all extracted image files from the file system.
 - LLM-Powered Reading Assistance:
   - Integrated with LLM services to provide real-time insights, summaries, and interpretations of the book content.
   - Users can ask questions or request specific analyses of the text using natural language prompts.
@@ -44,6 +51,8 @@ The Reading Pal application aims to provide users with an efficient and engaging
 - Only use env files for global variable or configuration settings. Do not use a config file layer.
 - The pdf_service folder contains a pdf processing service that needs to run separately and integrate with this app. The backend of this app needs to connect with this service correctly, send the PDF, and receive the processed data (**Markdown file path**, image paths).
 - **The backend must implement logic to read the Markdown content from the file system using the stored filename and a configured base path (via volume mounts).**
+- **The backend includes API endpoints for renaming (`PUT /api/books/{book_id}/rename`) and deleting (`DELETE /api/books/{book_id}`) books. These operations include managing associated files (Markdown, images) on the file system.**
 - **The application must implement a static file server route to serve images from the designated storage path (handled by Nginx).**
 - **The Docker Compose setup uses `host` network mode, meaning services communicate via `localhost` or the host's IP and exposed ports, not internal Docker service names.**
+- **The frontend (BookList page) provides UI controls (e.g., buttons appearing on hover) for renaming and deleting books, with appropriate user confirmations.**
 
