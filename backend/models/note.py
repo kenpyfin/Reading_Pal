@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, BeforeValidator, ValidationError
+from pydantic import BaseModel, Field, BeforeValidator, ValidationError, ConfigDict
 from typing import Optional, Annotated, Any
 from datetime import datetime
 from bson import ObjectId
@@ -43,15 +43,15 @@ class Note(NoteBase):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
-    class Config:
+    model_config = ConfigDict(
         # Allow population by field name (id) or alias (_id)
-        populate_by_name = True
+        populate_by_name=True,
         # Allow arbitrary types (like ObjectId)
-        arbitrary_types_allowed = True
+        arbitrary_types_allowed=True,
         # Configure JSON encoding for ObjectId when serializing the model
-        json_encoders = {ObjectId: str}
+        json_encoders={ObjectId: str},
         # Example schema for documentation
-        json_schema_extra = {
+        json_schema_extra={
             "example": {
                 # Example should show string format for ObjectId as it appears in JSON
                 "_id": "60f1b0b3b3f3f3f3f3f3f3f3",
