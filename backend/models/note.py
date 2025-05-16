@@ -63,4 +63,4 @@ class Note(NoteBase):
                 "created_at": "2023-10-27T10:00:00.000Z",
                 "updated_at": "2023-10-27T10:00:00.000Z"
             }
-        }
+        })
