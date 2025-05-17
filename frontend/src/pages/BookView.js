@@ -67,13 +67,6 @@ function mapRenderedToRawOffset(renderedOffsetTarget, mdSegments) {
 
 function BookView() {
   const { bookId } = useParams();
-    return '';
-  }
-  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // $& means the whole matched string
-}
-
-function BookView() {
-  const { bookId } = useParams();
   const [bookData, setBookData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
