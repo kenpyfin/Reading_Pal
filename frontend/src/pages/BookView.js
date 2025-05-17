@@ -16,6 +16,62 @@ function escapeRegExp(string) {
   return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // $& means the whole matched string
 }
 
+// --- Helper function to segment Markdown ---
+function createMarkdownSegments(rawMd) {
+  const segments = [];
+  // Regex for images. Could be expanded for other syntax.
+  // Matches: ![alt text](url "title") or ![alt text](url) or ![](url)
+  const imageRegex = /(!\[(?:[^\]]*)\]\((?:[^\s\)]*)(?:\s"[^"]*")?\))/g;
+  let lastIdx = 0;
+  let matchResult;
+  while ((matchResult = imageRegex.exec(rawMd)) !== null) {
+    if (matchResult.index > lastIdx) {
+      segments.push({ type: 'text', rawContent: rawMd.substring(lastIdx, matchResult.index) });
+    }
+    segments.push({ type: 'image', rawContent: matchResult[0] }); // 'image' is a placeholder for 'syntax'
+    lastIdx = imageRegex.lastIndex;
+  }
+  if (lastIdx < rawMd.length) {
+    segments.push({ type: 'text', rawContent: rawMd.substring(lastIdx) });
+  }
+  return segments;
+}
+
+// --- Helper function for mapping rendered offset to raw offset ---
+function mapRenderedToRawOffset(renderedOffsetTarget, mdSegments) {
+  let currentRawOffset = 0;
+  let currentRenderedOffset = 0;
+
+  for (const segment of mdSegments) {
+    if (segment.type === 'text') {
+      // For text, its rendered length is its rawContent length.
+      const segmentRenderedLength = segment.rawContent.length;
+      if (currentRenderedOffset + segmentRenderedLength >= renderedOffsetTarget) {
+        // The target offset falls within this text segment.
+        // The amount into this segment is (renderedOffsetTarget - currentRenderedOffset).
+        return currentRawOffset + (renderedOffsetTarget - currentRenderedOffset);
+      }
+      currentRenderedOffset += segmentRenderedLength;
+      currentRawOffset += segment.rawContent.length; // Raw length is same as rendered for 'text' type
+    } else { // 'image' or other non-text syntax
+      // Non-text syntax (like an image tag) contributes to raw offset but not rendered text offset.
+      currentRawOffset += segment.rawContent.length;
+    }
+  }
+  // If renderedOffsetTarget is beyond the total rendered length of all segments (e.g., selection ends past all text),
+  // return the raw offset corresponding to the end of the last text segment encountered,
+  // or total raw length if no text segments.
+  // This effectively caps the mapping at the end of renderable text.
+  return currentRawOffset;
+}
+
+function BookView() {
+  const { bookId } = useParams();
+    return '';
+  }
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // $& means the whole matched string
+}
+
 function BookView() {
   const { bookId } = useParams();
   const [bookData, setBookData] = useState(null);
@@ -373,100 +429,157 @@ function BookView() {
   };
 
   const handleTextSelect = (textFromBookPane) => { // textFromBookPane is selection.toString()
-    setSelectedBookText(textFromBookPane); // Store the selected text as is
+    const selection = window.getSelection();
 
-    if (bookPaneContainerRef.current && textFromBookPane && textFromBookPane.trim() !== "") {
-      const selection = window.getSelection();
-      if (selection && selection.rangeCount > 0) {
-        const range = selection.getRangeAt(0);
-        const bookPaneElement = bookPaneContainerRef.current; // This is div.book-pane-container
-
-        let startInPage = -1;
-        const container = bookPaneContainerRef.current; 
-        
-        if (container) {
-            const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
-            let currentOffset = 0;
-            let textNode;
-            let selectionStartNode = range.startContainer;
-            let selectionStartOffset = range.startOffset;
-
-            if (selectionStartNode.nodeType !== Node.TEXT_NODE) {
-                let foundTextNode = false;
-                function findTextNodeRecursive(node, targetDomOffset) {
-                    let currentDomOffset = 0;
-                    for (let i = 0; i < node.childNodes.length; i++) {
-                        const childNode = node.childNodes[i];
-                        if (childNode.nodeType === Node.TEXT_NODE) {
-                            if (currentDomOffset + childNode.textContent.length >= targetDomOffset) {
-                                selectionStartNode = childNode;
-                                selectionStartOffset = targetDomOffset - currentDomOffset;
-                                foundTextNode = true;
-                                return true; 
-                            }
-                            currentDomOffset += childNode.textContent.length;
-                        } else if (childNode.nodeType === Node.ELEMENT_NODE) {
-                            if (findTextNodeRecursive(childNode, targetDomOffset - currentDomOffset)) {
-                                return true; 
-                            }
-                            currentDomOffset += childNode.textContent.length; 
-                        }
-                    }
-                    return false; 
-                }
-
-                if (range.startContainer.nodeType === Node.ELEMENT_NODE) {
-                    findTextNodeRecursive(range.startContainer, range.startOffset);
-                }
-                
-                if (!foundTextNode) {
-                    logger.warn("[BookView - handleTextSelect] Could not precisely map element selection to a text node. Offset might be less accurate.");
-                }
-            }
-
-
-            while ((textNode = walker.nextNode())) {
-                if (textNode === selectionStartNode) {
-                    startInPage = currentOffset + selectionStartOffset;
-                    break;
-                }
-                currentOffset += textNode.textContent.length;
-            }
-        }
-
-        logger.debug("[BookView - handleTextSelect] Selection Text:", `"${textFromBookPane}"`);
-        logger.debug("[BookView - handleTextSelect] Calculated startInPage (DOM Walker):", startInPage);
-
-        if (startInPage !== -1) {
-            const globalOffset = (currentPage - 1) * CHARACTERS_PER_PAGE + startInPage;
-            
-            const canonicalSelectedText = fullMarkdownContent.current.substring(globalOffset, globalOffset + textFromBookPane.length);
-            
-            setSelectedBookText(canonicalSelectedText); 
-            setSelectedGlobalCharOffset(globalOffset);
-            logger.debug("[BookView - handleTextSelect] Successfully calculated: globalOffset:", globalOffset);
-            logger.debug("[BookView - handleTextSelect] canonicalSelectedText (length " + canonicalSelectedText.length + "):", `"${canonicalSelectedText}"`);
-            
-            const element = bookPaneContainerRef.current; 
-            if (element.scrollHeight > element.clientHeight) {
-                const pageScrollPercentage = element.scrollTop / (element.scrollHeight - element.clientHeight);
-                setSelectedScrollPercentage(pageScrollPercentage);
-            } else {
-                setSelectedScrollPercentage(0);
-            }
-        } else {
-            logger.warn("[BookView - handleTextSelect] DOM Walker failed to find selection start. Note location data (global offset) will not be set. Selected text will still be available for LLM.");
-            setSelectedBookText(textFromBookPane); 
-            setSelectedGlobalCharOffset(null);
-            setSelectedScrollPercentage(null);
-        }
-      } else {
-        setSelectedBookText(null);
-        setSelectedGlobalCharOffset(null);
-        setSelectedScrollPercentage(null);
-      }
-    } else {
+    if (!textFromBookPane || textFromBookPane.trim() === "" || !selection || selection.rangeCount === 0 || !bookPaneContainerRef.current) {
       setSelectedBookText(null);
+      setSelectedGlobalCharOffset(null);
+      setSelectedScrollPercentage(null);
+      return;
+    }
+
+    const range = selection.getRangeAt(0);
+    const pageContainerElement = bookPaneContainerRef.current;
+
+    let selStartNode = range.startContainer;
+    let selStartOffset = range.startOffset;
+    let selEndNode = range.endContainer;
+    let selEndOffset = range.endOffset;
+
+    // Helper to find the actual text node and offset if selection is on an element node
+    function resolveToTextNode(containerNode, offsetInContainer) {
+        if (containerNode.nodeType === Node.TEXT_NODE) {
+            return { node: containerNode, offset: offsetInContainer };
+        }
+        // If selection is on an element, offsetInContainer is the index of the child node
+        let cumulativeOffset = 0;
+        let targetNode = containerNode;
+        let targetOffset = 0;
+
+        if (offsetInContainer < containerNode.childNodes.length) {
+            targetNode = containerNode.childNodes[offsetInContainer];
+            // Traverse down to the first text node
+            while(targetNode && targetNode.nodeType !== Node.TEXT_NODE && targetNode.firstChild) {
+                targetNode = targetNode.firstChild;
+            }
+            if (targetNode && targetNode.nodeType === Node.TEXT_NODE) {
+                 targetOffset = 0; // Selection is at the start of this text node
+            } else {
+                // Fallback or complex case: try to find nearest text node or use parent
+                logger.warn("[BookView - handleTextSelect] Complex selection boundary, could not resolve directly to text node start.");
+                targetNode = containerNode; // Fallback to container
+                targetOffset = 0;
+            }
+        } else if (containerNode.childNodes.length > 0) {
+             // Selection is at the end of the container
+            targetNode = containerNode.childNodes[containerNode.childNodes.length -1];
+             // Traverse down to the last text node
+            while(targetNode && targetNode.nodeType !== Node.TEXT_NODE && targetNode.lastChild) {
+                targetNode = targetNode.lastChild;
+            }
+            if (targetNode && targetNode.nodeType === Node.TEXT_NODE) {
+                targetOffset = targetNode.textContent.length; // Selection is at the end of this text node
+            } else {
+                logger.warn("[BookView - handleTextSelect] Complex selection boundary, could not resolve directly to text node end.");
+                targetNode = containerNode; // Fallback to container
+                targetOffset = containerNode.textContent.length;
+            }
+        }
+        return { node: targetNode, offset: targetOffset };
+    }
+
+    const startDetails = resolveToTextNode(selStartNode, selStartOffset);
+    selStartNode = startDetails.node;
+    selStartOffset = startDetails.offset;
+
+    const endDetails = resolveToTextNode(selEndNode, selEndOffset);
+    selEndNode = endDetails.node;
+    selEndOffset = endDetails.offset;
+    
+    logger.debug(`[BookView - handleTextSelect] Resolved Selection: StartNode:`, selStartNode, `StartOffset: ${selStartOffset}, EndNode:`, selEndNode, `EndOffset: ${selEndOffset}`);
+
+    let startInPageRendered = -1;
+    let endInPageRendered = -1;
+
+    const walker = document.createTreeWalker(pageContainerElement, NodeFilter.SHOW_TEXT, null);
+    let currentWalkerOffset = 0;
+    let node;
+    let foundStart = false;
+
+    while ((node = walker.nextNode())) {
+      const nodeLength = node.textContent.length;
+      if (!foundStart && node === selStartNode) {
+        startInPageRendered = currentWalkerOffset + selStartOffset;
+        foundStart = true;
+        // If selection is within this single node
+        if (node === selEndNode) {
+          endInPageRendered = currentWalkerOffset + selEndOffset;
+          break; 
+        }
+      } else if (foundStart && node === selEndNode) {
+        endInPageRendered = currentWalkerOffset + selEndOffset;
+        break; 
+      }
+      currentWalkerOffset += nodeLength;
+    }
+    
+    // If endInPageRendered is still -1 (e.g. selection spans to the very end of content)
+    // and start was found, it implies the selection might go to the end of the last text node encountered by the walker.
+    // Or if selection was empty and start/end are same point.
+    if (startInPageRendered !== -1 && endInPageRendered === -1) {
+        if (selStartNode === selEndNode && selStartOffset === selEndOffset) { // Empty selection at a point
+            endInPageRendered = startInPageRendered;
+        } else {
+            // This might happen if selEndNode was not encountered or other edge cases.
+            // A fallback: use the length of the visually selected text.
+            logger.warn("[BookView - handleTextSelect] endInPageRendered not precisely determined by walker, using textFromBookPane.length as delta.");
+            endInPageRendered = startInPageRendered + textFromBookPane.length;
+        }
+    }
+
+
+    logger.debug(`[BookView - handleTextSelect] Calculated Rendered Offsets: startInPageRendered: ${startInPageRendered}, endInPageRendered: ${endInPageRendered}`);
+
+    if (startInPageRendered !== -1 && endInPageRendered !== -1 && endInPageRendered >= startInPageRendered) {
+      const rawMarkdownForPage = currentPageContent; // This is the raw Markdown for the current page
+      const mdSegments = createMarkdownSegments(rawMarkdownForPage);
+      logger.debug("[BookView - handleTextSelect] Markdown Segments for page:", mdSegments);
+
+      const mappedStartInRawPage = mapRenderedToRawOffset(startInPageRendered, mdSegments);
+      const mappedEndInRawPage = mapRenderedToRawOffset(endInPageRendered, mdSegments);
+      logger.debug(`[BookView - handleTextSelect] Mapped Raw Offsets in Page: Start: ${mappedStartInRawPage}, End: ${mappedEndInRawPage}`);
+
+
+      if (mappedStartInRawPage !== -1 && mappedEndInRawPage !== -1 && mappedEndInRawPage >= mappedStartInRawPage) {
+        const globalOffset = (currentPage - 1) * CHARACTERS_PER_PAGE + mappedStartInRawPage;
+        const selectionLengthInRaw = mappedEndInRawPage - mappedStartInRawPage;
+        
+        const canonicalSelectedText = fullMarkdownContent.current.substring(globalOffset, globalOffset + selectionLengthInRaw);
+        
+        setSelectedBookText(canonicalSelectedText);
+        setSelectedGlobalCharOffset(globalOffset);
+        logger.debug(`[BookView - handleTextSelect] Final Mapped: globalOffset: ${globalOffset}, rawLength: ${selectionLengthInRaw}`);
+        logger.debug(`[BookView - handleTextSelect] Canonical text (raw): "${canonicalSelectedText.substring(0,100)}..."`);
+
+      } else {
+        logger.warn("[BookView - handleTextSelect] Failed to map rendered selection to raw markdown offsets or invalid range. Using visual selection and heuristic offset.");
+        setSelectedBookText(textFromBookPane); 
+        const fallbackGlobalOffset = (currentPage - 1) * CHARACTERS_PER_PAGE + startInPageRendered; // Old heuristic
+        setSelectedGlobalCharOffset(fallbackGlobalOffset);
+      }
+
+      // Scroll percentage logic (remains as is)
+      const element = bookPaneContainerRef.current;
+      if (element && element.scrollHeight > element.clientHeight) {
+        const pageScrollPercentage = element.scrollTop / (element.scrollHeight - element.clientHeight);
+        setSelectedScrollPercentage(pageScrollPercentage);
+      } else {
+        setSelectedScrollPercentage(0);
+      }
+
+    } else {
+      logger.warn("[BookView - handleTextSelect] Could not determine valid start/end in page rendered text. Storing visual selection only.");
+      setSelectedBookText(textFromBookPane);
       setSelectedGlobalCharOffset(null);
       setSelectedScrollPercentage(null);
     }
