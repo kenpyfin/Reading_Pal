@@ -44,24 +44,70 @@ function mapRenderedToRawOffset(renderedOffsetTarget, mdSegments) {
 
   for (const segment of mdSegments) {
     if (segment.type === 'text') {
-      // For text, its rendered length is its rawContent length.
-      const segmentRenderedLength = segment.rawContent.length;
-      if (currentRenderedOffset + segmentRenderedLength >= renderedOffsetTarget) {
-        // The target offset falls within this text segment.
-        // The amount into this segment is (renderedOffsetTarget - currentRenderedOffset).
-        return currentRawOffset + (renderedOffsetTarget - currentRenderedOffset);
+      // Heuristic: approximate rendered length by collapsing whitespace.
+      // This won't handle HTML entities perfectly but is better for whitespace.
+      let approxRenderedLength = 0;
+      let inSpaceSequence = false;
+      for (let i = 0; i < segment.rawContent.length; i++) {
+        if (/\s/.test(segment.rawContent[i])) {
+          if (!inSpaceSequence) {
+            approxRenderedLength++;
+          }
+          inSpaceSequence = true;
+        } else {
+          approxRenderedLength++;
+          inSpaceSequence = false;
+        }
       }
-      currentRenderedOffset += segmentRenderedLength;
-      currentRawOffset += segment.rawContent.length; // Raw length is same as rendered for 'text' type
-    } else { // 'image' or other non-text syntax
-      // Non-text syntax (like an image tag) contributes to raw offset but not rendered text offset.
+      // logger.debug(`[mapRenderedToRawOffset] Segment: "${segment.rawContent.substring(0,20)}...", rawLen: ${segment.rawContent.length}, approxRenderedLen: ${approxRenderedLength}`);
+
+
+      if (currentRenderedOffset + approxRenderedLength >= renderedOffsetTarget) {
+        // The target rendered offset falls within this text segment.
+        // We need to find how many raw characters correspond to 
+        // (renderedOffsetTarget - currentRenderedOffset) rendered characters in this segment.
+        let rawCharsInSegmentToCount = 0;
+        let renderedCharsCountedInSegment = 0;
+        inSpaceSequence = false; // Reset for this loop
+        const targetRenderedCharsInThisSegment = renderedOffsetTarget - currentRenderedOffset;
+
+        for (let k = 0; k < segment.rawContent.length; k++) {
+          rawCharsInSegmentToCount++; // Count this raw character
+          const charIsSpace = /\s/.test(segment.rawContent[k]);
+
+          if (charIsSpace) {
+            if (!inSpaceSequence) {
+              renderedCharsCountedInSegment++;
+            }
+            inSpaceSequence = true;
+          } else {
+            renderedCharsCountedInSegment++;
+            inSpaceSequence = false;
+          }
+
+          if (renderedCharsCountedInSegment >= targetRenderedCharsInThisSegment) {
+            // We've counted enough rendered characters.
+            // The number of raw characters to achieve this is rawCharsInSegmentToCount.
+            break;
+          }
+        }
+        // logger.debug(`[mapRenderedToRawOffset] Target in segment: ${targetRenderedCharsInThisSegment} rendered. Counted ${rawCharsInSegmentToCount} raw chars.`);
+        return currentRawOffset + rawCharsInSegmentToCount;
+      }
+
+      // Target is beyond this segment
+      currentRenderedOffset += approxRenderedLength;
+      currentRawOffset += segment.rawContent.length;
+
+    } else { // 'image' or other non-text syntax (e.g., HTML comments if not stripped)
+      // These contribute to raw offset but not to rendered text offset for selection purposes.
       currentRawOffset += segment.rawContent.length;
     }
   }
-  // If renderedOffsetTarget is beyond the total rendered length of all segments (e.g., selection ends past all text),
-  // return the raw offset corresponding to the end of the last text segment encountered,
-  // or total raw length if no text segments.
-  // This effectively caps the mapping at the end of renderable text.
+
+  // If renderedOffsetTarget was beyond all renderable text, return the total raw offset.
+  // This might happen if selection tries to go past the actual text.
+  // logger.debug(`[mapRenderedToRawOffset] Target ${renderedOffsetTarget} beyond total approx rendered length. Returning total raw offset ${currentRawOffset}.`);
   return currentRawOffset;
 }
 
