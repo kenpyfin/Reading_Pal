@@ -19,7 +19,7 @@ const BookPane = forwardRef(({ markdownContent, imageUrls, onTextSelect }, ref) 
 
   const handleMouseUp = () => {
     const selection = window.getSelection();
-    const selectedText = selection.toString().trim();
+    const selectedText = selection.toString(); // Removed .trim()
     if (onTextSelect) {
       onTextSelect(selectedText.length > 0 ? selectedText : null);
     }
