@@ -19,8 +19,64 @@ const BookPane = forwardRef(({ markdownContent, imageUrls, onTextSelect }, ref) 
 
   const handleMouseUp = () => {
     const selection = window.getSelection();
-    const selectedText = selection.toString(); // Removed .trim()
+
+    if (!selection || selection.rangeCount === 0) {
+      if (onTextSelect) {
+        onTextSelect(null);
+      }
+      return;
+    }
+    
+    // If selection is collapsed (caret, no actual range), treat as no selection for snapping.
+    // BookView's handleTextSelect already checks for empty/trimmed empty text.
+    // However, if it's collapsed, we should explicitly send null to clear BookView's state.
+    if (selection.isCollapsed) {
+      if (onTextSelect) {
+        onTextSelect(null);
+      }
+      return;
+    }
+
+    // Get a clone of the user's original selection range.
+    const originalRange = selection.getRangeAt(0).cloneRange();
+
+    // 1. Snap the start of the selection to the beginning of its word.
+    // Collapse the selection to its starting point.
+    selection.collapse(originalRange.startContainer, originalRange.startOffset);
+    // Move the caret to the beginning of the word at or before the collapsed point.
+    selection.modify('move', 'backward', 'word');
+    // Extend the selection one word forward to select the entire word.
+    selection.modify('extend', 'forward', 'word');
+    // Clone the range of this "start word".
+    const startWordRange = selection.getRangeAt(0).cloneRange();
+
+    // 2. Snap the end of the selection to the end of its word.
+    // Collapse the selection to its original ending point.
+    selection.collapse(originalRange.endContainer, originalRange.endOffset);
+    // Move the caret to the beginning of the word at or before this point.
+    selection.modify('move', 'backward', 'word');
+    // Extend the selection one word forward to select the entire word.
+    selection.modify('extend', 'forward', 'word');
+    // Clone the range of this "end word".
+    const endWordRange = selection.getRangeAt(0).cloneRange();
+
+    // 3. Create a new range from the start of the startWordRange to the end of the endWordRange.
+    // This ensures the selection spans full words from the beginning to the end of the user's intended area.
+    const finalSnapRange = document.createRange();
+    finalSnapRange.setStart(startWordRange.startContainer, startWordRange.startOffset);
+    finalSnapRange.setEnd(endWordRange.endContainer, endWordRange.endOffset);
+
+    // 4. Apply this new, snapped range to the document's selection.
+    selection.removeAllRanges();
+    selection.addRange(finalSnapRange);
+
+    // Get the text content from the modified (snapped) selection.
+    const selectedText = selection.toString();
+
     if (onTextSelect) {
+      // Pass the snapped selected text to the parent (BookView).
+      // If snapping results in an empty string (e.g., if original selection was only whitespace between words),
+      // send null.
       onTextSelect(selectedText.length > 0 ? selectedText : null);
     }
   };
