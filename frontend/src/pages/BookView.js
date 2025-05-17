@@ -16,6 +16,21 @@ function escapeRegExp(string) {
   return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // $& means the whole matched string
 }
 
+// Helper to decode HTML entities (basic version)
+function decodeHtmlEntities(text) {
+  if (typeof text !== 'string' || !text) return ''; // Handle empty or non-string input
+  try {
+    const element = document.createElement('textarea');
+    element.innerHTML = text;
+    return element.value;
+  } catch (e) {
+    // Fallback for environments where DOM might not be fully available (less likely in React frontend)
+    // or if innerHTML assignment fails for some reason.
+    logger.error("[decodeHtmlEntities] Error decoding text:", text, e);
+    return text; // Return original text on error
+  }
+}
+
 // --- Helper function to segment Markdown ---
 function createMarkdownSegments(rawMd) {
   const segments = [];
@@ -41,73 +56,91 @@ function createMarkdownSegments(rawMd) {
 function mapRenderedToRawOffset(renderedOffsetTarget, mdSegments) {
   let currentRawOffset = 0;
   let currentRenderedOffset = 0;
+  // For debugging:
+  let totalApproxRenderedLengthOfSegments = 0;
+  mdSegments.filter(s => s.type === 'text').forEach(s => {
+      const decodedContent = decodeHtmlEntities(s.rawContent);
+      let approxLen = 0; let inSpace = false;
+      for (let i = 0; i < decodedContent.length; i++) {
+          if (/\s/.test(decodedContent[i])) { if (!inSpace) approxLen++; inSpace = true; }
+          else { approxLen++; inSpace = false; }
+      }
+      totalApproxRenderedLengthOfSegments += approxLen;
+  });
+  logger.debug(`[mapRenderedToRawOffset] Target Rendered Offset: ${renderedOffsetTarget}. Total approx rendered length of all text segments (after decoding + collapse): ${totalApproxRenderedLengthOfSegments}`);
 
   for (const segment of mdSegments) {
     if (segment.type === 'text') {
-      // Heuristic: approximate rendered length by collapsing whitespace.
-      // This won't handle HTML entities perfectly but is better for whitespace.
-      let approxRenderedLength = 0;
-      let inSpaceSequence = false;
-      for (let i = 0; i < segment.rawContent.length; i++) {
-        if (/\s/.test(segment.rawContent[i])) {
-          if (!inSpaceSequence) {
-            approxRenderedLength++;
-          }
-          inSpaceSequence = true;
+      const rawContentOfSegment = segment.rawContent;
+      const decodedContent = decodeHtmlEntities(rawContentOfSegment);
+
+      let approxRenderedLengthOfDecoded = 0;
+      let inSpaceSequenceOuter = false;
+      for (let i = 0; i < decodedContent.length; i++) {
+        if (/\s/.test(decodedContent[i])) {
+          if (!inSpaceSequenceOuter) approxRenderedLengthOfDecoded++;
+          inSpaceSequenceOuter = true;
         } else {
-          approxRenderedLength++;
-          inSpaceSequence = false;
+          approxRenderedLengthOfDecoded++;
+          inSpaceSequenceOuter = false;
         }
       }
-      // logger.debug(`[mapRenderedToRawOffset] Segment: "${segment.rawContent.substring(0,20)}...", rawLen: ${segment.rawContent.length}, approxRenderedLen: ${approxRenderedLength}`);
+      logger.debug(`[mapRenderedToRawOffset] Processing TEXT segment. Raw len: ${rawContentOfSegment.length}, Decoded len: ${decodedContent.length}, ApproxRenderedLenOfDecoded: ${approxRenderedLengthOfDecoded}. currentRenderedOffset: ${currentRenderedOffset}, currentRawOffset: ${currentRawOffset}. Raw (start): "${rawContentOfSegment.substring(0, 30)}", Decoded (start): "${decodedContent.substring(0,30)}"`);
 
+      if (currentRenderedOffset + approxRenderedLengthOfDecoded >= renderedOffsetTarget) {
+        // Target falls within this segment
+        let renderedCharsCountedInDecodedSegment = 0;
+        let inSpaceSequenceInner = false;
+        const targetRenderedCharsInThisDecodedSegment = renderedOffsetTarget - currentRenderedOffset;
 
-      if (currentRenderedOffset + approxRenderedLength >= renderedOffsetTarget) {
-        // The target rendered offset falls within this text segment.
-        // We need to find how many raw characters correspond to 
-        // (renderedOffsetTarget - currentRenderedOffset) rendered characters in this segment.
-        let rawCharsInSegmentToCount = 0;
-        let renderedCharsCountedInSegment = 0;
-        inSpaceSequence = false; // Reset for this loop
-        const targetRenderedCharsInThisSegment = renderedOffsetTarget - currentRenderedOffset;
+        if (targetRenderedCharsInThisDecodedSegment <= 0) {
+          logger.debug(`[mapRenderedToRawOffset] Target ${targetRenderedCharsInThisDecodedSegment} is <=0 for this segment. Returning currentRawOffset ${currentRawOffset}.`);
+          return currentRawOffset; // Selection starts at or before this segment's rendered content
+        }
 
-        for (let k = 0; k < segment.rawContent.length; k++) {
-          rawCharsInSegmentToCount++; // Count this raw character
-          const charIsSpace = /\s/.test(segment.rawContent[k]);
-
+        let k_decoded = 0;
+        for (k_decoded = 0; k_decoded < decodedContent.length; k_decoded++) {
+          const charIsSpace = /\s/.test(decodedContent[k_decoded]);
           if (charIsSpace) {
-            if (!inSpaceSequence) {
-              renderedCharsCountedInSegment++;
-            }
-            inSpaceSequence = true;
+            if (!inSpaceSequenceInner) renderedCharsCountedInDecodedSegment++;
+            inSpaceSequenceInner = true;
           } else {
-            renderedCharsCountedInSegment++;
-            inSpaceSequence = false;
+            renderedCharsCountedInDecodedSegment++;
+            inSpaceSequenceInner = false;
           }
 
-          if (renderedCharsCountedInSegment >= targetRenderedCharsInThisSegment) {
-            // We've counted enough rendered characters.
-            // The number of raw characters to achieve this is rawCharsInSegmentToCount.
-            break;
+          if (renderedCharsCountedInDecodedSegment >= targetRenderedCharsInThisDecodedSegment) {
+            // We've found the target in terms of decoded+collapsed characters.
+            // `k_decoded + 1` is the length of the prefix of `decodedContent` (before collapse) that covers the target.
+            // Estimate corresponding raw length:
+            let estimatedRawChars;
+            if (decodedContent.length === 0) { // Avoid division by zero if decoded content is empty
+                estimatedRawChars = 0;
+            } else {
+                const proportionOfDecoded = (k_decoded + 1) / decodedContent.length;
+                estimatedRawChars = Math.round(proportionOfDecoded * rawContentOfSegment.length);
+            }
+            logger.debug(`[mapRenderedToRawOffset] Target met in segment. Decoded prefix len: ${k_decoded + 1}, Rendered chars covered: ${renderedCharsCountedInDecodedSegment}. Estimated raw chars for this part: ${estimatedRawChars}. Returning: ${currentRawOffset + estimatedRawChars}`);
+            return currentRawOffset + estimatedRawChars;
           }
         }
-        // logger.debug(`[mapRenderedToRawOffset] Target in segment: ${targetRenderedCharsInThisSegment} rendered. Counted ${rawCharsInSegmentToCount} raw chars.`);
-        return currentRawOffset + rawCharsInSegmentToCount;
+        // If loop finishes, it means all of decodedContent was consumed to attempt to meet the target.
+        // This implies the target was at or beyond the end of this segment's rendered content.
+        logger.debug(`[mapRenderedToRawOffset] Inner loop completed for segment. All decoded chars consumed. Adding full raw length of segment: ${rawContentOfSegment.length}. Returning: ${currentRawOffset + rawContentOfSegment.length}`);
+        return currentRawOffset + rawContentOfSegment.length; // Add full raw length of this segment
       }
 
       // Target is beyond this segment
-      currentRenderedOffset += approxRenderedLength;
-      currentRawOffset += segment.rawContent.length;
+      currentRenderedOffset += approxRenderedLengthOfDecoded;
+      currentRawOffset += rawContentOfSegment.length; // Always use full raw length for raw offset accumulation
 
-    } else { // 'image' or other non-text syntax (e.g., HTML comments if not stripped)
-      // These contribute to raw offset but not to rendered text offset for selection purposes.
+    } else { // 'image' or other non-text syntax
+      logger.debug(`[mapRenderedToRawOffset] Processing IMAGE segment. Raw len: ${segment.rawContent.length}. currentRawOffset before add: ${currentRawOffset}. Content: "${segment.rawContent.substring(0, 30)}"`);
       currentRawOffset += segment.rawContent.length;
     }
   }
 
-  // If renderedOffsetTarget was beyond all renderable text, return the total raw offset.
-  // This might happen if selection tries to go past the actual text.
-  // logger.debug(`[mapRenderedToRawOffset] Target ${renderedOffsetTarget} beyond total approx rendered length. Returning total raw offset ${currentRawOffset}.`);
+  logger.debug(`[mapRenderedToRawOffset] Target ${renderedOffsetTarget} beyond all segments. currentRenderedOffset: ${currentRenderedOffset}. Returning total accumulated raw offset ${currentRawOffset}.`);
   return currentRawOffset;
 }
 
