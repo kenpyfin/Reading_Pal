@@ -270,6 +270,7 @@ function BookView() {
   const initialBookPaneWidthPx = useRef(0);
 
   const [showManageBookmarksModal, setShowManageBookmarksModal] = useState(false); // ADD THIS STATE
+  const [isNotePaneVisible, setIsNotePaneVisible] = useState(true); // ADD THIS LINE
 
 
   const fetchBook = async () => {
@@ -1298,6 +1299,10 @@ function BookView() {
     }
   };
 
+  const toggleNotePaneVisibility = () => { // ADD THIS FUNCTION
+    setIsNotePaneVisible(prev => !prev);
+  };
+
   if (loading) return <div style={{ padding: '20px' }}>Loading book...</div>;
   if (error) return <div style={{ padding: '20px', color: 'red' }}>Error loading book: {error}</div>;
   if (!bookData) {
@@ -1398,10 +1403,10 @@ function BookView() {
 
         {/* Book Pane Area */}
         <div 
-          className="book-pane-area" 
+          className="book-pane-area"
           ref={bookPaneAreaRef} // Ref for the resizable area
-          style={{ 
-            flexBasis: bookPaneFlexBasis,
+          style={{
+            flexBasis: isNotePaneVisible ? bookPaneFlexBasis : '100%', // ADJUST THIS LINE
             flexShrink: 0, // Prevent shrinking beyond flex-basis
             display: 'flex', // To make its child (.book-pane-wrapper) fill it
             flexDirection: 'column',
@@ -1441,6 +1446,10 @@ function BookView() {
               <button onClick={() => setShowManageBookmarksModal(true)} className="control-button">
                 Manage Bookmarks
               </button>
+              {/* ADD THE TOGGLE NOTE PANE BUTTON HERE */}
+              <button onClick={toggleNotePaneVisibility} className="control-button" style={{ marginLeft: '10px' }}>
+                {isNotePaneVisible ? 'Hide Notes' : 'Show Notes'}
+              </button>
             </div>
 
             <div className="book-pane-container" ref={bookPaneContainerRef}> {/* Ref for scrollable content */}
@@ -1474,13 +1483,16 @@ function BookView() {
           </div>
         </div>
 
-        {/* Resizer Handle */}
-        <div className="resizer-handle" onMouseDown={handleMouseDownOnResizer}></div>
+        {/* Resizer Handle - Conditionally Render */}
+        {isNotePaneVisible && ( // ADD THIS CONDITION
+          <div className="resizer-handle" onMouseDown={handleMouseDownOnResizer}></div>
+        )}
 
-        {/* New wrapper for note pane area to control its flex properties */}
-        <div 
-          className="note-pane-area"
-          style={{
+        {/* New wrapper for note pane area to control its flex properties - Conditionally Render */}
+        {isNotePaneVisible && ( // ADD THIS CONDITION
+          <div
+            className="note-pane-area"
+            style={{
             flexGrow: 1,
             flexShrink: 1,
             flexBasis: '0%', // Allow it to grow into remaining space
@@ -1503,6 +1515,7 @@ function BookView() {
             </div>
           </div>
         </div>
+        )}
     </div>
   );
 }
