@@ -459,23 +459,20 @@ function BookView() {
 
   // Effect for handling pagination logic AND highlighting when bookData, currentPage, or notes change
   useEffect(() => {
-    logger.debug("[BookView - Highlighting Effect] Running. Current Page:", currentPage, "Notes count:", notes.length, "PendingScrollOffsetInPage:", pendingScrollOffsetInPage, "PendingScrollToPercentage:", pendingScrollToPercentage, "PageBoundaries Length:", pageBoundaries.length);
+    logger.debug("[BookView - Page Content Effect] Running. Current Page:", currentPage, "Notes count:", notes.length, "PendingScrollOffsetInPage:", pendingScrollOffsetInPage, "PendingScrollToPercentage:", pendingScrollToPercentage, "PageBoundaries Length:", pageBoundaries.length);
     if (fullMarkdownContent.current && pageBoundaries.length > 0) { // Check pageBoundaries
-      // const totalChars = fullMarkdownContent.current.length; // Not needed directly for page content
-      // const numPages = Math.max(1, Math.ceil(totalChars / APPROX_CHARS_PER_PAGE)); // Old calculation
       const numPages = totalPages; // Use totalPages from state (derived from pageBoundaries)
 
       const validCurrentPage = Math.max(1, Math.min(currentPage, numPages || 1));
       if (currentPage !== validCurrentPage) {
-        logger.warn(`[BookView - Highlighting Effect] currentPage ${currentPage} was invalid for numPages ${numPages}. Setting to ${validCurrentPage}`);
+        logger.warn(`[BookView - Page Content Effect] currentPage ${currentPage} was invalid for numPages ${numPages}. Setting to ${validCurrentPage}`);
         setCurrentPage(validCurrentPage); 
         return; 
       }
       
-      // Get page offsets from pre-calculated boundaries
       const pageIndex = validCurrentPage - 1;
       if (pageIndex < 0 || pageIndex >= pageBoundaries.length) {
-          logger.error(`[BookView - Highlighting Effect] Invalid pageIndex ${pageIndex} for pageBoundaries length ${pageBoundaries.length}. CurrentPage: ${currentPage}`);
+          logger.error(`[BookView - Page Content Effect] Invalid pageIndex ${pageIndex} for pageBoundaries length ${pageBoundaries.length}. CurrentPage: ${currentPage}`);
           setHighlightedPageContent("Error: Page data not found.");
           setCurrentPageContent("");
           return;
@@ -484,87 +481,36 @@ function BookView() {
       
       const plainPageText = fullMarkdownContent.current.substring(pageStartGlobalOffset, pageEndGlobalOffset);
       setCurrentPageContent(plainPageText); 
-      logger.debug(`[BookView - Highlighting Effect] Page ${validCurrentPage}: Global Offset [${pageStartGlobalOffset}-${pageEndGlobalOffset}]. Plain text (len: ${plainPageText.length}): "${plainPageText.substring(0, 100)}..."`);
+      logger.debug(`[BookView - Page Content Effect] Page ${validCurrentPage}: Global Offset [${pageStartGlobalOffset}-${pageEndGlobalOffset}]. Plain text (len: ${plainPageText.length}): "${plainPageText.substring(0, 100)}..."`);
 
-      // Apply highlighting (existing logic for notes)
-      if (notes && notes.length > 0) {
-        const relevantNotes = notes
-          .filter(note => {
-            if (note.global_character_offset === undefined || note.global_character_offset === null || !note.source_text || note.source_text.length === 0) {
-              return false;
-            }
-            const noteStartGlobal = note.global_character_offset;
-            const noteEndGlobal = noteStartGlobal + note.source_text.length;
-            // Check for overlap between note's global range and current page's global range
-            const overlaps = Math.max(pageStartGlobalOffset, noteStartGlobal) < Math.min(pageEndGlobalOffset, noteEndGlobal);
-            return overlaps;
-          })
-          .sort((a, b) => a.global_character_offset - b.global_character_offset);
-        
-        let newHighlightedString = "";
-        let lastProcessedIndexInPage = 0; // This is an offset within plainPageText
-
-        relevantNotes.forEach(note => {
-          const noteStartGlobal = note.global_character_offset;
-          const noteLength = note.source_text.length; 
-          
-          // Convert note's global start offset to an offset relative to the current page's content
-          let noteStartInPage = noteStartGlobal - pageStartGlobalOffset;
-          
-          // Ensure actualSegmentStartInPage is not negative if note starts before current page content
-          const actualSegmentStartInPage = Math.max(0, noteStartInPage); 
-          
-          if (actualSegmentStartInPage > lastProcessedIndexInPage) {
-            newHighlightedString += plainPageText.substring(lastProcessedIndexInPage, actualSegmentStartInPage);
-          }
-          
-          // Determine the portion of the note that is visible on this page
-          const highlightSegmentStartOnPage = Math.max(0, noteStartInPage); // Start of highlight within plainPageText
-          const highlightSegmentEndOnPage = Math.min(noteStartInPage + noteLength, plainPageText.length); // End of highlight within plainPageText
-          
-          if (highlightSegmentStartOnPage < highlightSegmentEndOnPage) { // If there's anything to highlight
-            const textToHighlight = plainPageText.substring(highlightSegmentStartOnPage, highlightSegmentEndOnPage);
-            newHighlightedString += `<span class="highlighted-note-text" data-note-id="${note.id}">${textToHighlight}</span>`;
-            lastProcessedIndexInPage = highlightSegmentEndOnPage;
-          } else {
-             // If no part of the note is on this page (e.g., noteStartInPage is >= plainPageText.length)
-             // or if noteStartInPage + noteLength is before 0.
-             // Ensure lastProcessedIndexInPage doesn't go backward.
-             lastProcessedIndexInPage = Math.max(lastProcessedIndexInPage, actualSegmentStartInPage);
-          }
-        });
-
-        if (lastProcessedIndexInPage < plainPageText.length) {
-          newHighlightedString += plainPageText.substring(lastProcessedIndexInPage);
-        }
-        setHighlightedPageContent(newHighlightedString);
-
-      } else { // No notes or no relevant notes
-        logger.debug(`[BookView - Highlighting Effect] No notes to highlight on page ${validCurrentPage}, setting plain text.`);
-        setHighlightedPageContent(plainPageText); 
-      }
+      // REMOVE NOTE HIGHLIGHTING LOGIC:
+      // The entire block that filters `relevantNotes` and builds `newHighlightedString`
+      // by adding <span class="highlighted-note-text">...</span> is removed.
+      // Instead, just set highlightedPageContent to plainPageText.
+      setHighlightedPageContent(plainPageText);
+      logger.debug(`[BookView - Page Content Effect] Set page content without note highlighting.`);
       
       // Conditional scroll to top:
       if (bookPaneContainerRef.current) {
         if (pendingScrollOffsetInPage === null && pendingScrollToPercentage === null) {
             if (!isProgrammaticScroll.current) { 
-                logger.debug("[BookView - Highlighting Effect] Conditions met for scroll-to-top. Scrolling to top.");
+                logger.debug("[BookView - Page Content Effect] Conditions met for scroll-to-top. Scrolling to top.");
                 isProgrammaticScroll.current = true; 
                 bookPaneContainerRef.current.scrollTop = 0;
                 setTimeout(() => { 
                     isProgrammaticScroll.current = false; 
-                    logger.debug("[BookView - Highlighting Effect] Reset isProgrammaticScroll from scroll-to-top action.");
+                    logger.debug("[BookView - Page Content Effect] Reset isProgrammaticScroll from scroll-to-top action.");
                 }, 100); 
             } else {
-                logger.debug("[BookView - Highlighting Effect] Scroll-to-top conditions met, BUT isProgrammaticScroll.current is true. Skipping.");
+                logger.debug("[BookView - Page Content Effect] Scroll-to-top conditions met, BUT isProgrammaticScroll.current is true. Skipping.");
             }
         } else {
-            logger.debug("[BookView - Highlighting Effect] A scroll is pending. Skipping automatic scroll to top.");
+            logger.debug("[BookView - Page Content Effect] A scroll is pending. Skipping automatic scroll to top.");
         }
       }
 
     } else if (fullMarkdownContent.current && pageBoundaries.length === 0) {
-        logger.warn("[BookView - Highlighting Effect] fullMarkdownContent exists but pageBoundaries is empty. This might be initial load. Displaying placeholder or first chunk.");
+        logger.warn("[BookView - Page Content Effect] fullMarkdownContent exists but pageBoundaries is empty. This might be initial load. Displaying placeholder or first chunk.");
         // Fallback: display first chunk if boundaries aren't ready (should be brief)
         const tempEndOffset = Math.min(APPROX_CHARS_PER_PAGE, fullMarkdownContent.current.length);
         const tempPageText = fullMarkdownContent.current.substring(0, tempEndOffset);
@@ -573,7 +519,7 @@ function BookView() {
         if (totalPages !== 1) setTotalPages(1); // Temporary total pages
         if (currentPage !== 1) setCurrentPage(1); // Temporary current page
     } else { // No fullMarkdownContent.current or other invalid state
-      logger.debug("[BookView - Highlighting Effect] No fullMarkdownContent or pageBoundaries not ready. Clearing page content.");
+      logger.debug("[BookView - Page Content Effect] No fullMarkdownContent or pageBoundaries not ready. Clearing page content.");
       setCurrentPageContent('');
       setHighlightedPageContent('');
       // setTotalPages(1); // Keep totalPages as is, or reset if book becomes invalid
@@ -736,14 +682,11 @@ function BookView() {
         }
 
         const globalOffset = currentPageStartOffset + mappedStartInRawPage;
-        const selectionLengthInRaw = mappedEndInRawPage - mappedStartInRawPage;
         
-        const canonicalSelectedText = fullMarkdownContent.current.substring(globalOffset, globalOffset + selectionLengthInRaw);
-        
-        setSelectedBookText(canonicalSelectedText);
+        // Set selectedBookText to the text from the selection (textFromBookPane)
+        setSelectedBookText(textFromBookPane); 
         setSelectedGlobalCharOffset(globalOffset);
-        logger.debug(`[BookView - handleTextSelect] Final Mapped: globalOffset: ${globalOffset}, rawLength: ${selectionLengthInRaw}`);
-        logger.debug(`[BookView - handleTextSelect] Canonical text (raw): "${canonicalSelectedText.substring(0,100)}..."`);
+        logger.debug(`[BookView - handleTextSelect] Selected rendered text: "${textFromBookPane.substring(0,100)}...", Global raw offset for start: ${globalOffset}`);
 
       } else {
         logger.warn("[BookView - handleTextSelect] Failed to map rendered selection to raw markdown offsets or invalid range. Using visual selection and heuristic offset.");
