@@ -271,6 +271,7 @@ function BookView() {
 
   const [showManageBookmarksModal, setShowManageBookmarksModal] = useState(false); // ADD THIS STATE
   const [isNotePaneVisible, setIsNotePaneVisible] = useState(true); // ADD THIS LINE
+  const [isMobileView, setIsMobileView] = useState(window.innerWidth <= 768); // ADD THIS LINE, initialize directly
 
 
   const fetchBook = async () => {
@@ -434,6 +435,15 @@ function BookView() {
           }
       };
   }, [handleDocumentMouseMove, handleDocumentMouseUp]);
+
+  useEffect(() => { // ADD THIS useEffect BLOCK
+    const checkMobileView = () => {
+      setIsMobileView(window.innerWidth <= 768);
+    };
+    // checkMobileView(); // Already initialized in useState
+    window.addEventListener('resize', checkMobileView);
+    return () => window.removeEventListener('resize', checkMobileView);
+  }, []);
 
 
   // Fetch notes when bookId changes
@@ -1346,7 +1356,11 @@ function BookView() {
   }
 
   return (
-    <div className="book-view-container" ref={bookViewContainerRef}> {/* Add ref to the main container */}
+    <div
+      className="book-view-container"
+      ref={bookViewContainerRef}
+      style={{ flexDirection: isMobileView ? 'column' : 'row' }} // ADD/MODIFY THIS STYLE PROP
+    >
         {/* Add Bookmark Modal - Rendered conditionally */}
         {showAddBookmarkModal && (
           <div className="modal-overlay">
@@ -1406,11 +1420,15 @@ function BookView() {
           className="book-pane-area"
           ref={bookPaneAreaRef} // Ref for the resizable area
           style={{
-            flexBasis: isNotePaneVisible ? bookPaneFlexBasis : '100%', // ADJUST THIS LINE
-            flexShrink: 0, // Prevent shrinking beyond flex-basis
-            display: 'flex', // To make its child (.book-pane-wrapper) fill it
+            flexBasis: isMobileView
+              ? (isNotePaneVisible ? '50%' : '100%') // Height basis on mobile
+              : (isNotePaneVisible ? bookPaneFlexBasis : '100%'), // Width basis on desktop
+            width: isMobileView ? '100%' : undefined, // Full width on mobile
+            // height: isMobileView ? (isNotePaneVisible ? '50%' : '100%') : '100%', // Let flex-basis handle height on mobile
+            flexShrink: 0,
+            display: 'flex',
             flexDirection: 'column',
-            overflow: 'hidden' // Important
+            overflow: 'hidden'
           }}
         >
           {/* .book-pane-wrapper is the existing structure inside book-pane-area */}
@@ -1484,7 +1502,7 @@ function BookView() {
         </div>
 
         {/* Resizer Handle - Conditionally Render */}
-        {isNotePaneVisible && ( // ADD THIS CONDITION
+        {isNotePaneVisible && !isMobileView && ( // MODIFIED THIS CONDITION
           <div className="resizer-handle" onMouseDown={handleMouseDownOnResizer}></div>
         )}
 
@@ -1493,14 +1511,18 @@ function BookView() {
           <div
             className="note-pane-area"
             style={{
-            flexGrow: 1,
-            flexShrink: 1,
-            flexBasis: '0%', // Allow it to grow into remaining space
-            display: 'flex', // To make its child (.note-pane-wrapper) fill it
-            flexDirection: 'column',
-            overflow: 'hidden' // Important
-          }}
-        >
+              flexGrow: 1, // Takes remaining space (height on mobile, width on desktop)
+              flexShrink: 1,
+              flexBasis: isMobileView ? '50%' : '0%', // Height basis on mobile, width basis for desktop grow
+              width: isMobileView ? '100%' : undefined, // Full width on mobile
+              // height: isMobileView ? '50%' : '100%', // Let flex-basis/flex-grow handle height on mobile
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+              borderTop: isMobileView ? '1px solid #ccc' : undefined, // Top border on mobile
+              borderLeft: !isMobileView ? '1px solid #ccc' : undefined, // Left border on desktop
+            }}
+          >
           {/* .note-pane-wrapper is the existing structure inside note-pane-area */}
           <div className="note-pane-wrapper"> 
             <div className="note-pane-container" ref={notePaneContainerRef}> {/* Ref for scrollable content */}
