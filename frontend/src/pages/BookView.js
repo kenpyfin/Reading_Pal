@@ -548,23 +548,25 @@ function BookView() {
     }
   };
 
-  const handleTextSelect = (textFromBookPane) => { // textFromBookPane is selection.toString()
-    const selection = window.getSelection();
+  const handleTextSelect = ({ text: textFromBookPane, rangeDetails }) => { // MODIFIED SIGNATURE
+    // const selection = window.getSelection(); // REMOVE THIS LINE
 
-    if (!textFromBookPane || textFromBookPane.trim() === "" || !selection || selection.rangeCount === 0 || !bookPaneContainerRef.current) {
+    // MODIFIED CONDITION: Use rangeDetails directly
+    if (!textFromBookPane || textFromBookPane.trim() === "" || !rangeDetails || !bookPaneContainerRef.current) {
       setSelectedBookText(null);
       setSelectedGlobalCharOffset(null);
       setSelectedScrollPercentage(null);
       return;
     }
 
-    const range = selection.getRangeAt(0);
+    // const range = selection.getRangeAt(0); // REMOVE THIS LINE
     const pageContainerElement = bookPaneContainerRef.current;
 
-    let selStartNode = range.startContainer;
-    let selStartOffset = range.startOffset;
-    let selEndNode = range.endContainer;
-    let selEndOffset = range.endOffset;
+    // Use properties from the passed rangeDetails object
+    let selStartNode = rangeDetails.startContainer;
+    let selStartOffset = rangeDetails.startOffset;
+    let selEndNode = rangeDetails.endContainer;
+    let selEndOffset = rangeDetails.endOffset;
 
     // Helper to find the actual text node and offset if selection is on an element node
     function resolveToTextNode(containerNode, offsetInContainer) {
