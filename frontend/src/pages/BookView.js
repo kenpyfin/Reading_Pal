@@ -1512,27 +1512,7 @@ function BookView() {
                 onTextSelect={handleTextSelect}
               />
             </div>
-            <div className="pagination-controls">
-              <button onClick={handlePreviousPage} disabled={currentPage === 1}>
-                Previous
-              </button>
-              <form onSubmit={handleGoToPage} className="page-input-form">
-                <span> Page </span>
-                <input
-                  type="number"
-                  value={pageInput}
-                  onChange={handlePageInputChange}
-                  onBlur={handleGoToPage} 
-                  min="1"
-                  max={totalPages}
-                  className="page-input"
-                />
-                <span> of {totalPages} </span>
-              </form>
-              <button onClick={handleNextPage} disabled={currentPage === totalPages}>
-                Next
-              </button>
-            </div>
+            {/* The original pagination block was here and is now removed */}
           </div>
         </div>
 
