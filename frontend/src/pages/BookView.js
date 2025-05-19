@@ -272,6 +272,8 @@ function BookView() {
   const [showManageBookmarksModal, setShowManageBookmarksModal] = useState(false); // ADD THIS STATE
   const [isNotePaneVisible, setIsNotePaneVisible] = useState(true); // ADD THIS LINE
   const [isMobileView, setIsMobileView] = useState(window.innerWidth <= 768); // ADD THIS LINE, initialize directly
+  const [isBookmarkMenuOpen, setIsBookmarkMenuOpen] = useState(false);
+  const bookmarkMenuRef = useRef(null); // For detecting clicks outside
 
 
   const fetchBook = async () => {
@@ -444,6 +446,24 @@ function BookView() {
     window.addEventListener('resize', checkMobileView);
     return () => window.removeEventListener('resize', checkMobileView);
   }, []);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (bookmarkMenuRef.current && !bookmarkMenuRef.current.contains(event.target)) {
+        setIsBookmarkMenuOpen(false);
+      }
+    };
+
+    if (isBookmarkMenuOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    } else {
+      document.removeEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isBookmarkMenuOpen]);
 
 
   // Fetch notes when bookId changes
@@ -1433,79 +1453,94 @@ function BookView() {
         >
           {/* .book-pane-wrapper is the existing structure inside book-pane-area */}
           <div className="book-pane-wrapper"> 
-            {/* Controls Header for Book Pane - ADD THIS SECTION */}
+            {/* --- MODIFIED Controls Header for Book Pane --- */}
             <div className="book-pane-controls-header">
-              <div className="left-controls">
-                <button onClick={openAddBookmarkModal} className="control-button">
-                  Add Bookmark
+              {/* Left: Bookmark Dropdown Menu */}
+              <div className="bookmark-menu-container" ref={bookmarkMenuRef}>
+                <button 
+                  onClick={() => setIsBookmarkMenuOpen(prev => !prev)} 
+                  className="control-button bookmark-menu-button"
+                  aria-haspopup="true"
+                  aria-expanded={isBookmarkMenuOpen}
+                >
+                  Bookmarks <span className={`arrow ${isBookmarkMenuOpen ? 'up' : 'down'}`}></span>
                 </button>
-                {/* Add Bookmark Dropdown */}
-                {bookmarks.length > 0 && (
-                  <select 
-                    onChange={handleBookmarkSelect} 
-                    className="bookmark-select control-button" // Added control-button for consistent styling
-                    defaultValue="" // Ensure placeholder is selected initially
-                    aria-label="Jump to bookmark"
-                  >
-                    <option value="" disabled>Jump to Bookmark...</option>
-                    {bookmarks.map((bookmark, index) => {
-                      // ADD THIS LOG to see what's being assigned to the value attribute
-                      logger.debug(`[BookView - Rendering Bookmark Option ${index}] ID: "${bookmark.id}", Type: ${typeof bookmark.id}, Name: "${bookmark.name}"`);
-                      return (
-                        <option key={bookmark.id} value={bookmark.id}>
-                          {bookmark.name ? `${bookmark.name} (P${bookmark.page_number})` : `Page ${bookmark.page_number} (Unnamed)`}
-                        </option>
-                      );
-                    })}
-                  </select>
+                {isBookmarkMenuOpen && (
+                  <div className="bookmark-dropdown-menu">
+                    <button 
+                      onClick={() => { openAddBookmarkModal(); setIsBookmarkMenuOpen(false); }} 
+                      className="dropdown-item control-button" // Added control-button for consistent styling
+                    >
+                      Add Bookmark
+                    </button>
+                    {bookmarks.length > 0 && (
+                      <div className="dropdown-item-select-container"> {/* Wrapper for select */}
+                        <label htmlFor="jump-to-bookmark-select" className="sr-only">Jump to Bookmark</label>
+                        <select
+                          id="jump-to-bookmark-select"
+                          onChange={(e) => { handleBookmarkSelect(e); setIsBookmarkMenuOpen(false); }}
+                          className="bookmark-select dropdown-item-select control-button" // Added control-button
+                          defaultValue=""
+                          aria-label="Jump to bookmark"
+                        >
+                          <option value="" disabled>Jump to Bookmark...</option>
+                          {bookmarks.map((bookmark, index) => (
+                            <option key={bookmark.id} value={bookmark.id}>
+                              {bookmark.name ? `${bookmark.name} (P${bookmark.page_number})` : `Page ${bookmark.page_number} (Unnamed)`}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                    <button 
+                      onClick={() => { setShowManageBookmarksModal(true); setIsBookmarkMenuOpen(false); }} 
+                      className="dropdown-item control-button" // Added control-button
+                    >
+                      Manage Bookmarks
+                    </button>
+                  </div>
                 )}
               </div>
-              {/* Add Manage Bookmarks Button */}
-              <button onClick={() => setShowManageBookmarksModal(true)} className="control-button">
-                Manage Bookmarks
-              </button>
-              {/* ADD THE TOGGLE NOTE PANE BUTTON HERE */}
-              <button onClick={toggleNotePaneVisibility} className="control-button" style={{ marginLeft: '10px' }}>
-                {isNotePaneVisible ? 'Hide Notes' : 'Show Notes'}
-              </button>
-            </div>
 
-            {/* PASTE THE PAGINATION CONTROLS BLOCK HERE */}
-            {/* It's good practice to wrap pagination in a conditional check for totalPages */}
-            {totalPages > 1 && (
-              <div className="pagination-controls" style={{ 
-                display: 'flex', 
-                justifyContent: 'center', 
-                alignItems: 'center', 
-                padding: '10px 0',
-                borderBottom: '1px solid #eee', // Light border for separation
-                // marginBottom: '10px' // Optional: if more space is needed below
-              }}>
-                <button onClick={handlePreviousPage} disabled={currentPage === 1}>
-                  Previous
-                </button>
-                <form onSubmit={handleGoToPage} className="page-input-form" style={{ display: 'inline-flex', alignItems: 'center', margin: '0 10px' }}>
-                  <span> Page </span>
-                  <input
-                    type="number"
-                    value={pageInput}
-                    onChange={handlePageInputChange}
-                    onBlur={handleGoToPage} 
-                    min="1"
-                    max={totalPages}
-                    className="page-input" // Ensure this class has appropriate styling (e.g., width)
-                    style={{ width: '50px', textAlign: 'center', marginLeft: '5px', marginRight: '5px' }} // Added inline style for quick setup
-                  />
-                  <span> of {totalPages} </span>
-                </form>
-                <button onClick={handleNextPage} disabled={currentPage === totalPages}>
-                  Next
+              {/* Center: Pagination Controls - MOVED HERE */}
+              {totalPages > 1 && (
+                <div className="pagination-controls header-pagination"> {/* Added header-pagination class */}
+                  <button onClick={handlePreviousPage} disabled={currentPage === 1} className="control-button">
+                    Previous
+                  </button>
+                  <form onSubmit={handleGoToPage} className="page-input-form">
+                    <span> Page </span>
+                    <input
+                      type="number"
+                      value={pageInput}
+                      onChange={handlePageInputChange}
+                      onBlur={handleGoToPage} 
+                      min="1"
+                      max={totalPages}
+                      className="page-input"
+                    />
+                    <span> of {totalPages} </span>
+                  </form>
+                  <button onClick={handleNextPage} disabled={currentPage === totalPages} className="control-button">
+                    Next
+                  </button>
+                </div>
+              )}
+              {/* Placeholder for pagination if totalPages <= 1 to maintain layout balance */}
+              {totalPages <= 1 && <div className="pagination-controls-placeholder"></div>}
+
+
+              {/* Right: Toggle Notes Button */}
+              <div className="right-controls-group"> {/* New wrapper for right-aligned items */}
+                <button onClick={toggleNotePaneVisibility} className="control-button">
+                  {isNotePaneVisible ? 'Hide Notes' : 'Show Notes'}
                 </button>
               </div>
-            )}
-            {/* END OF PASTED AND WRAPPED PAGINATION CONTROLS */}
+            </div>
+            {/* --- END OF MODIFIED Controls Header --- */}
 
-            <div className="book-pane-container" ref={bookPaneContainerRef}> {/* Ref for scrollable content */}
+            {/* The BookPane container itself */}
+            <div className="book-pane-container" ref={bookPaneContainerRef}>
               <BookPane
                 markdownContent={highlightedPageContent} 
                 imageUrls={bookData.image_urls}
