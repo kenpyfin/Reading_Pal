@@ -1470,6 +1470,41 @@ function BookView() {
               </button>
             </div>
 
+            {/* PASTE THE PAGINATION CONTROLS BLOCK HERE */}
+            {/* It's good practice to wrap pagination in a conditional check for totalPages */}
+            {totalPages > 1 && (
+              <div className="pagination-controls" style={{ 
+                display: 'flex', 
+                justifyContent: 'center', 
+                alignItems: 'center', 
+                padding: '10px 0',
+                borderBottom: '1px solid #eee', // Light border for separation
+                // marginBottom: '10px' // Optional: if more space is needed below
+              }}>
+                <button onClick={handlePreviousPage} disabled={currentPage === 1}>
+                  Previous
+                </button>
+                <form onSubmit={handleGoToPage} className="page-input-form" style={{ display: 'inline-flex', alignItems: 'center', margin: '0 10px' }}>
+                  <span> Page </span>
+                  <input
+                    type="number"
+                    value={pageInput}
+                    onChange={handlePageInputChange}
+                    onBlur={handleGoToPage} 
+                    min="1"
+                    max={totalPages}
+                    className="page-input" // Ensure this class has appropriate styling (e.g., width)
+                    style={{ width: '50px', textAlign: 'center', marginLeft: '5px', marginRight: '5px' }} // Added inline style for quick setup
+                  />
+                  <span> of {totalPages} </span>
+                </form>
+                <button onClick={handleNextPage} disabled={currentPage === totalPages}>
+                  Next
+                </button>
+              </div>
+            )}
+            {/* END OF PASTED AND WRAPPED PAGINATION CONTROLS */}
+
             <div className="book-pane-container" ref={bookPaneContainerRef}> {/* Ref for scrollable content */}
               <BookPane
                 markdownContent={highlightedPageContent} 
