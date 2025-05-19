@@ -50,7 +50,36 @@
   overflow-y: auto; 
   padding: 20px;
   box-sizing: border-box; 
+  height: 100%; /* Add if not present, helps ensure it fills flex parent */
 }
+
+
+/* Styles for the mobile resizer handle (if not fully covered by inline styles) */
+.resizer-handle-mobile {
+  /* Inline styles are mostly covering this, but you can add more here */
+  /* For example, a subtle box-shadow or gradient */
+  box-shadow: 0px 1px 3px rgba(0,0,0,0.1) inset;
+  /* Ensure it's not affected by other resizer handle styles if names collide */
+}
+
+
+/* Font control buttons in BookPane */
+.font-control-btn {
+  padding: 6px 10px; /* Default padding */
+  font-size: 1em;    /* Default font size */
+  min-width: 30px; /* Ensure a minimum tap area */
+  line-height: 1;
+  border: 1px solid #ccc;
+  background-color: #f8f9fa;
+  border-radius: 4px;
+  cursor: pointer;
+  /* Ensure it doesn't inherit unwanted styles from .control-button if used elsewhere */
+  margin-left: 0; /* Reset margin if it's part of a group that adds margin */
+}
+.font-control-btn:hover {
+  background-color: #e9ecef;
+}
+
 
 /* Pagination controls styling */
 /* ... keep existing .pagination-controls and its children styles ... */
@@ -499,4 +528,115 @@
 .delete-bookmark-button {
   /* Example: */
   /* padding: 3px 6px; */ /* Make it slightly smaller than note delete button */
+}
+
+
+/* --- Add Mobile Specific Styles at the end or in a dedicated @media block --- */
+@media (max-width: 768px) {
+  .book-view-container {
+    /* flexDirection: column; is handled by inline style in BookView.js */
+    /* height: calc(100vh - YOUR_HEADER_HEIGHT); is handled by parent or inline style */
+  }
+
+  .book-pane-area, .note-pane-area {
+    /* flex-basis and width are handled by inline styles in BookView.js for mobile */
+    /* Ensure they don't have conflicting fixed widths/heights from desktop styles */
+  }
+  
+  .book-pane-controls-header {
+    padding: 8px 10px; /* Slightly reduce padding on mobile */
+    flex-wrap: wrap; /* Allow controls to wrap if they don't fit */
+    justify-content: space-around; /* Distribute space if wrapping */
+  }
+
+  .book-pane-controls-header .control-button,
+  .book-pane-controls-header .bookmark-select {
+    font-size: 0.8em; /* Smaller font for all control buttons */
+    padding: 6px 10px; /* Adjust padding */
+    margin: 3px; /* Add small margin for wrapped items */
+  }
+  .book-pane-controls-header .bookmark-select {
+    max-width: 150px; /* Further restrict select width on mobile */
+  }
+
+  .font-control-btn {
+    padding: 5px 8px; /* Smaller padding on mobile */
+    font-size: 0.85em; /* Slightly smaller font on mobile */
+    min-width: 28px;
+  }
+  
+  /* Adjust pagination controls for mobile */
+  .pagination-controls {
+    padding: 6px 0;
+  }
+  .pagination-controls button {
+    padding: 6px 10px;
+    font-size: 0.85em;
+  }
+  .pagination-controls .page-input {
+    width: 40px;
+    padding: 4px;
+    font-size: 0.85em;
+  }
+  .pagination-controls span {
+    font-size: 0.85em;
+  }
+
+  /* Adjust heading sizes in NotePane for mobile if needed */
+  /* These selectors assume NotePane's content is within .note-pane-container */
+  .note-pane-container h2 { /* Targets "Notes & LLM Insights" */
+    font-size: 1.2em;
+    margin-top: 0.5em;
+    margin-bottom: 0.5em;
+    padding-bottom: 5px; /* Adjust if there's a border */
+  }
+  .note-pane-container h3 { /* Targets "Add New Note", "LLM Reading Assistance", "Saved Notes" */
+    font-size: 1.05em;
+    margin-top: 0.8em;
+    margin-bottom: 0.4em;
+  }
+  .note-pane-container h4 { /* Targets "Selected Text from Book:", "LLM Response:" */
+    font-size: 0.95em;
+  }
+
+  /* Ensure textareas and buttons in NotePane are reasonably sized */
+  .note-pane-container .new-note-form textarea, 
+  .note-pane-container .llm-interaction textarea {
+    font-size: 0.9em;
+    padding: 8px;
+  }
+  .note-pane-container .new-note-form button, 
+  .note-pane-container .llm-interaction button {
+    font-size: 0.9em;
+    padding: 7px 12px;
+  }
+
+  /* Hide Note Pane Button (if not fully covered by inline styles) */
+  /* .hide-note-pane-btn is styled inline in NotePane.js, but you can add hover/active states here */
+  .hide-note-pane-btn:hover {
+    background-color: #5a6268; /* Example hover color */
+  }
+
+  /* Modal adjustments for mobile if needed */
+  .modal-content {
+    padding: 20px;
+    max-width: 90%; /* Ensure it doesn't get too wide on small screens */
+  }
+  .modal-content h2 {
+    font-size: 1.4em;
+  }
+  .bookmark-name-input {
+    padding: 10px;
+    font-size: 0.95em;
+  }
+  .modal-actions .button-primary,
+  .modal-actions .button-secondary {
+    padding: 8px 15px;
+    font-size: 0.95em;
+  }
+
+  /* Manage Bookmarks Modal List Item Text */
+  .manage-bookmarks-modal .manage-bookmark-item span {
+    font-size: 0.9em;
+  }
 }
