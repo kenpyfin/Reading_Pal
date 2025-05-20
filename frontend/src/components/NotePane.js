@@ -218,6 +218,14 @@ const NotePane = ({ // Removed ref from props
     }
   };
 
+  const handleNextNotesPage = () => {
+    setCurrentNotesPage(prevPage => Math.min(prevPage + 1, totalNotePages));
+  };
+
+  const handlePreviousNotesPage = () => {
+    setCurrentNotesPage(prevPage => Math.max(prevPage - 1, 1));
+  };
+
 
   if (loading) {
     return <div className="note-pane">Loading notes...</div>; // Removed ref
