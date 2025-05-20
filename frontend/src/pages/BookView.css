@@ -713,11 +713,50 @@
 
 
   .bookmark-dropdown-menu {
-    /* Consider making dropdown full width or adjusting position on mobile */
-    left: 50%;
-    transform: translateX(-50%);
-    min-width: calc(100vw - 40px); /* Example: almost full screen width */
-    max-width: 300px;
+    /* Make dropdown full width relative to its offset parent (bookmark-menu-container) */
+    /* but ensure it doesn't overflow the viewport. */
+    position: absolute; /* Keep absolute positioning */
+    top: 100%; /* Position below the button */
+    
+    /* Centering and width adjustments */
+    left: 50%; 
+    transform: translateX(-50%); /* Center the dropdown relative to the button */
+    
+    width: calc(100vw - 40px); /* Make it slightly less than full viewport width, leaving some margin */
+    max-width: 300px; /* Maximum width it can take, good for slightly larger "mobile" screens */
+    min-width: 200px; /* Minimum width to ensure content is readable */
+    
+    box-sizing: border-box; /* Include padding and border in the element's total width and height */
+
+    /* Keep existing styles for appearance */
+    background-color: white;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    z-index: 100; 
+    padding: 5px 0; 
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Ensure items within the dropdown don't cause overflow */
+  .bookmark-dropdown-menu .control-button.dropdown-item,
+  .bookmark-dropdown-menu .dropdown-item-select-container {
+    width: 100%; /* Make items take full width of the dropdown */
+    box-sizing: border-box; /* Include padding/border in width */
+  }
+
+  .bookmark-select.dropdown-item-select.control-button {
+    width: calc(100% - 24px); /* Adjust width considering its own padding/margin */
+    margin-left: 12px;
+    margin-right: 12px;
+    box-sizing: border-box;
+    font-size: 0.8rem; /* Ensure font size is also mobile-friendly */
+  }
+  
+  .bookmark-dropdown-menu .control-button.dropdown-item {
+    font-size: 0.8rem; /* Ensure font size is also mobile-friendly */
+    padding: 8px 12px; /* Adjust padding if needed */
   }
 
   .pagination-controls.header-pagination .control-button {
