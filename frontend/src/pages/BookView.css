@@ -692,43 +692,68 @@
   }
   
   .book-pane-controls-header {
-    flex-wrap: wrap; /* Allow items to wrap */
-    justify-content: center; /* Center items when wrapped */
+    flex-wrap: wrap; 
+    justify-content: space-around; /* Changed from center to space-around for better distribution */
     padding: 6px 8px;
-    gap: 6px; /* Add gap for wrapped items */
+    gap: 8px; /* Increased gap slightly for better touch targets when wrapped */
   }
 
   .bookmark-menu-container,
   .pagination-controls.header-pagination,
   .right-controls-group {
-    flex-basis: 100%; /* Allow each group to take full width when wrapping */
-    justify-content: center; /* Center content within each group */
-    margin-bottom: 5px; /* Space between wrapped groups */
-  }
-  .bookmark-menu-container:last-child,
-  .pagination-controls.header-pagination:last-child,
-  .right-controls-group:last-child {
-    margin-bottom: 0;
+    flex-basis: auto; /* Allow items to size based on content, not force full width */
+    flex-grow: 0;     /* Don't grow by default */
+    flex-shrink: 1;   /* Allow shrinking if needed */
+    /* justify-content: center; /* Remove this, let parent handle alignment */
+    margin-bottom: 0; /* Remove bottom margin if they fit on one line */
+    /* Ensure they align to the center of the flex line if they wrap */
+    align-self: center; 
   }
 
+  /* Allow pagination to take more space if available on the line */
+  .pagination-controls.header-pagination {
+    flex-grow: 1; /* Let pagination try to fill available space */
+    min-width: 160px; /* Give pagination a minimum width to prevent it from becoming too squished */
+                      /* Adjust this based on how compact you make the prev/next/input */
+    justify-content: center; /* Ensure its internal items are centered */
+  }
+  
+  /* Make the bookmark menu button and toggle notes button more compact */
+  .bookmark-menu-container .control-button, /* Target the button directly */
+  .right-controls-group .control-button {   /* Target the button directly */
+    padding: 0 8px; /* Reduce horizontal padding */
+    height: 30px;   /* Slightly smaller height */
+    font-size: 0.8rem; /* Smaller font */
+    line-height: 28px; /* Adjust line height */
+  }
+  .bookmark-menu-button .arrow { /* Ensure this is specific enough if .control-button is too general */
+    margin-left: 4px; /* Reduce space for arrow */
+  }
+  .bookmark-menu-button .arrow.down::before,
+  .bookmark-menu-button .arrow.up::before {
+    font-size: 0.65em; /* Smaller arrow */
+  }
 
   .bookmark-dropdown-menu {
-    /* Make dropdown full width relative to its offset parent (bookmark-menu-container) */
-    /* but ensure it doesn't overflow the viewport. */
-    position: absolute; /* Keep absolute positioning */
-    top: 100%; /* Position below the button */
+    position: absolute;
+    top: 100%;
     
-    /* Centering and width adjustments */
-    left: 50%; 
-    transform: translateX(-50%); /* Center the dropdown relative to the button */
+    /* --- Dropdown Width and Centering Logic --- */
+    /* Option 1: Center relative to the button, but constrain width */
+    left: 50%;
+    transform: translateX(-50%);
+    width: auto; /* Let content determine width initially */
+    min-width: 180px; /* Minimum sensible width for dropdown items */
+    max-width: calc(100vw - 30px); /* Max width is viewport width minus some padding */
     
-    width: calc(100vw - 40px); /* Make it slightly less than full viewport width, leaving some margin */
-    max-width: 300px; /* Maximum width it can take, good for slightly larger "mobile" screens */
-    min-width: 200px; /* Minimum width to ensure content is readable */
-    
-    box-sizing: border-box; /* Include padding and border in the element's total width and height */
+    /* Option 2: Align to left of button, constrain width (if button is near left edge) */
+    /* left: 0; */
+    /* transform: translateX(0); */
+    /* width: auto; */
+    /* min-width: 180px; */
+    /* max-width: 280px; /* Or a fixed max like 280px */
 
-    /* Keep existing styles for appearance */
+    box-sizing: border-box; 
     background-color: white;
     border: 1px solid #ccc;
     border-radius: 4px;
@@ -747,26 +772,42 @@
   }
 
   .bookmark-select.dropdown-item-select.control-button {
-    width: calc(100% - 24px); /* Adjust width considering its own padding/margin */
-    margin-left: 12px;
-    margin-right: 12px;
+    width: calc(100% - 20px); /* Adjust width considering its own padding/margin */
+    margin: 0 10px; /* Consistent margin */
     box-sizing: border-box;
-    font-size: 0.8rem; /* Ensure font size is also mobile-friendly */
+    font-size: 0.8rem; 
+    height: 30px; 
+    line-height: 28px;
   }
   
   .bookmark-dropdown-menu .control-button.dropdown-item {
-    font-size: 0.8rem; /* Ensure font size is also mobile-friendly */
-    padding: 8px 12px; /* Adjust padding if needed */
+    font-size: 0.8rem; 
+    padding: 8px 10px; /* Adjust padding */
+    height: auto; /* Let content determine height, or set fixed like select */
+    line-height: 1.4; /* Normal line height for potentially multi-line text */
   }
 
+  /* Further compact pagination controls */
   .pagination-controls.header-pagination .control-button {
-    padding: 4px 8px;
-    height: 28px;
-    line-height: 18px;
-    font-size: 0.75rem;
+    padding: 0 6px; 
+    height: 30px; /* Match other compact buttons */
+    line-height: 28px; 
+    font-size: 0.75rem; 
+    min-width: auto; 
+  }
+  .pagination-controls.header-pagination .page-input-form {
+    margin: 0 5px; 
+    font-size: 0.8em;
   }
   .pagination-controls.header-pagination .page-input {
-    height: 26px;
+    width: 35px; 
+    height: 28px; /* Match button height */
+    padding: 3px;
+    font-size: 0.8em;
+  }
+  .pagination-controls.header-pagination span {
+    font-size: 0.8em;
+    margin: 0 3px;
   }
 
   .font-control-btn {
