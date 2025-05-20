@@ -64,6 +64,57 @@
     font-size: 0.9em;
 }
 /* .llm-response styling is primarily from BookView.css */
+.llm-response {
+  background-color: #e9f7ef;
+  border: 1px solid #d0e9c6; /* Green border from BookView.css */
+  padding: 15px;
+  margin-top: 15px;
+  border-radius: 4px;
+}
+
+.llm-response h4 {
+  margin-top: 0;
+  color: #155724; /* Darker green for better contrast, from BookView.css */
+  margin-bottom: 8px; /* Space below heading */
+}
+
+.llm-response p {
+  margin: 0 0 10px 0; /* Space below the paragraph before the button */
+  white-space: pre-wrap; /* Crucial for preserving newlines from LLM response */
+  word-wrap: break-word; /* Ensure long words break */
+}
+
+/* Styling for the "Add to Current Note" button */
+.button-add-to-note {
+  /* You can base this on your existing button styles or define new ones */
+  display: inline-block;
+  padding: 7px 14px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  line-height: 1.5;
+  color: #fff;
+  background-color: #28a745; /* A green color, distinct or similar to other positive actions */
+  border: 1px solid #28a745;
+  border-radius: 4px; /* Consistent with other buttons */
+  text-align: center;
+  vertical-align: middle;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.15s ease-in-out, border-color 0.15s ease-in-out;
+  /* margin-top: 10px; /* Already handled by inline style in JSX, or can be put here */
+}
+
+.button-add-to-note:hover {
+  background-color: #218838; /* Darker shade on hover */
+  border-color: #1e7e34;
+}
+
+.button-add-to-note:disabled { /* If you add a disabled state */
+  background-color: #cccccc;
+  border-color: #cccccc;
+  color: #666666;
+  cursor: not-allowed;
+}
 
 /* Notes List specific styles */
 .notes-list {

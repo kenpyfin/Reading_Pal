@@ -23,6 +23,23 @@ const NotePane = ({ // Removed ref from props
   const [llmAskResponse, setLlmAskResponse] = useState(null);
   const [llmError, setLlmError] = useState(null);
 
+  // Inside the NotePane component function:
+  // ... after other state and function definitions ...
+
+  const handleAddLlmResponseToNote = () => {
+    if (llmAskResponse) {
+      // Using a simpler separator for plain text appending
+      const separator = "\n\n--- LLM Response ---\n"; 
+      setNewNoteContent(prevContent => {
+        if (prevContent.trim() === "") {
+          return llmAskResponse; 
+        }
+        // Append with the separator
+        return prevContent + separator + llmAskResponse;
+      });
+      logger.info("[NotePane] LLM response appended to new note content.");
+    }
+  };
 
   // Fetch notes when bookId changes (for NotePane's internal display)
   useEffect(() => {
@@ -234,7 +251,15 @@ const NotePane = ({ // Removed ref from props
         {llmAskResponse && (
             <div className="llm-response">
                 <h4>LLM Response:</h4>
-                <p>{llmAskResponse}</p>
+                <p>{llmAskResponse}</p> {/* This 'p' tag might need white-space: pre-wrap in CSS */}
+                {/* ADD THE NEW BUTTON AFTER THE <p> TAG, INSIDE .llm-response div */}
+                <button 
+                  onClick={handleAddLlmResponseToNote} 
+                  className="button-add-to-note" // Use this class for styling
+                  style={{ marginTop: '10px' }} // Basic inline style for spacing
+                >
+                  Add to Current Note
+                </button>
             </div>
         )}
       </div>
