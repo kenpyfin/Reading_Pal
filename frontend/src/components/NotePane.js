@@ -17,6 +17,9 @@ const NotePane = ({ // Removed ref from props
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  const [currentNotesPage, setCurrentNotesPage] = useState(1);
+  const notesPerPage = 6;
+
   // Add state variables for LLM interaction
   const [llmLoading, setLlmLoading] = useState(false);
   const [llmQuestion, setLlmQuestion] = useState('');
@@ -57,6 +60,7 @@ const NotePane = ({ // Removed ref from props
         // Sort notes by creation date if not already sorted by backend
         const sortedNotes = data.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
         setNotes(sortedNotes);
+        setCurrentNotesPage(1); // <<< ADD THIS LINE to reset page on book change
       } catch (err) {
         console.error('Failed to fetch notes for NotePane:', err);
         setError(`Failed to load notes: ${err.message || 'Unknown error'}`);
@@ -100,7 +104,15 @@ const NotePane = ({ // Removed ref from props
 
 
       // Update NotePane's local list of notes for display
-      setNotes(prevNotes => [...prevNotes, savedNote].sort((a, b) => new Date(a.created_at) - new Date(b.created_at)));
+      setNotes(prevNotes => {
+        const updatedNotesList = [...prevNotes, savedNote].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+        
+        // Calculate new total pages based on the updated list and go to the last page
+        const newTotalPages = Math.ceil(updatedNotesList.length / notesPerPage);
+        setCurrentNotesPage(newTotalPages); // <<< ADD THIS LINE
+
+        return updatedNotesList;
+      });
       
       // Call the callback prop to inform BookView
       if (onNewNoteSaved) {
@@ -134,7 +146,22 @@ const NotePane = ({ // Removed ref from props
         const errorData = await response.json().catch(() => ({ detail: "Failed to delete note. Server error." }));
         throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
       }
-      setNotes(prevNotes => prevNotes.filter(note => note._id !== noteIdToDelete)); // USE _id FOR FILTERING
+      setNotes(prevNotes => {
+        const updatedNotesList = prevNotes.filter(note => note._id !== noteIdToDelete);
+        
+        // Adjust current page if necessary
+        if (updatedNotesList.length > 0) {
+          const newTotalPages = Math.ceil(updatedNotesList.length / notesPerPage);
+          if (currentNotesPage > newTotalPages) {
+            setCurrentNotesPage(newTotalPages);
+          } else if (currentNotesPage === 0 && newTotalPages > 0) { // Should ideally not happen
+            setCurrentNotesPage(1);
+          }
+        } else { // No notes left
+          setCurrentNotesPage(1);
+        }
+        return updatedNotesList;
+      });
       logger.info(`Note with ID ${noteIdToDelete} deleted successfully from UI.`);
     } catch (err) {
       logger.error('Error deleting note:', err);
@@ -200,6 +227,12 @@ const NotePane = ({ // Removed ref from props
     return <div className="note-pane" style={{ color: 'red' }}>Error loading notes: {error}</div>; // Removed ref
   }
 
+  // Calculate notes for the current page
+  const indexOfLastNote = currentNotesPage * notesPerPage;
+  const indexOfFirstNote = indexOfLastNote - notesPerPage;
+  const currentNotesToDisplay = notes.slice(indexOfFirstNote, indexOfLastNote);
+  const totalNotePages = Math.ceil(notes.length / notesPerPage);
+
   return (
     <div className="note-pane"> {/* Removed ref, root div of NotePane */}
       <h2>Notes &amp; LLM Insights</h2>
@@ -234,15 +267,14 @@ const NotePane = ({ // Removed ref from props
         {/* REMOVED conditional messages about linking, now covered by selected-text-display */}
       </div>
 
+      {/* LLM Reading Assistance Section - MOVED HERE */}
       <div className="llm-interaction">
         <h3>LLM Reading Assistance</h3>
-        {/* <h4 style={{ marginTop: '20px' }}>Ask a Question</h4> REMOVED - Redundant with section H3 */}
         <textarea
             value={llmQuestion}
             onChange={(e) => setLlmQuestion(e.target.value)}
             placeholder="Ask a question about the book content or the selected text above..."
             rows="3"
-            // Inline style removed, will be handled by CSS
         />
         <button onClick={handleAskLLM} disabled={llmLoading || !bookId || !llmQuestion.trim()}>
             {llmLoading ? 'Asking...' : 'Ask LLM'}
@@ -251,24 +283,37 @@ const NotePane = ({ // Removed ref from props
         {llmAskResponse && (
             <div className="llm-response">
                 <h4>LLM Response:</h4>
-                <p>{llmAskResponse}</p> {/* This 'p' tag might need white-space: pre-wrap in CSS */}
-                {/* ADD THE NEW BUTTON AFTER THE <p> TAG, INSIDE .llm-response div */}
+                <p>{llmAskResponse}</p>
                 <button 
                   onClick={handleAddLlmResponseToNote} 
-                  className="button-add-to-note" // Use this class for styling
-                  style={{ marginTop: '10px' }} // Basic inline style for spacing
+                  className="button-add-to-note"
+                  style={{ marginTop: '10px' }}
                 >
                   Add to Current Note
                 </button>
             </div>
         )}
       </div>
+
+      {/* Add New Note Section - NOW AFTER LLM */}
+      <div className="new-note-form">
+        <h3>Add New Note</h3>
+        <textarea
+          value={newNoteContent}
+          onChange={(e) => setNewNoteContent(e.target.value)}
+          placeholder="Write your note here, referencing the selected text above if any..."
+          rows="4"
+        />
+        <button onClick={handleSaveNote} disabled={!newNoteContent.trim()}>
+          Save Note
+        </button>
+      </div>
       
       <div className="notes-list">
         <h3>Saved Notes</h3>
         {error && notes.length > 0 && <p className="error-message">Error loading notes: {error}. Displaying cached notes.</p>}
         {notes.length === 0 && !loading && <p>No notes yet. Add one above!</p>}
-        {notes.map(note => (
+        {currentNotesToDisplay.map(note => (
           <div
               key={note._id} // USE _id FOR KEY
               className={`note-item ${(note.global_character_offset !== null && note.global_character_offset !== undefined) ? 'clickable-note' : ''}`}
@@ -294,6 +339,20 @@ const NotePane = ({ // Removed ref from props
             </div>
           </div>
         ))}
+        {/* Notes Pagination Controls */}
+        {notes.length > notesPerPage && (
+          <div className="notes-pagination-controls">
+            <button onClick={handlePreviousNotesPage} disabled={currentNotesPage === 1}>
+              Previous
+            </button>
+            <span>
+              Page {currentNotesPage} of {totalNotePages}
+            </span>
+            <button onClick={handleNextNotesPage} disabled={currentNotesPage === totalNotePages}>
+              Next
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
