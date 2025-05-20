@@ -260,21 +260,6 @@ const NotePane = ({ // Removed ref from props
         </div>
       )}
 
-      <div className="new-note-form">
-        <h3>Add New Note</h3>
-        <textarea
-          value={newNoteContent}
-          onChange={(e) => setNewNoteContent(e.target.value)}
-          placeholder="Write your note here, referencing the selected text above if any..."
-          rows="4"
-          // Inline style removed, will be handled by CSS
-        />
-        <button onClick={handleSaveNote} disabled={!newNoteContent.trim()}>
-          Save Note
-        </button>
-        {/* REMOVED conditional messages about linking, now covered by selected-text-display */}
-      </div>
-
       {/* LLM Reading Assistance Section - MOVED HERE */}
       <div className="llm-interaction">
         <h3>LLM Reading Assistance</h3>
