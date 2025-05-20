@@ -736,23 +736,16 @@
 
   .bookmark-dropdown-menu {
     position: absolute;
-    top: 100%;
+    top: 100%; /* Position below the button */
     
-    /* --- Dropdown Width and Centering Logic --- */
-    /* Option 1: Center relative to the button, but constrain width */
-    left: 50%;
-    transform: translateX(-50%);
+    left: 0; /* Align to the left edge of the parent (.bookmark-menu-container) */
+    transform: translateX(0); /* Reset any previous transform */
+    
     width: auto; /* Let content determine width initially */
-    min-width: 180px; /* Minimum sensible width for dropdown items */
-    max-width: calc(100vw - 30px); /* Max width is viewport width minus some padding */
+    min-width: 200px; /* Minimum sensible width for dropdown items */
+    max-width: 280px; /* A fixed maximum width for mobile dropdowns */
+                      /* Adjust this value as needed based on your content */
     
-    /* Option 2: Align to left of button, constrain width (if button is near left edge) */
-    /* left: 0; */
-    /* transform: translateX(0); */
-    /* width: auto; */
-    /* min-width: 180px; */
-    /* max-width: 280px; /* Or a fixed max like 280px */
-
     box-sizing: border-box; 
     background-color: white;
     border: 1px solid #ccc;
