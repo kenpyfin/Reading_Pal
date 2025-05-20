@@ -9,6 +9,13 @@ const BookPane = forwardRef(({ markdownContent, imageUrls, onTextSelect }, ref) 
   const MIN_FONT_SIZE = 10;
   const MAX_FONT_SIZE = 32;
 
+  // --- NEW: State and constants for Line Height ---
+  const [lineHeight, setLineHeight] = useState(1.6); // Default line height (unitless multiplier)
+  const LINE_HEIGHT_STEP = 0.1;
+  const MIN_LINE_HEIGHT = 1.2;
+  const MAX_LINE_HEIGHT = 2.5;
+  // --- END NEW ---
+
   const increaseFontSize = () => {
     setFontSize(prevSize => Math.min(prevSize + FONT_SIZE_STEP, MAX_FONT_SIZE));
   };
@@ -16,6 +23,16 @@ const BookPane = forwardRef(({ markdownContent, imageUrls, onTextSelect }, ref) 
   const decreaseFontSize = () => {
     setFontSize(prevSize => Math.max(MIN_FONT_SIZE, prevSize - FONT_SIZE_STEP));
   };
+
+  // --- NEW: Functions to adjust line height ---
+  const increaseLineHeight = () => {
+    setLineHeight(prevHeight => parseFloat(Math.min(prevHeight + LINE_HEIGHT_STEP, MAX_LINE_HEIGHT).toFixed(2)));
+  };
+
+  const decreaseLineHeight = () => {
+    setLineHeight(prevHeight => parseFloat(Math.max(MIN_LINE_HEIGHT, prevHeight - LINE_HEIGHT_STEP).toFixed(2)));
+  };
+  // --- END NEW ---
 
   const processSelection = useCallback(() => {
     const selection = window.getSelection();
@@ -125,16 +142,28 @@ const BookPane = forwardRef(({ markdownContent, imageUrls, onTextSelect }, ref) 
           right: '10px', 
           display: 'flex', 
           alignItems: 'center',
-          zIndex: 10 // Ensure it's above the markdown content
+          zIndex: 10,
+          backgroundColor: 'rgba(255, 255, 255, 0.8)', // Optional: slight background for better visibility
+          padding: '3px 5px',                         // Optional: padding for the control box
+          borderRadius: '4px'                         // Optional: rounded corners
         }}
       >
-        <button onClick={decreaseFontSize} style={{ marginRight: '5px' }}>A-</button>
-        <span style={{ margin: '0 10px', fontSize: '14px' /* Slightly smaller display for the size itself */ }}>{fontSize}px</span>
-        <button onClick={increaseFontSize} style={{ marginLeft: '5px' }}>A+</button>
-        {/* Removed <h2>Book Content</h2> */}
+        {/* Font Size Controls */}
+        <button onClick={decreaseFontSize} className="font-control-btn" title="Decrease font size">A-</button>
+        <span style={{ margin: '0 8px', fontSize: '13px', minWidth: '40px', textAlign: 'center' }}>{fontSize}px</span>
+        <button onClick={increaseFontSize} className="font-control-btn" title="Increase font size">A+</button>
+
+        {/* --- NEW: Line Height Controls --- */}
+        <span style={{ borderLeft: '1px solid #ccc', height: '20px', margin: '0 10px' }}></span> {/* Separator */}
+        
+        <button onClick={decreaseLineHeight} className="font-control-btn" title="Decrease line spacing">LH-</button>
+        <span style={{ margin: '0 8px', fontSize: '13px', minWidth: '35px', textAlign: 'center' }}>{lineHeight.toFixed(1)}</span>
+        <button onClick={increaseLineHeight} className="font-control-btn" title="Increase line spacing">LH+</button>
+        {/* --- END NEW --- */}
       </div>
-      {/* Apply font size to this div which wraps the markdown content */}
-      <div style={{ fontSize: `${fontSize}px` }}> 
+      
+      {/* Apply font size AND line height to this div which wraps the markdown content */}
+      <div style={{ fontSize: `${fontSize}px`, lineHeight: lineHeight /* Apply unitless line height */ }}> 
         {markdownContent ? (
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}

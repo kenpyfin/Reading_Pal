@@ -65,21 +65,28 @@
 
 /* Font control buttons in BookPane */
 .font-control-btn {
-  padding: 6px 10px; /* Default padding */
-  font-size: 1em;    /* Default font size */
-  min-width: 30px; /* Ensure a minimum tap area */
+  padding: 5px 8px; /* Adjusted padding for potentially smaller buttons */
+  font-size: 0.9em;    /* Adjusted font size */
+  min-width: 30px; 
   line-height: 1;
   border: 1px solid #ccc;
   background-color: #f8f9fa;
-  border-radius: 4px;
+  border-radius: 3px; /* Slightly smaller radius */
   cursor: pointer;
-  /* Ensure it doesn't inherit unwanted styles from .control-button if used elsewhere */
-  margin-left: 0; /* Reset margin if it's part of a group that adds margin */
+  margin-left: 0; 
+  color: #333; /* Ensure text color is set */
+  display: inline-flex; /* Helps with alignment if icons are used */
+  align-items: center;
+  justify-content: center;
 }
 .font-control-btn:hover {
   background-color: #e9ecef;
+  border-color: #bbb;
 }
-
+.font-control-btn:active {
+  background-color: #dee2e6;
+  border-color: #aaa;
+}
 
 /* Pagination controls styling */
 /* ... keep existing .pagination-controls and its children styles ... */
@@ -803,10 +810,20 @@
     margin: 0 3px;
   }
 
+  .font-controls {
+    /* Optional: Adjust positioning or size for mobile if needed */
+    /* top: 5px; */
+    /* right: 5px; */
+    /* padding: 2px 3px; */
+  }
   .font-control-btn {
-    padding: 5px 8px; /* Smaller padding on mobile */
-    font-size: 0.85em; /* Slightly smaller font on mobile */
-    min-width: 28px;
+    padding: 4px 6px;
+    font-size: 0.8em;
+    min-width: 25px;
+  }
+  .font-controls span { /* Target the spans displaying values */
+    font-size: 12px !important; /* Ensure mobile font size for value display is small */
+    margin: 0 5px !important; /* Adjust margin for mobile */
   }
   
   /* Adjust pagination controls for mobile */
