@@ -12,23 +12,28 @@ import asyncio # Import asyncio for background tasks
 load_dotenv()
 
 # Import settings from the new config file
-from backend.core.config import settings # ADD THIS LINE
+# from backend.core.config import settings # REMOVE THIS LINE
 
 # Configure logging
-logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO")) # Keep using os.getenv for LOG_LEVEL if not in Settings
+logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Reading Pal Backend API")
 
 # Add SessionMiddleware - THIS MUST BE ADDED BEFORE ROUTERS THAT USE SESSIONS/OAUTH
 # It's used by Authlib to store temporary states (e.g., OAuth state parameter)
-app.add_middleware(SessionMiddleware, secret_key=settings.SECRET_KEY) # Use SECRET_KEY from settings
+SECRET_KEY_MAIN = os.getenv("SECRET_KEY", "a_very_secret_key_that_should_be_changed_in_production_main")
+if SECRET_KEY_MAIN == "a_very_secret_key_that_should_be_changed_in_production_main":
+    print("WARNING: main.py: SECRET_KEY is using its default insecure value. "
+          "Please generate a strong, unique key and set it in your .env file for production environments.")
+app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY_MAIN)
 
 # Add CORS middleware
+FRONTEND_URL_MAIN = os.getenv("FRONTEND_URL", "http://localhost:3100")
 app.add_middleware(
     CORSMiddleware,
     # Adjust allow_origins to your frontend URL in production for better security
-    allow_origins=[settings.FRONTEND_URL, "http://localhost:3000", "http://localhost:3100"], # Example: allow frontend
+    allow_origins=[FRONTEND_URL_MAIN, "http://localhost:3000", "http://localhost:3100"], # Example: allow frontend
     allow_credentials=True, # Important for cookies
     allow_methods=["*"],
     allow_headers=["*"],
