@@ -157,6 +157,10 @@ async def delete_book_record(book_id: str) -> bool:
         return False
     
     try:
+        # Ensure book_id is a valid ObjectId string before attempting conversion
+        if not ObjectId.is_valid(book_id):
+            logger.warning(f"Invalid Book ID format for deletion: {book_id}")
+            return False
         object_id = ObjectId(book_id)
         delete_result = await database.books.delete_one({"_id": object_id})
         if delete_result.deleted_count == 0:
@@ -170,6 +174,103 @@ async def delete_book_record(book_id: str) -> bool:
     except Exception as e:
         logger.error(f"Error deleting book record {book_id} from MongoDB: {e}", exc_info=True)
         return False
+
+# --- User Database Operations ---
+
+async def get_user_by_id(user_id: str) -> Optional[Dict[str, Any]]:
+    """Retrieves a user by their MongoDB ObjectId string."""
+    database = get_database()
+    if database is None:
+        logger.error("Database not initialized for get_user_by_id.")
+        return None
+    try:
+        if not ObjectId.is_valid(user_id):
+            logger.warning(f"Invalid user ID format for get_user_by_id: {user_id}")
+            return None
+        obj_id = ObjectId(user_id)
+        user_doc = await database.users.find_one({"_id": obj_id})
+        return user_doc  # Returns dict or None
+    except Exception as e:
+        logger.error(f"Error fetching user by ID {user_id}: {e}", exc_info=True)
+        return None
+
+async def get_user_by_google_id(google_id: str) -> Optional[Dict[str, Any]]:
+    """Retrieves a user by their Google ID."""
+    database = get_database()
+    if database is None:
+        logger.error("Database not initialized for get_user_by_google_id.")
+        return None
+    try:
+        user_doc = await database.users.find_one({"google_id": google_id})
+        return user_doc # Returns dict or None
+    except Exception as e:
+        logger.error(f"Error fetching user by google_id {google_id}: {e}", exc_info=True)
+        return None
+
+async def create_or_update_user_from_google(user_data: 'UserCreate') -> Optional[str]:
+    """
+    Creates a new user or updates an existing user based on Google profile information.
+    Returns the user's MongoDB ObjectId as a string if successful, otherwise None.
+    'user_data' is an instance of UserCreate Pydantic model.
+    """
+    database = get_database()
+    if database is None:
+        logger.error("Database not initialized for create_or_update_user_from_google.")
+        return None
+
+    now = datetime.utcnow()
+    
+    # Check if user already exists by google_id
+    existing_user = await database.users.find_one({"google_id": user_data.google_id})
+
+    if existing_user:
+        # User exists, update their information
+        update_fields = {
+            "email": user_data.email,
+            "full_name": user_data.full_name,
+            "picture": user_data.picture,
+            "updated_at": now
+        }
+        # Remove None values from update_fields to avoid overwriting existing fields with None
+        update_fields = {k: v for k, v in update_fields.items() if v is not None}
+
+        if not update_fields: # Nothing to update other than updated_at
+            await database.users.update_one(
+                {"_id": existing_user["_id"]},
+                {"$set": {"updated_at": now}}
+            )
+            logger.info(f"User {user_data.email} (Google ID: {user_data.google_id}) already exists. Updated 'updated_at'.")
+            return str(existing_user["_id"])
+
+        result = await database.users.update_one(
+            {"_id": existing_user["_id"]},
+            {"$set": update_fields}
+        )
+        if result.modified_count > 0:
+            logger.info(f"Updated existing user {user_data.email} (Google ID: {user_data.google_id}).")
+        else:
+            logger.info(f"User {user_data.email} (Google ID: {user_data.google_id}) data unchanged, updated 'updated_at'.")
+        return str(existing_user["_id"])
+    else:
+        # User does not exist, create new user
+        new_user_doc = {
+            "google_id": user_data.google_id,
+            "email": user_data.email,
+            "full_name": user_data.full_name,
+            "picture": user_data.picture,
+            "is_active": True, # Default for new users
+            "is_superuser": False, # Default for new users
+            "created_at": now,
+            "updated_at": now
+        }
+        try:
+            result = await database.users.insert_one(new_user_doc)
+            logger.info(f"Created new user {user_data.email} (Google ID: {user_data.google_id}) with DB ID: {result.inserted_id}")
+            return str(result.inserted_id)
+        except Exception as e:
+            logger.error(f"Error creating new user {user_data.email}: {e}", exc_info=True)
+            # Consider specific duplicate key error handling if email also has a unique index
+            return None
 
 # --- Keep Note Database Operations ---
 # ... (rest of the note functions remain unchanged)

@@ -1,6 +1,7 @@
 import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.sessions import SessionMiddleware # Import SessionMiddleware
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 import logging
@@ -10,17 +11,25 @@ import asyncio # Import asyncio for background tasks
 # Load environment variables
 load_dotenv()
 
+# Import settings from the new config file
+from backend.core.config import settings # ADD THIS LINE
+
 # Configure logging
-logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO")) # Keep using os.getenv for LOG_LEVEL if not in Settings
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Reading Pal Backend API")
 
+# Add SessionMiddleware - THIS MUST BE ADDED BEFORE ROUTERS THAT USE SESSIONS/OAUTH
+# It's used by Authlib to store temporary states (e.g., OAuth state parameter)
+app.add_middleware(SessionMiddleware, secret_key=settings.SECRET_KEY) # Use SECRET_KEY from settings
+
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # TODO: Restrict origins in production
-    allow_credentials=True,
+    # Adjust allow_origins to your frontend URL in production for better security
+    allow_origins=[settings.FRONTEND_URL, "http://localhost:3000", "http://localhost:3100"], # Example: allow frontend
+    allow_credentials=True, # Important for cookies
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -68,15 +77,17 @@ async def health_check():
 
 # Include routers for books, notes, llm
 # Use absolute imports relative to the /app directory
-from backend.api import books # Import the books router
-from backend.api import notes # Import the notes router
-from backend.api import llm # Import the llm router
-from backend.api import bookmarks as bookmarks_router # Adjust import path if needed
+from backend.api import books
+from backend.api import notes
+from backend.api import llm
+from backend.api import bookmarks as bookmarks_router
+from backend.api import auth_routes as auth_router # Import the new auth router
 from backend.services.cleanup_service import run_cleanup_task # Import the cleanup task
 
-app.include_router(books.router, prefix="/api/books", tags=["books"]) # Add /api prefix here
-app.include_router(notes.router, prefix="/api/notes", tags=["notes"]) # Add /api prefix here
-app.include_router(llm.router, prefix="/api/llm", tags=["llm"]) # Add /api prefix here
+app.include_router(auth_router.router, prefix="/api/auth", tags=["authentication"]) # Add the auth router
+app.include_router(books.router, prefix="/api/books", tags=["books"])
+app.include_router(notes.router, prefix="/api/notes", tags=["notes"])
+app.include_router(llm.router, prefix="/api/llm", tags=["llm"])
 app.include_router(bookmarks_router.router, prefix="/api/bookmarks", tags=["bookmarks"])
 
 # Add database connection logic (connect on startup/shutdown)
