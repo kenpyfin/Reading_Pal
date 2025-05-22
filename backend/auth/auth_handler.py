@@ -41,9 +41,3 @@ class AuthHandler:
             return None
 
 auth_handler_instance = AuthHandler()
-```
-````
-
-````python
-backend/api/auth_routes.py
-<<<<<<< SEARCH

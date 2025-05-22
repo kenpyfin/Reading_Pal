@@ -40,10 +40,3 @@ if not settings.GOOGLE_CLIENT_ID or not settings.GOOGLE_CLIENT_SECRET:
 if settings.SECRET_KEY == "a_very_secret_key_that_should_be_changed_in_production":
     print("WARNING: SECRET_KEY is using its default insecure value. "
           "Please generate a strong, unique key and set it in your .env file for production environments.")
-
-```
-````
-
-````python
-backend/models/user.py
-<<<<<<< SEARCH

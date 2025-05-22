@@ -7,6 +7,9 @@ from bson.errors import InvalidId # Import InvalidId for specific error handling
 from typing import Optional, List, Dict, Any # Import types
 from datetime import datetime # Import datetime
 
+# Import UserCreate for type hinting
+from backend.models.user import UserCreate 
+
 load_dotenv()
 logger = logging.getLogger(__name__)
 
