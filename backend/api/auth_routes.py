@@ -1,12 +1,13 @@
 import logging
+import os # Add os import
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordRequestForm
-# from authlib.integrations.starlette_client import OAuth # Will be needed for OAuth
-# from starlette.responses import RedirectResponse # Will be needed for OAuth
+from authlib.integrations.starlette_client import OAuth # Will be needed for OAuth
+from starlette.responses import RedirectResponse # Will be needed for OAuth
 
-# from backend.auth.auth_handler import auth_handler_instance # For JWT creation/validation
-# from backend.db.mongodb import get_user_by_email, create_user # Example db functions
-# from backend.models.user import UserCreate, User # Example models
+from backend.auth.auth_handler import auth_handler_instance, ACCESS_TOKEN_EXPIRE_MINUTES # For JWT creation/validation
+from backend.db.mongodb import get_user_by_google_id, create_or_update_user_from_google # Example db functions
+from backend.models.user import UserCreate, User # Example models
 # from backend.core.config import settings # If you re-introduce settings
 
 logger = logging.getLogger(__name__)
@@ -31,23 +32,23 @@ router = APIRouter()
 #     raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Login endpoint not implemented")
 
 
-# Placeholder for Google OAuth login - you'll need to implement this
-# GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
-# GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
-# GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI")
+# Google OAuth login
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
+GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI") # This should match the one in your Google Cloud Console
 
-# if GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET:
-#     oauth = OAuth()
-#     oauth.register(
-#         name='google',
-#         client_id=GOOGLE_CLIENT_ID,
-#         client_secret=GOOGLE_CLIENT_SECRET,
-#         server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
-#         client_kwargs={'scope': 'openid email profile'}
-#     )
-# else:
-#     logger.warning("Google OAuth credentials not found. Google login will be disabled.")
-#     oauth = None
+if GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET:
+    oauth = OAuth()
+    oauth.register(
+        name='google',
+        client_id=GOOGLE_CLIENT_ID,
+        client_secret=GOOGLE_CLIENT_SECRET,
+        server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
+        client_kwargs={'scope': 'openid email profile'}
+    )
+else:
+    logger.warning("Google OAuth credentials (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET) not found in .env. Google login will be disabled.")
+    oauth = None
 
 
 # @router.get('/login/google', include_in_schema=False) # Actual Google login initiation
