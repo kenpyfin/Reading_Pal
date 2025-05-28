@@ -51,57 +51,76 @@ else:
     oauth = None
 
 
-# @router.get('/login/google', include_in_schema=False) # Actual Google login initiation
-# async def login_via_google(request: Request):
-#     if not oauth:
-#         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Google OAuth not configured")
-#     redirect_uri = GOOGLE_REDIRECT_URI or request.url_for('auth_via_google')
-#     return await oauth.google.authorize_redirect(request, redirect_uri)
-
-
-# @router.get('/auth/google/callback', include_in_schema=False) # Google callback
-# async def auth_via_google(request: Request):
-#     if not oauth:
-#         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Google OAuth not configured")
-#     try:
-#         token = await oauth.google.authorize_access_token(request)
-#     except Exception as e:
-#         logger.error(f"Error obtaining Google access token: {e}")
-#         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Could not authorize Google token")
+@router.get('/login/google', include_in_schema=False) # Actual Google login initiation
+async def login_via_google(request: Request):
+    if not oauth:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Google OAuth not configured on server.")
     
-#     user_info = token.get('userinfo')
-#     if not user_info:
-#         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Could not retrieve user info from Google")
-
-    # Here you would typically:
-    # 1. Check if the user exists in your database by email (user_info.email)
-    # 2. If not, create a new user record.
-    # 3. Create a JWT token for your application.
-    # 4. Redirect the user to the frontend with the token or set a cookie.
+    if not GOOGLE_REDIRECT_URI:
+        logger.error("GOOGLE_REDIRECT_URI is not set in environment variables.")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Google OAuth redirect URI not configured.")
     
-    # Example:
-    # db_user = await get_user_by_google_id(user_info.get("sub"))
-    # if not db_user:
-    #     new_user_data = UserCreate(
-    #         email=user_info.email,
-    #         full_name=user_info.name,
-    #         google_id=user_info.sub,
-    #         # other fields as necessary
-    #     )
-    #     user_id = await create_or_update_user_from_google(new_user_data) # Implement this DB function
-    #     if not user_id:
-    #         raise HTTPException(status_code=500, detail="Could not create or update user.")
-    # else:
-    #     user_id = db_user.get("id") # or "_id"
+    redirect_uri = GOOGLE_REDIRECT_URI
+    logger.info(f"Redirecting to Google for OAuth. Callback URI: {redirect_uri}")
+    return await oauth.google.authorize_redirect(request, redirect_uri)
 
-    # app_token = auth_handler_instance.create_access_token(data={"sub": user_info.email, "user_id": str(user_id)})
+
+@router.get('/auth/google/callback', include_in_schema=False) # Google callback
+async def auth_via_google(request: Request):
+    if not oauth:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Google OAuth not configured on server.")
+    try:
+        token = await oauth.google.authorize_access_token(request)
+    except Exception as e:
+        logger.error(f"Error obtaining Google access token: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Could not authorize Google token: {str(e)}")
     
-    # For now, just return user info as a placeholder
-    # In a real app, you'd redirect to frontend with a token
-    # response = RedirectResponse(url="/?token=" + app_token) # Example redirect
-    # response.set_cookie("auth_token", app_token, httponly=True, max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60, samesite="Lax")
-    # return response
-#     logger.info(f"Google auth callback for user: {user_info.get('email')} - placeholder")
-#     return {"message": "Google authentication successful (placeholder)", "user_info": user_info}
+    user_info = token.get('userinfo')
+    if not user_info:
+        logger.error("Could not retrieve user info from Google token.")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Could not retrieve user info from Google")
+
+    logger.info(f"Google user info received: {user_info.get('email')}")
+    
+    db_user = await get_user_by_google_id(user_info.get("sub"))
+    if not db_user:
+        logger.info(f"User with google_id {user_info.get('sub')} not found. Creating new user.")
+        new_user_data = UserCreate( 
+            email=user_info.email,
+            full_name=user_info.get("name"),
+            google_id=user_info.get("sub"),
+            picture=user_info.get("picture") if user_info.get("picture") else None, # Correctly pass picture
+        )
+        user_id = await create_or_update_user_from_google(new_user_data) 
+        if not user_id:
+            logger.error("Failed to create or update user in database.")
+            raise HTTPException(status_code=500, detail="Could not create or update user.")
+        logger.info(f"New user created with ID: {user_id}")
+    else:
+        user_id = str(db_user.get("id") or db_user.get("_id")) 
+        logger.info(f"User found with ID: {user_id}")
+        # Optionally, update user details here if they've changed (e.g., picture, full_name)
+        # This is already handled by create_or_update_user_from_google if it finds an existing user.
+
+    app_token_data = {"sub": user_info.email, "user_id": str(user_id), "name": user_info.get("name")}
+    app_token = auth_handler_instance.create_access_token(data=app_token_data)
+    
+    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3100") 
+    redirect_url_on_success = f"{frontend_url}/auth/callback?token={app_token}" 
+    
+    logger.info(f"Redirecting to frontend: {redirect_url_on_success}")
+    response = RedirectResponse(url=redirect_url_on_success)
+    
+    # To use HttpOnly cookies instead of query parameter (more secure):
+    # response.set_cookie(
+    #     key="auth_token",
+    #     value=app_token,
+    #     httponly=True,
+    #     max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+    #     samesite="Lax", # Or "Strict"
+    #     secure=request.url.scheme == "https", # True if served over HTTPS
+    #     path="/"
+    # )
+    return response
 
 # Add more authentication routes here (e.g., register, logout, password reset)
