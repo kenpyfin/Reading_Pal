@@ -86,10 +86,10 @@ from backend.api import books
 from backend.api import notes
 from backend.api import llm
 from backend.api import bookmarks as bookmarks_router
-from backend.api import auth_routes as auth_router # Import the new auth router
+# from backend.api import auth_routes as auth_router # Import the new auth router
 from backend.services.cleanup_service import run_cleanup_task # Import the cleanup task
 
-app.include_router(auth_router.router, prefix="/api/auth", tags=["authentication"]) # Add the auth router
+# app.include_router(auth_router.router, prefix="/api/auth", tags=["authentication"]) # Add the auth router
 app.include_router(books.router, prefix="/api/books", tags=["books"])
 app.include_router(notes.router, prefix="/api/notes", tags=["notes"])
 app.include_router(llm.router, prefix="/api/llm", tags=["llm"])
