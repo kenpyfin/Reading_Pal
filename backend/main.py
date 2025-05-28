@@ -27,6 +27,7 @@ if SECRET_KEY_MAIN == "a_very_secret_key_that_should_be_changed_in_production_ma
     print("WARNING: main.py: SECRET_KEY is using its default insecure value. "
           "Please generate a strong, unique key and set it in your .env file for production environments.")
 app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY_MAIN)
+logger.info(f"SessionMiddleware initialized with SECRET_KEY_MAIN: {'********' if SECRET_KEY_MAIN and SECRET_KEY_MAIN != 'a_very_secret_key_that_should_be_changed_in_production_main' else 'USING_DEFAULT_OR_UNSET'}")
 
 # Add CORS middleware
 FRONTEND_URL_MAIN = os.getenv("FRONTEND_URL", "http://localhost:3100")
