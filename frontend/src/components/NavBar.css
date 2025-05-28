@@ -41,3 +41,23 @@
 .nav-link:hover {
     color: #ddd; /* Slightly lighter color on hover */
 }
+
+.nav-links-right {
+  margin-left: auto; /* Pushes this to the right */
+}
+
+.logout-button {
+  background-color: #f44336; /* Red color for logout */
+  color: white;
+  border: none;
+  padding: 8px 15px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 1em; /* Match nav-link font size */
+  font-family: inherit; /* Match nav-link font family */
+  transition: background-color 0.3s ease;
+}
+
+.logout-button:hover {
+  background-color: #d32f2f; /* Darker red on hover */
+}
