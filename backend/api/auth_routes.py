@@ -99,8 +99,17 @@ async def login_via_google(request: Request):
 async def auth_via_google(request: Request):
     if not oauth:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Google OAuth not configured on server.")
+    
+    logger.info("Attempting to authorize Google access token...")
+    # Log session keys to help debug state persistence issues
+    if hasattr(request, 'session') and request.session:
+        logger.debug(f"Session keys before authorize_access_token: {list(request.session.keys())}")
+    else:
+        logger.debug("No session or session is empty before authorize_access_token.")
+        
     try:
         token = await oauth.google.authorize_access_token(request)
+        logger.info("Successfully authorized Google access token.")
     except OAuthError as error:
         # Log the detailed error from authlib for better debugging
         logger.error(f"OAuthError during Google token authorization: {error.error} - Description: {error.description}", exc_info=True)
