@@ -97,13 +97,15 @@ async def auth_via_google(request: Request):
             google_id=user_info.get("sub"),
             picture=user_info.get("picture") if user_info.get("picture") else None, # Correctly pass picture
         )
+        logger.info(f"Attempting to create user with data: {new_user_data.model_dump_json(indent=2)}")
         user_id = await create_or_update_user_from_google(new_user_data) 
         if not user_id:
-            logger.error("Failed to create or update user in database.")
+            logger.error(f"Failed to create user in database. DB function returned no user_id. Data attempted: {new_user_data.model_dump_json(indent=2)}")
             raise HTTPException(status_code=500, detail="Could not create or update user.")
         logger.info(f"New user created with ID: {user_id}")
     else:
         user_id = str(db_user.get("id") or db_user.get("_id")) 
+        # Note: The update path for existing users is handled within create_or_update_user_from_google itself.
         logger.info(f"User found with ID: {user_id}")
         # Optionally, update user details here if they've changed (e.g., picture, full_name)
         # This is already handled by create_or_update_user_from_google if it finds an existing user.
