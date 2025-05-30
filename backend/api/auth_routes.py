@@ -14,6 +14,15 @@ from backend.models.user import UserCreate, User # Example models
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# Load the main application secret key for Authlib's own state signing.
+# This MUST be the same key used by SessionMiddleware in main.py.
+APP_SECRET_KEY = os.getenv("SECRET_KEY", "a_very_secret_key_that_should_be_changed_in_production_main")
+# The default value here matches the one in main.py's SessionMiddleware setup.
+
+if APP_SECRET_KEY == "a_very_secret_key_that_should_be_changed_in_production_main":
+    logger.warning("auth_routes.py: SECRET_KEY is using its default insecure value for Authlib OAuth config. "
+                   "Ensure SECRET_KEY is set in your .env file for production.")
+
 # Example placeholder for a login route - you'll need to implement this
 # @router.post("/token", summary="Create access token for user login")
 # async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
@@ -39,7 +48,10 @@ GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI") # This should match the one in your Google Cloud Console
 
 if GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET:
-    oauth = OAuth()
+    # Pass config to OAuth. Authlib can use SECRET_KEY from this config
+    # for its own state signing if its internal logic dictates.
+    oauth_app_config = {'SECRET_KEY': APP_SECRET_KEY}
+    oauth = OAuth(config=oauth_app_config)
     oauth.register(
         name='google',
         client_id=GOOGLE_CLIENT_ID,
