@@ -3,6 +3,7 @@ import os # Add os import
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from authlib.integrations.starlette_client import OAuth # Will be needed for OAuth
+from authlib.integrations.base_client import OAuthError # Import OAuthError
 from starlette.responses import RedirectResponse # Will be needed for OAuth
 
 from backend.auth.auth_handler import auth_handler_instance, ACCESS_TOKEN_EXPIRE_MINUTES # For JWT creation/validation
@@ -71,9 +72,14 @@ async def auth_via_google(request: Request):
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Google OAuth not configured on server.")
     try:
         token = await oauth.google.authorize_access_token(request)
-    except Exception as e:
-        logger.error(f"Error obtaining Google access token: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Could not authorize Google token: {str(e)}")
+    except OAuthError as error:
+        # Log the detailed error from authlib for better debugging
+        logger.error(f"OAuthError during Google token authorization: {error.error} - Description: {error.description}", exc_info=True)
+        # error.description often contains "mismatching_state: CSRF Warning! State not equal in request and response."
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Could not authorize Google token: {error.description}")
+    except Exception as e: # Catch other unexpected errors
+        logger.error(f"Unexpected error obtaining Google access token: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred during Google authentication.")
     
     user_info = token.get('userinfo')
     if not user_info:
