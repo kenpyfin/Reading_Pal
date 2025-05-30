@@ -23,6 +23,21 @@ if APP_SECRET_KEY == "a_very_secret_key_that_should_be_changed_in_production_mai
     logger.warning("auth_routes.py: SECRET_KEY is using its default insecure value for Authlib OAuth config. "
                    "Ensure SECRET_KEY is set in your .env file for production.")
 
+# Workaround for a bug in older Authlib versions where dict.get is called with a keyword argument for default.
+class ConfigWrapper:
+    def __init__(self, dictionary):
+        self._dict = dictionary
+
+    def get(self, key, default=None): # Matches the problematic call signature from Authlib
+        # Internally, call the standard dict.get() correctly.
+        return self._dict.get(key, default)
+
+    def __getitem__(self, key):
+        return self._dict[key]
+
+    def __contains__(self, key):
+        return key in self._dict
+
 # Example placeholder for a login route - you'll need to implement this
 # @router.post("/token", summary="Create access token for user login")
 # async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
@@ -50,8 +65,10 @@ GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI") # This should match the o
 if GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET:
     # Pass config to OAuth. Authlib can use SECRET_KEY from this config
     # for its own state signing if its internal logic dictates.
-    oauth_app_config = {'SECRET_KEY': APP_SECRET_KEY}
-    oauth = OAuth(config=oauth_app_config)
+    # Wrap the config dictionary with ConfigWrapper to handle Authlib's incorrect dict.get() call.
+    oauth_app_config_dict = {'SECRET_KEY': APP_SECRET_KEY}
+    oauth_app_config_wrapper = ConfigWrapper(oauth_app_config_dict)
+    oauth = OAuth(config=oauth_app_config_wrapper)
     oauth.register(
         name='google',
         client_id=GOOGLE_CLIENT_ID,
