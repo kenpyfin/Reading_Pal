@@ -32,22 +32,48 @@ router = APIRouter()
 # Dependency to get current user_id from token
 async def get_current_user_id(request: Request) -> str:
     auth_header = request.headers.get("Authorization")
+    logger.debug(f"get_current_user_id: Authorization header: {auth_header}")
+
     if not auth_header:
+        logger.warning("get_current_user_id: Authorization header missing.")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    token = auth_header.split(" ")[1] if auth_header.startswith("Bearer ") else auth_header
-    payload = auth_handler_instance.decode_token(token)
-    if not payload or "user_id" not in payload:
+    parts = auth_header.split()
+    if parts[0].lower() != "bearer" or len(parts) == 1 or len(parts) > 2:
+        logger.warning(f"get_current_user_id: Invalid Authorization header format: {auth_header}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token or user_id missing",
+            detail="Invalid token format",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return payload["user_id"]
+    
+    token = parts[1]
+    logger.debug(f"get_current_user_id: Extracted token: {token[:20]}...") # Log only a portion for security
+
+    payload = auth_handler_instance.decode_token(token)
+    if not payload: # decode_token returns None on failure
+        logger.warning("get_current_user_id: Token decoding failed or returned no payload.")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token", # More specific detail
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+        
+    user_id = payload.get("user_id")
+    if not user_id:
+        logger.warning(f"get_current_user_id: 'user_id' not found in token payload. Payload: {payload}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User ID missing in token", # More specific detail
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    logger.debug(f"get_current_user_id: Successfully obtained user_id: {user_id}")
+    return user_id
 
 # Define container paths (matching docker-compose volumes)
 # Ensure these match the paths where markdown and images are stored *within the backend container*

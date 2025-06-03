@@ -35,20 +35,26 @@ class AuthHandler:
         return encoded_jwt
 
     def decode_token(self, token: str) -> Optional[Dict[str, Any]]:
+        # The "Bearer " prefix should ideally be stripped by the caller (e.g., in the dependency)
+        # However, we can keep a safety check here.
+        if token.lower().startswith("bearer "):
+            # This indicates the caller might not have stripped it, which is unusual if get_current_user_id is used.
+            # logger.warning("decode_token: Received token with 'Bearer ' prefix. Stripping it.")
+            token = token[7:]
+
         try:
-            # Remove "Bearer " prefix if present
-            if token.lower().startswith("bearer "):
-                token = token[7:]
-            
+            # logger.debug(f"decode_token: Attempting to decode token: {token[:20]}...") # Log only a portion
             payload = jwt.decode(token, SECRET_KEY, algorithms=[JWT_ALGORITHM])
+            # logger.debug(f"decode_token: Token decoded successfully. Payload: {payload}")
             return payload
         except jwt.ExpiredSignatureError:
-            # Log this or handle as needed
-            print("Token has expired")
+            logger.warning("decode_token: Token has expired.")
             return None
         except jwt.InvalidTokenError as e:
-            # Log this or handle as needed
-            print(f"Invalid token: {e}")
+            logger.warning(f"decode_token: Invalid token. Error: {e}")
+            return None
+        except Exception as e: # Catch any other unexpected JWT errors
+            logger.error(f"decode_token: An unexpected error occurred during token decoding: {e}", exc_info=True)
             return None
 
 auth_handler_instance = AuthHandler()
