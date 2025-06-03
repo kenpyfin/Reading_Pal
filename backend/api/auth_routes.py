@@ -108,7 +108,12 @@ async def auth_via_google(request: Request):
         logger.debug("No session or session is empty before authorize_access_token.")
         
     try:
-        token = await oauth.google.authorize_access_token(request)
+        # Explicitly pass the redirect_uri to ensure it matches the initial request
+        if not GOOGLE_REDIRECT_URI:
+            logger.error("GOOGLE_REDIRECT_URI is not set. Cannot authorize access token.")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Google OAuth redirect URI not configured for token exchange.")
+        
+        token = await oauth.google.authorize_access_token(request, redirect_uri=GOOGLE_REDIRECT_URI)
         logger.info("Successfully authorized Google access token.")
     except OAuthError as error:
         # Log the detailed error from authlib for better debugging
