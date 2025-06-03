@@ -32,6 +32,11 @@ server {
     location /api { # Matches any request starting with /api
         include /config/nginx/proxy.conf; # Common SWAG proxy settings (headers, etc.)
         
+        # Ensure the Authorization header is passed to the backend
+        proxy_set_header Authorization $http_authorization;
+        # Pass an empty value if the client does not send the header
+        proxy_pass_request_headers on; # Ensure all request headers are passed
+
         # The backend service expects the full path including /api, 
         # e.g., /api/books, /api/auth/callback
         proxy_pass http://$backend_app:$backend_port; 
