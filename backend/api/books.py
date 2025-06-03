@@ -5,7 +5,7 @@ import asyncio # Import asyncio
 import os
 import logging
 import requests # Import requests
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, status, Body, Response
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, status, Body, Response, Depends
 from typing import List, Optional, Dict, Any 
 from bson import ObjectId # Keep ObjectId import
 from bson.errors import InvalidId # Import InvalidId
@@ -24,9 +24,30 @@ from backend.db.mongodb import (
     delete_book_record, # Add delete_book_record
     get_database
 )
+from backend.auth.auth_handler import auth_handler_instance # For decoding JWT
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# Dependency to get current user_id from token
+async def get_current_user_id(request: Request) -> str:
+    auth_header = request.headers.get("Authorization")
+    if not auth_header:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    token = auth_header.split(" ")[1] if auth_header.startswith("Bearer ") else auth_header
+    payload = auth_handler_instance.decode_token(token)
+    if not payload or "user_id" not in payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token or user_id missing",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return payload["user_id"]
 
 # Define container paths (matching docker-compose volumes)
 # Ensure these match the paths where markdown and images are stored *within the backend container*
@@ -96,10 +117,11 @@ async def call_pdf_service_upload(file: UploadFile, title: Optional[str]):
 @router.post("/upload", response_model=Book)
 async def upload_pdf(
     file: UploadFile = File(...),
-    title: str = Form(None)
+    title: str = Form(None),
+    current_user_id: str = Depends(get_current_user_id)
 ):
     """
-    Uploads a PDF file, sends it to the processing service to start background processing,
+    Uploads a PDF file for the current user, sends it to the processing service to start background processing,
     saves the initial book record with job_id and status, and returns the book data.
     """
     logger.info(f"Received upload request for file: {file.filename}")
@@ -124,6 +146,7 @@ async def upload_pdf(
         # --- Prepare data using the Book model structure, matching DB schema ---
         # REMOVE id=None from the constructor
         book_to_save = Book(
+            user_id=current_user_id, # Associate book with the current user
             title=book_title,
             original_filename=file.filename,
             job_id=job_id,
@@ -178,9 +201,9 @@ async def upload_pdf(
 
 
 @router.get("/", response_model=List[Book], response_model_by_alias=False)
-async def list_books():
+async def list_books(current_user_id: str = Depends(get_current_user_id)):
     """
-    Retrieves a list of all books, excluding those with 'failed' status.
+    Retrieves a list of books for the current user, excluding those with 'failed' status.
     Setting response_model_by_alias=False ensures that if the Book model
     has a field named 'id' (e.g., id: SomeType = Field(alias='_id')),
     the output JSON key will be 'id', not '_id'.
@@ -190,6 +213,7 @@ async def list_books():
         # Define the projection to fetch only necessary fields
         projection = {
             "_id": 1,
+            "user_id": 1, # Include user_id in projection
             "title": 1,
             "original_filename": 1,
             "status": 1,
@@ -202,8 +226,9 @@ async def list_books():
             "processing_error": 1
         }
 
-        books_docs = await get_books(filter={"status": {"$ne": "failed"}}, projection=projection)
-        logger.info(f"Fetched {len(books_docs)} book documents from DB (excluding failed).")
+        # Filter books by the current user_id and status
+        books_docs = await get_books(filter={"user_id": current_user_id, "status": {"$ne": "failed"}}, projection=projection)
+        logger.info(f"Fetched {len(books_docs)} book documents from DB for user {current_user_id} (excluding failed).")
 
         # The list_books function currently constructs dictionaries with an "id" key.
         # When response_model=List[Book] and response_model_by_alias=False are used:
@@ -226,6 +251,7 @@ async def list_books():
             # then passing 'id' here is correct for validation.
             item_for_validation = {
                 "id": str(book_doc['_id']), # For Book model's 'id' field
+                "user_id": book_doc.get("user_id"), # Include user_id
                 "title": book_doc.get("title"),
                 "original_filename": book_doc.get("original_filename"),
                 "status": book_doc.get("status"),
@@ -252,19 +278,19 @@ async def list_books():
 
 
 @router.get("/{book_id}", response_model=Book)
-async def get_book_by_id(book_id: str):
+async def get_book_by_id(book_id: str, current_user_id: str = Depends(get_current_user_id)):
     """
-    Retrieves book data by its ID, reads markdown content from file if available.
+    Retrieves book data by its ID for the current user, reads markdown content from file if available.
     """
-    logger.info(f"Received request for book ID: {book_id}")
+    logger.info(f"Received request for book ID: {book_id} by user {current_user_id}")
 
-    book_data_doc = await get_book(book_id) # Fetches the raw document (dict)
+    book_data_doc = await get_book(book_id, current_user_id) # Fetches the raw document (dict) for the user
 
     if not book_data_doc:
-        logger.warning(f"Get endpoint: Book not found in DB for ID: {book_id}")
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found")
+        logger.warning(f"Get endpoint: Book not found in DB for ID: {book_id} and user {current_user_id}")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found or not owned by user")
 
-    logger.info(f"Get endpoint: Book found in DB for ID: {book_id}")
+    logger.info(f"Get endpoint: Book found in DB for ID: {book_id} and user {current_user_id}")
 
     # Convert raw doc to Book model to work with typed fields
     try:
@@ -550,8 +576,8 @@ class BookRenamePayload(BaseModel):
 
 # Add new endpoint for renaming a book
 @router.put("/{book_id}/rename", response_model=Book)
-async def rename_book(book_id: str, payload: BookRenamePayload = Body(...)):
-    logger.info(f"Attempting to rename book ID: {book_id} to '{payload.new_title}'")
+async def rename_book(book_id: str, payload: BookRenamePayload = Body(...), current_user_id: str = Depends(get_current_user_id)):
+    logger.info(f"Attempting to rename book ID: {book_id} to '{payload.new_title}' for user {current_user_id}")
     # db = get_database() # get_database() is not used directly here, db functions are.
     
     try:
@@ -561,10 +587,10 @@ async def rename_book(book_id: str, payload: BookRenamePayload = Body(...)):
     except InvalidId: # Catch InvalidId specifically if ObjectId.is_valid doesn't catch all cases or for robustness
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid book ID format.")
 
-    existing_book_data = await get_book(book_id) # Fetches raw dict
+    existing_book_data = await get_book(book_id, current_user_id) # Fetches raw dict for the user
     if not existing_book_data:
-        logger.warning(f"Rename: Book not found in DB for ID: {book_id}")
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found")
+        logger.warning(f"Rename: Book not found in DB for ID: {book_id} and user {current_user_id}")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found or not owned by user")
 
     try:
         existing_book = Book.model_validate(existing_book_data)
@@ -600,13 +626,13 @@ async def rename_book(book_id: str, payload: BookRenamePayload = Body(...)):
         "updated_at": datetime.utcnow()
     }
 
-    updated_count = await update_book(book_id, update_data_for_db)
+    updated_count = await update_book(book_id, current_user_id, update_data_for_db)
     if not updated_count:
-        logger.warning(f"Rename: Book with ID {book_id} was not updated in DB. It might have been deleted or data was identical (except updated_at).")
+        logger.warning(f"Rename: Book with ID {book_id} for user {current_user_id} was not updated in DB. It might have been deleted or data was identical (except updated_at).")
     
-    updated_book_data = await get_book(book_id) # Re-fetch the book
+    updated_book_data = await get_book(book_id, current_user_id) # Re-fetch the book for the user
     if not updated_book_data:
-        logger.error(f"Rename: Book with ID {book_id} not found after update attempt.")
+        logger.error(f"Rename: Book with ID {book_id} for user {current_user_id} not found after update attempt.")
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found after update attempt.")
         
     try:
@@ -621,8 +647,8 @@ async def rename_book(book_id: str, payload: BookRenamePayload = Body(...)):
 
 # Add new endpoint for deleting a book
 @router.delete("/{book_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_book_route(book_id: str):
-    logger.info(f"Attempting to delete book ID: {book_id}")
+async def delete_book_route(book_id: str, current_user_id: str = Depends(get_current_user_id)):
+    logger.info(f"Attempting to delete book ID: {book_id} for user {current_user_id}")
     # db = get_database() # Not used directly
 
     try:
@@ -631,10 +657,10 @@ async def delete_book_route(book_id: str):
     except InvalidId:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid book ID format.")
 
-    book_data = await get_book(book_id) # Fetches raw dict
+    book_data = await get_book(book_id, current_user_id) # Fetches raw dict for the user
     if not book_data:
-        logger.warning(f"Delete: Book not found in DB for ID: {book_id}. No action taken.")
-        # Return 204 as per HTTP spec for DELETE if resource is already gone
+        logger.warning(f"Delete: Book not found in DB for ID: {book_id} and user {current_user_id}. No action taken.")
+        # Return 204 as per HTTP spec for DELETE if resource is already gone or not owned
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     book_to_delete = None # Initialize to None
@@ -683,14 +709,14 @@ async def delete_book_route(book_id: str):
                     else:
                         logger.warning(f"Image file not found for deletion: {image_file_path}. Book ID: {book_id}")
                 except OSError as e:
-                    logger.error(f"Error deleting image file {image_file_path} for book ID {book_id}: {e}", exc_info=True)
+                    logger.error(f"Error deleting image file {image_file_path} for book ID {book_id} user {current_user_id}: {e}", exc_info=True)
 
-    deleted_count = await delete_book_record(book_id)
+    deleted_count = await delete_book_record(book_id, current_user_id)
     if not deleted_count:
-        logger.warning(f"Delete: No book record found to delete with ID: {book_id}, or delete operation failed in DB (already deleted?).")
-        # Still return 204 as the resource is gone.
+        logger.warning(f"Delete: No book record found to delete with ID: {book_id} for user {current_user_id}, or delete operation failed in DB (already deleted or not owned?).")
+        # Still return 204 as the resource is gone or not accessible to this user.
     else:
-        logger.info(f"Successfully deleted book record with ID: {book_id} from database.")
+        logger.info(f"Successfully deleted book record with ID: {book_id} for user {current_user_id} from database.")
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
