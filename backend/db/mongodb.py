@@ -231,7 +231,7 @@ async def create_or_update_user_from_google(user_data: 'UserCreate') -> Optional
         update_fields = {
             "email": user_data.email, # Google is source of truth for email if linked
             "full_name": user_data.full_name,
-            "picture": user_data.picture,
+            "picture": str(user_data.picture) if user_data.picture else None, # Convert HttpUrl to string
             "updated_at": now
         }
         update_fields = {k: v for k, v in update_fields.items() if v is not None} # Remove fields that are None in user_data
@@ -261,7 +261,7 @@ async def create_or_update_user_from_google(user_data: 'UserCreate') -> Optional
             update_fields = {
                 "google_id": user_data.google_id, # Add/update google_id
                 "full_name": user_data.full_name, # Update name from Google
-                "picture": user_data.picture,     # Update picture from Google
+                "picture": str(user_data.picture) if user_data.picture else None,     # Convert HttpUrl to string
                 "updated_at": now
             }
             # Ensure email isn't accidentally set to None if user_data.email was None (UserCreate model should enforce email presence)
@@ -283,7 +283,7 @@ async def create_or_update_user_from_google(user_data: 'UserCreate') -> Optional
                 "google_id": user_data.google_id,
                 "email": user_data.email,
                 "full_name": user_data.full_name,
-                "picture": user_data.picture,
+                "picture": str(user_data.picture) if user_data.picture else None, # Convert HttpUrl to string
                 "is_active": True,
                 "is_superuser": False,
                 "created_at": now,
