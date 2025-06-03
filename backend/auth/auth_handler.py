@@ -1,11 +1,14 @@
 import jwt
 import os # Add os import
+import logging # Add logging import
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 # from backend.core.config import settings # Remove config import
 # from passlib.context import CryptContext # Keep for potential future password hashing
 
 # pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+logger = logging.getLogger(__name__) # Initialize logger
 
 # Define constants previously in settings or provide defaults
 SECRET_KEY = os.getenv("SECRET_KEY", "a_very_secret_key_that_should_be_changed_in_production")
