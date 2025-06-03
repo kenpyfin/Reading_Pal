@@ -10,8 +10,24 @@ function BookList() {
     // Function to fetch the list of books from the backend
     const fetchBooks = async () => {
         logger.info("Fetching books list from backend...");
+        const token = localStorage.getItem('authToken'); // Retrieve the token
+
+        if (!token) {
+            logger.error("No auth token found. User might not be logged in.");
+            setError("Authentication token not found. Please log in.");
+            setLoading(false); // Stop loading as we can't proceed
+            // Optionally, redirect to login page here
+            // navigate('/login'); 
+            return;
+        }
+
         try {
-            const response = await fetch('/api/books/');
+            const response = await fetch('/api/books/', {
+                headers: {
+                    'Authorization': `Bearer ${token}`, // Add the Authorization header
+                    'Content-Type': 'application/json' // Good practice to include, though not strictly needed for GET
+                }
+            });
             if (!response.ok) {
                 // Handle HTTP errors
                 const errorText = await response.text();
