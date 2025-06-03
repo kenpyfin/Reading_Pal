@@ -95,7 +95,7 @@ async def login_via_google(request: Request):
     return await oauth.google.authorize_redirect(request, redirect_uri)
 
 
-@router.get('/google/callback', include_in_schema=False) # Google callback
+@router.get('/auth/google/callback', include_in_schema=False) # Google callback, path adjusted to match observed request
 async def auth_via_google(request: Request):
     if not oauth:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Google OAuth not configured on server.")
