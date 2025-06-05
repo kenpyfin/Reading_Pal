@@ -69,25 +69,31 @@ async def save_book(book_data: dict):
         logger.error(f"Error saving book: {e}", exc_info=True)
         return None
 
-async def get_book(book_id: str):
-    """Retrieves book data by ID."""
+async def get_book(book_id: str, user_id: Optional[str] = None):
+    """Retrieves book data by ID, optionally filtered by user_id."""
     database = get_database()
     if database is None:
         logger.error("Database not initialized for get_book.")
         return None
     try:
-        # Use ObjectId to query by MongoDB's primary key
         obj_id = ObjectId(book_id)
     except Exception:
         logger.error(f"Invalid book ID format: {book_id}")
-        return None # Handle invalid ObjectId format
+        return None
+
+    query_filter = {"_id": obj_id}
+    if user_id:
+        query_filter["user_id"] = user_id
+        logger.debug(f"get_book: Querying for book_id {book_id} and user_id {user_id}")
+    else:
+        logger.debug(f"get_book: Querying for book_id {book_id} (no user_id filter)")
 
     try:
-        book = await database.books.find_one({"_id": obj_id})
+        book = await database.books.find_one(query_filter)
         # No need to convert _id here, let the caller handle it if needed for Pydantic
         return book # Return the raw document (dict) or None
     except Exception as e:
-        logger.error(f"Error fetching book {book_id}: {e}", exc_info=True)
+        logger.error(f"Error fetching book {book_id} with user_id {user_id}: {e}", exc_info=True)
         return None
 
 async def get_books(filter: Optional[dict] = None, projection: Optional[dict] = None):
@@ -119,40 +125,45 @@ async def get_book_by_job_id(job_id: str):
         logger.error(f"Error fetching book by job_id {job_id}: {e}", exc_info=True)
         return None
 
-async def update_book(book_id: str, update_data: dict):
-    """Updates a book document by its _id string."""
+async def update_book(book_id: str, user_id: str, update_data: dict) -> bool:
+    """Updates a book document by its _id string, ensuring it belongs to the user."""
     database = get_database()
     if database is None:
         logger.error("Database not initialized for update_book.")
-        return False # Indicate failure
+        return False
     try:
         obj_id = ObjectId(book_id)
     except Exception:
         logger.error(f"Invalid book ID format for update: {book_id}")
         return False
 
+    # Ensure updated_at is set
+    update_data["updated_at"] = datetime.utcnow()
+    
+    query_filter = {"_id": obj_id, "user_id": user_id}
+    logger.debug(f"update_book: Attempting to update book with filter: {query_filter}")
+
     try:
-        # Ensure updated_at is set
-        update_data["updated_at"] = datetime.utcnow()
         result = await database.books.update_one(
-            {"_id": obj_id},
+            query_filter,
             {"$set": update_data}
         )
         if result.matched_count == 0:
-             logger.warning(f"No book found with ID {book_id} to update.")
-             return False
-        logger.info(f"Updated book {book_id}. Matched count: {result.matched_count}, Modified count: {result.modified_count}")
-        # Return True if at least one document was matched (even if no fields changed)
-        return True
+            logger.warning(f"No book found with ID {book_id} and user_id {user_id} to update, or user does not own the book.")
+            return False # No document matched the _id and user_id
+        
+        logger.info(f"Updated book {book_id} for user {user_id}. Matched: {result.matched_count}, Modified: {result.modified_count}")
+        # Return True if a document was matched (even if no fields actually changed, modified_count could be 0)
+        return True 
     except Exception as e:
-        logger.error(f"Error updating book {book_id}: {e}", exc_info=True)
-        return False # Indicate failure
+        logger.error(f"Error updating book {book_id} for user {user_id}: {e}", exc_info=True)
+        return False
 
 
-async def delete_book_record(book_id: str) -> bool:
+async def delete_book_record(book_id: str, user_id: str) -> bool:
     """
-    Deletes a book record from the database by its ID.
-    Returns True if deletion was successful, False otherwise.
+    Deletes a book record from the database by its ID, ensuring it belongs to the user.
+    Returns True if deletion was successful (at least one record deleted), False otherwise.
     """
     database = get_database()
     if database is None:
@@ -160,22 +171,27 @@ async def delete_book_record(book_id: str) -> bool:
         return False
     
     try:
-        # Ensure book_id is a valid ObjectId string before attempting conversion
         if not ObjectId.is_valid(book_id):
             logger.warning(f"Invalid Book ID format for deletion: {book_id}")
             return False
         object_id = ObjectId(book_id)
-        delete_result = await database.books.delete_one({"_id": object_id})
+        
+        query_filter = {"_id": object_id, "user_id": user_id}
+        logger.debug(f"delete_book_record: Attempting to delete book with filter: {query_filter}")
+        
+        delete_result = await database.books.delete_one(query_filter)
+        
         if delete_result.deleted_count == 0:
-            logger.warning(f"No book record found with ID {book_id} to delete.")
-            return False
-        logger.info(f"Book record with ID {book_id} deleted successfully from MongoDB.")
-        return True
-    except InvalidId:
-        logger.error(f"Invalid Book ID format for deletion: {book_id}")
+            logger.warning(f"No book record found with ID {book_id} and user_id {user_id} to delete, or user does not own the book.")
+            return False # No document matched the _id and user_id, or already deleted
+        
+        logger.info(f"Book record with ID {book_id} for user {user_id} deleted successfully from MongoDB. Count: {delete_result.deleted_count}")
+        return True # Successfully deleted one or more documents (should be one)
+    except InvalidId: # This case should be caught by ObjectId.is_valid, but kept for robustness
+        logger.error(f"Invalid Book ID format for deletion (InvalidId exception): {book_id}")
         return False
     except Exception as e:
-        logger.error(f"Error deleting book record {book_id} from MongoDB: {e}", exc_info=True)
+        logger.error(f"Error deleting book record {book_id} for user {user_id} from MongoDB: {e}", exc_info=True)
         return False
 
 # --- User Database Operations ---
