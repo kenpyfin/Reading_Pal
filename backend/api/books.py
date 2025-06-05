@@ -32,13 +32,15 @@ router = APIRouter()
 # Dependency to get current user_id from token
 async def get_current_user_id(request: Request) -> str:
     auth_header = request.headers.get("Authorization")
-    logger.debug(f"get_current_user_id: Authorization header: {auth_header}")
+    # Log the received header (or lack thereof) at INFO level for better visibility
+    logger.info(f"get_current_user_id: Received Authorization header: '{auth_header}' for request to: {request.url.path}")
 
     if not auth_header:
-        # logger.warning("get_current_user_id: Authorization header missing.") # Warning removed
+        logger.info(f"get_current_user_id: Authorization header is missing or empty for request to: {request.url.path}. Raising 401.")
+        # logger.warning("get_current_user_id: Authorization header missing.") # Original warning was removed, this info log replaces it for this path
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated",
+            detail="Not authenticated", # This is the detail the client will see
             headers={"WWW-Authenticate": "Bearer"},
         )
     
