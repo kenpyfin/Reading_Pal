@@ -35,7 +35,7 @@ async def get_current_user_id(request: Request) -> str:
     logger.debug(f"get_current_user_id: Authorization header: {auth_header}")
 
     if not auth_header:
-        logger.warning("get_current_user_id: Authorization header missing.")
+        # logger.warning("get_current_user_id: Authorization header missing.") # Warning removed
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
