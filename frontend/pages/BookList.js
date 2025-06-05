@@ -23,14 +23,17 @@ function BookList() {
 
         // Sanitize token: remove potential leading/trailing whitespace and newlines
         // which might cause issues with header formation or parsing.
-        const token = rawToken.trim().replace(/(\r\n|\n|\r)/gm, "");
+        let token = rawToken.trim().replace(/(\r\n|\n|\r)/gm, "");
 
-        if (!token) { // Check token again after sanitization
-            logger.error("Auth token became empty after sanitization. User might not be logged in or token is invalid.");
+        // Explicitly check for string "null" or "undefined" which might be stored in localStorage
+        if (!token || token === "null" || token === "undefined") {
+            logger.error(`Auth token is invalid after sanitization or is a problematic string. Sanitized token value: '${token}'. User might not be logged in or token is invalid.`);
             setError("Authentication token is invalid. Please log in again.");
             setLoading(false);
             return;
         }
+        
+        logger.info(`Attempting to use sanitized auth token (first 20 chars): '${token.substring(0, 20)}...'`);
 
         try {
             const response = await fetch('/api/books/', {
