@@ -13,8 +13,10 @@ RUN npm install
 # Copy the rest of the application code
 COPY . .
 
-# Build the React app
-RUN npm run build
+# --- MODIFICATION START ---
+# Clear Create React App's cache before building
+RUN rm -rf node_modules/.cache && npm run build
+# --- MODIFICATION END ---
 
 # --- Runtime stage ---
 FROM node:18-alpine
