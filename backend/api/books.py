@@ -32,8 +32,10 @@ router = APIRouter()
 # Dependency to get current user_id from token
 async def get_current_user_id(request: Request) -> str:
     auth_header = request.headers.get("Authorization")
-    # Log the received header (or lack thereof) at INFO level for better visibility
+    debug_auth_header = request.headers.get("X-Debug-Auth-Header-Seen") # Get the debug header
+    # Log the received headers (or lack thereof) at INFO level for better visibility
     logger.info(f"get_current_user_id: Received Authorization header: '{auth_header}' for request to: {request.url.path}")
+    logger.info(f"get_current_user_id: Received X-Debug-Auth-Header-Seen: '{debug_auth_header}' for request to: {request.url.path}")
 
     if not auth_header:
         logger.info(f"get_current_user_id: Authorization header is missing or empty for request to: {request.url.path}. Raising 401.")
