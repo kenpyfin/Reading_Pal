@@ -1,8 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom'; // Assuming react-router-dom is used for navigation
+
+// --- ADD THIS LINE ---
+console.log("[BookList.js MODULE LEVEL] BookList.js module loaded"); 
+// --- END OF ADDED LINE ---
+
 // import logger from '../utils/logger'; // Assuming a logger utility exists
 
 function BookList() {
+    // ... rest of the component ...
+    console.log("[BookList.js FUNCTION LEVEL] BookList component function executed (rendered or re-rendered)");
+
     const [books, setBooks] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null); // Add error state
