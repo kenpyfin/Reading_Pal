@@ -35,54 +35,79 @@ function BookList() {
         
         logger.info(`Attempting to use sanitized auth token (first 20 chars): '${token.substring(0, 20)}...'`);
 
+        // --- MODIFICATION START ---
+        const requestHeaders = {
+            'Content-Type': 'application/json'
+            // Authorization header will be added below
+        };
+
+        // This check is somewhat redundant given the earlier checks, 
+        // but ensures token is valid right before header construction for fetch.
+        if (token) {
+            requestHeaders['Authorization'] = `Bearer ${token}`;
+        } else {
+            // This block should ideally not be reached if prior checks are effective.
+            logger.error("Critical error: Token became null or empty just before setting Authorization header. Aborting fetch.");
+            setError("Authentication error. Please log in again.");
+            setLoading(false);
+            return;
+        }
+
+        logger.debug("Request headers being sent to /api/books/:", JSON.stringify(requestHeaders));
+        // --- MODIFICATION END ---
+
         try {
             const response = await fetch('/api/books/', {
-                headers: {
-                    'Authorization': `Bearer ${token}`, // Add the Authorization header
-                    'Content-Type': 'application/json' // Good practice to include, though not strictly needed for GET
-                }
+                // --- MODIFICATION: Use the constructed requestHeaders object ---
+                headers: requestHeaders
             });
             if (!response.ok) {
-                // Handle HTTP errors
-                const errorText = await response.text();
+                const errorText = await response.text(); // Read error text for better logging
                 logger.error(`HTTP error fetching books: ${response.status} - ${errorText}`);
-                throw new Error(`HTTP error! status: ${response.status}`);
+                // Try to parse errorText as JSON if backend sends structured errors
+                let detail = errorText;
+                try {
+                    const errorJson = JSON.parse(errorText);
+                    detail = errorJson.detail || errorText;
+                } catch (e) {
+                    // Not JSON, use raw text
+                }
+                throw new Error(`HTTP error! status: ${response.status} - ${detail}`);
             }
             const data = await response.json();
             logger.info(`Successfully fetched ${data.length} books.`);
-            // Filter out books with status 'failed' as per PDR
             const activeBooks = data.filter(book => book.status !== 'failed');
             setBooks(activeBooks);
-            setError(null); // Clear any previous errors
+            setError(null);
         } catch (error) {
             logger.error("Error fetching books:", error);
-            setError("Failed to load books. Please try again later."); // Set error state
+            setError(error.message || "Failed to load books. Please try again later.");
         } finally {
             setLoading(false);
         }
     };
 
-    // Effect to fetch books on component mount and set up polling
+    // ... useEffect and the rest of the component ...
     useEffect(() => {
-        fetchBooks(); // Initial fetch when component mounts
+        fetchBooks(); 
 
-        // Set up interval for polling the entire book list from the backend
-        // The backend's list endpoint will now reflect the status updates from the callback
-        const intervalId = setInterval(fetchBooks, 10000); // Poll every 10 seconds (adjust as needed)
+        const intervalId = setInterval(fetchBooks, 10000); 
 
-        // Cleanup function to clear the interval when the component unmounts
         return () => clearInterval(intervalId);
 
-    }, []); // Empty dependency array means this runs once on mount and cleans up on unmount
+    }, []);
+
 
     if (loading) {
         return <div>Loading books...</div>;
     }
 
     if (error) {
+        // Display the error message, which might now include more detail from the server
         return <div className="error-message">Error: {error}</div>;
     }
 
+    // ... rest of the return statement ...
     if (books.length === 0) {
         return <div>No books found. Upload a PDF to get started!</div>;
     }
