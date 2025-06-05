@@ -2,9 +2,16 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 
+// --- ADD THIS LINE ---
+console.log("[BookList.js SRC MODULE LEVEL] BookList.js module loaded"); 
+// --- END OF ADDED LINE ---
+
 const POLLING_INTERVAL = 5000;
 
 function BookList() {
+  // ... rest of the component ...
+  console.log("[BookList.js SRC FUNCTION LEVEL] BookList component function executed (rendered or re-rendered)");
+
   const [books, setBooks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -68,25 +75,78 @@ function BookList() {
   };
   // --- End of style definitions ---
 
+  // Function to fetch the list of books from the backend
   const fetchBooks = async () => {
-    // setLoading(true); // setLoading is handled in the initial useEffect
-    // setError(null);  // setError is handled in the initial useEffect
-    try {
-      const response = await fetch('/api/books/');
-      if (!response.ok) {
-         const errorData = await response.json();
-         throw new Error(`HTTP error! status: ${response.status} - ${errorData.detail || response.statusText}`);
+      console.log("[BookList.js SRC CONSOLE.LOG] Fetching books list from backend...");
+      const rawToken = localStorage.getItem('authToken'); // Retrieve the token
+
+      if (!rawToken) {
+          console.error("[BookList.js SRC CONSOLE.ERROR] No auth token found (rawToken is falsy). User might not be logged in.");
+          setError("Authentication token not found. Please log in.");
+          setLoading(false); // Stop loading as we can't proceed
+          // Optionally, redirect to login page here
+          // navigate('/login'); 
+          return;
       }
-      const data = await response.json();
-      console.log("Initial fetch /api/books/ data:", data);
-      setBooks(data);
-    } catch (err) {
-      console.error('Failed to fetch books:', err);
-      setError(`Failed to load books: ${err.message || 'Unknown error'}`);
-      setBooks([]);
-    } finally {
-      setLoading(false);
-    }
+
+      // Sanitize token: remove potential leading/trailing whitespace and newlines
+      // which might cause issues with header formation or parsing.
+      let token = rawToken.trim().replace(/(\r\n|\n|\r)/gm, "");
+
+      // Explicitly check for string "null" or "undefined" which might be stored in localStorage
+      if (!token || token === "null" || token === "undefined") {
+          console.error(`[BookList.js SRC CONSOLE.ERROR] Auth token is invalid after sanitization or is a problematic string. Sanitized token value: '${token}'. User might not be logged in or token is invalid.`);
+          setError("Authentication token is invalid. Please log in again.");
+          setLoading(false);
+          return;
+      }
+      
+      console.log(`[BookList.js SRC CONSOLE.LOG] Attempting to use sanitized auth token (first 20 chars): '${token.substring(0, 20)}...'`);
+
+      const requestHeaders = {
+          'Content-Type': 'application/json'
+          // Authorization header will be added below
+      };
+
+      if (token) {
+          requestHeaders['Authorization'] = `Bearer ${token}`;
+      } else {
+          console.error("[BookList.js SRC CONSOLE.ERROR] Critical error: Token became null or empty just before setting Authorization header. Aborting fetch.");
+          setError("Authentication error. Please log in again.");
+          setLoading(false);
+          return;
+      }
+
+      console.log("[BookList.js SRC CONSOLE.LOG] Request headers being sent to /api/books/:", JSON.stringify(requestHeaders));
+
+      try {
+          const response = await fetch('/api/books/', {
+              headers: requestHeaders
+          });
+          if (!response.ok) {
+              const errorText = await response.text(); 
+              console.error(`[BookList.js SRC CONSOLE.ERROR] HTTP error fetching books: ${response.status} - ${errorText}`);
+              let detail = errorText;
+              try {
+                  const errorJson = JSON.parse(errorText);
+                  detail = errorJson.detail || errorText;
+              } catch (e) {
+                  // Not JSON, use raw text
+              }
+              throw new Error(`HTTP error! status: ${response.status} - ${detail}`);
+          }
+          const data = await response.json();
+          console.log(`[BookList.js SRC CONSOLE.LOG] Successfully fetched ${data.length} books.`);
+          const activeBooks = data.filter(book => book.status !== 'failed');
+          setBooks(activeBooks);
+          setError(null); // Clear any previous error on successful fetch
+      } catch (error) {
+          console.error("[BookList.js SRC CONSOLE.ERROR] Error fetching books:", error);
+          setError(error.message || "Failed to load books. Please try again later.");
+          // Do not set books to [] here, allow existing books to be displayed if any
+      } finally {
+          setLoading(false);
+      }
   };
 
   const checkBookStatus = async (bookId, jobId) => {
