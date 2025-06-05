@@ -10,14 +10,25 @@ function BookList() {
     // Function to fetch the list of books from the backend
     const fetchBooks = async () => {
         logger.info("Fetching books list from backend...");
-        const token = localStorage.getItem('authToken'); // Retrieve the token
+        const rawToken = localStorage.getItem('authToken'); // Retrieve the token
 
-        if (!token) {
-            logger.error("No auth token found. User might not be logged in.");
+        if (!rawToken) {
+            logger.error("No auth token found (rawToken is falsy). User might not be logged in.");
             setError("Authentication token not found. Please log in.");
             setLoading(false); // Stop loading as we can't proceed
             // Optionally, redirect to login page here
             // navigate('/login'); 
+            return;
+        }
+
+        // Sanitize token: remove potential leading/trailing whitespace and newlines
+        // which might cause issues with header formation or parsing.
+        const token = rawToken.trim().replace(/(\r\n|\n|\r)/gm, "");
+
+        if (!token) { // Check token again after sanitization
+            logger.error("Auth token became empty after sanitization. User might not be logged in or token is invalid.");
+            setError("Authentication token is invalid. Please log in again.");
+            setLoading(false);
             return;
         }
 
