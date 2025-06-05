@@ -223,9 +223,28 @@ function BookList() {
     }
     setDeletingId(bookId);
     setError(null); // Clear previous errors
+
+    const rawToken = localStorage.getItem('authToken');
+    if (!rawToken) {
+        console.error("[BookList.js SRC CONSOLE.ERROR] No auth token found for delete operation.");
+        setError("Authentication token not found. Please log in.");
+        setDeletingId(null);
+        return;
+    }
+    const token = rawToken.trim().replace(/(\r\n|\n|\r)/gm, "");
+    if (!token || token === "null" || token === "undefined") {
+        console.error(`[BookList.js SRC CONSOLE.ERROR] Invalid auth token for delete operation. Sanitized token: '${token}'`);
+        setError("Authentication token is invalid. Please log in again.");
+        setDeletingId(null);
+        return;
+    }
+
     try {
         const response = await fetch(`/api/books/${bookId}`, {
             method: 'DELETE',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+            },
         });
         if (response.status === 204) { // Successfully deleted
             setBooks(prevBooks => prevBooks.filter(book => book.id !== bookId));
@@ -258,11 +277,28 @@ function BookList() {
 
     setRenamingId(bookId);
     setError(null); // Clear previous errors
+
+    const rawToken = localStorage.getItem('authToken');
+    if (!rawToken) {
+        console.error("[BookList.js SRC CONSOLE.ERROR] No auth token found for rename operation.");
+        setError("Authentication token not found. Please log in.");
+        setRenamingId(null);
+        return;
+    }
+    const token = rawToken.trim().replace(/(\r\n|\n|\r)/gm, "");
+    if (!token || token === "null" || token === "undefined") {
+        console.error(`[BookList.js SRC CONSOLE.ERROR] Invalid auth token for rename operation. Sanitized token: '${token}'`);
+        setError("Authentication token is invalid. Please log in again.");
+        setRenamingId(null);
+        return;
+    }
+
     try {
         const response = await fetch(`/api/books/${bookId}/rename`, {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`,
             },
             body: JSON.stringify({ new_title: newTitle.trim() }),
         });
