@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom'; // Assuming react-router-dom is used for navigation
-import logger from '../utils/logger'; // Assuming a logger utility exists
+// import logger from '../utils/logger'; // Assuming a logger utility exists
 
 function BookList() {
     const [books, setBooks] = useState([]);
@@ -9,11 +9,11 @@ function BookList() {
 
     // Function to fetch the list of books from the backend
     const fetchBooks = async () => {
-        logger.info("Fetching books list from backend...");
+        console.log("[BookList.js CONSOLE.LOG] Fetching books list from backend...");
         const rawToken = localStorage.getItem('authToken'); // Retrieve the token
 
         if (!rawToken) {
-            logger.error("No auth token found (rawToken is falsy). User might not be logged in.");
+            console.error("[BookList.js CONSOLE.ERROR] No auth token found (rawToken is falsy). User might not be logged in.");
             setError("Authentication token not found. Please log in.");
             setLoading(false); // Stop loading as we can't proceed
             // Optionally, redirect to login page here
@@ -27,13 +27,13 @@ function BookList() {
 
         // Explicitly check for string "null" or "undefined" which might be stored in localStorage
         if (!token || token === "null" || token === "undefined") {
-            logger.error(`Auth token is invalid after sanitization or is a problematic string. Sanitized token value: '${token}'. User might not be logged in or token is invalid.`);
+            console.error(`[BookList.js CONSOLE.ERROR] Auth token is invalid after sanitization or is a problematic string. Sanitized token value: '${token}'. User might not be logged in or token is invalid.`);
             setError("Authentication token is invalid. Please log in again.");
             setLoading(false);
             return;
         }
         
-        logger.info(`Attempting to use sanitized auth token (first 20 chars): '${token.substring(0, 20)}...'`);
+        console.log(`[BookList.js CONSOLE.LOG] Attempting to use sanitized auth token (first 20 chars): '${token.substring(0, 20)}...'`);
 
         // --- MODIFICATION START ---
         const requestHeaders = {
@@ -47,13 +47,13 @@ function BookList() {
             requestHeaders['Authorization'] = `Bearer ${token}`;
         } else {
             // This block should ideally not be reached if prior checks are effective.
-            logger.error("Critical error: Token became null or empty just before setting Authorization header. Aborting fetch.");
+            console.error("[BookList.js CONSOLE.ERROR] Critical error: Token became null or empty just before setting Authorization header. Aborting fetch.");
             setError("Authentication error. Please log in again.");
             setLoading(false);
             return;
         }
 
-        logger.debug("Request headers being sent to /api/books/:", JSON.stringify(requestHeaders));
+        console.log("[BookList.js CONSOLE.LOG] Request headers being sent to /api/books/:", JSON.stringify(requestHeaders));
         // --- MODIFICATION END ---
 
         try {
@@ -63,7 +63,7 @@ function BookList() {
             });
             if (!response.ok) {
                 const errorText = await response.text(); // Read error text for better logging
-                logger.error(`HTTP error fetching books: ${response.status} - ${errorText}`);
+                console.error(`[BookList.js CONSOLE.ERROR] HTTP error fetching books: ${response.status} - ${errorText}`);
                 // Try to parse errorText as JSON if backend sends structured errors
                 let detail = errorText;
                 try {
@@ -75,12 +75,12 @@ function BookList() {
                 throw new Error(`HTTP error! status: ${response.status} - ${detail}`);
             }
             const data = await response.json();
-            logger.info(`Successfully fetched ${data.length} books.`);
+            console.log(`[BookList.js CONSOLE.LOG] Successfully fetched ${data.length} books.`);
             const activeBooks = data.filter(book => book.status !== 'failed');
             setBooks(activeBooks);
             setError(null);
         } catch (error) {
-            logger.error("Error fetching books:", error);
+            console.error("[BookList.js CONSOLE.ERROR] Error fetching books:", error);
             setError(error.message || "Failed to load books. Please try again later.");
         } finally {
             setLoading(false);
