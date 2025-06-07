@@ -527,68 +527,76 @@ async def pdf_processing_callback(payload: PDFServiceCallbackData = Body(...)):
 
     if not book_doc:
         logger.error(f"Callback: Book with job_id {payload.job_id} not found. Cannot update.")
-        # Return 200 to acknowledge receipt and prevent PDF service retries for this specific error.
-        # The error is on our side (missing job_id) or a race condition.
         return {"message": "Callback received, but job_id not found or already processed."}
 
     book_id_str = str(book_doc["_id"])
-    logger.info(f"Callback: Found book with ID {book_id_str} for job_id {payload.job_id}.")
+    db_user_id = book_doc.get("user_id")
+    current_db_sanitized_title = book_doc.get("sanitized_title")
+
+    if not db_user_id:
+        logger.error(f"Callback: Book with job_id {payload.job_id} (DB ID {book_id_str}) is missing user_id. Update cannot proceed.")
+        return {"message": "Callback received, but book record is missing user_id. Update skipped."}
+
+    logger.info(f"Callback: Found book with ID {book_id_str} for job_id {payload.job_id}, user_id {db_user_id}.")
 
     update_data = {
         "status": payload.status,
-        "updated_at": datetime.utcnow() # Always update the timestamp
+        "updated_at": datetime.utcnow()
     }
 
     if payload.status == "completed":
         if payload.file_path:
-            update_data["markdown_filename"] = os.path.basename(payload.file_path)
-            logger.info(f"Callback: Extracted markdown_filename: {update_data['markdown_filename']}")
+            pdf_service_markdown_filename = os.path.basename(payload.file_path)
+            final_markdown_filename_for_db = pdf_service_markdown_filename
+
+            if current_db_sanitized_title:
+                expected_markdown_filename_based_on_db = f"{current_db_sanitized_title}.md"
+                if CONTAINER_MARKDOWN_PATH and pdf_service_markdown_filename != expected_markdown_filename_based_on_db:
+                    old_file_on_disk_path = os.path.join(CONTAINER_MARKDOWN_PATH, pdf_service_markdown_filename)
+                    new_file_on_disk_path = os.path.join(CONTAINER_MARKDOWN_PATH, expected_markdown_filename_based_on_db)
+                    try:
+                        if await run_in_threadpool(os.path.exists, old_file_on_disk_path):
+                            await run_in_threadpool(os.rename, old_file_on_disk_path, new_file_on_disk_path)
+                            logger.info(f"Callback: Renamed processed file from {old_file_on_disk_path} to {new_file_on_disk_path} to match current DB title.")
+                            final_markdown_filename_for_db = expected_markdown_filename_based_on_db
+                        else:
+                            logger.warning(f"Callback: PDF service reported file {pdf_service_markdown_filename} at {old_file_on_disk_path}, but it was not found. Cannot rename to {new_file_on_disk_path}.")
+                            # If the original file isn't there, we can't rename it.
+                            # The DB will store pdf_service_markdown_filename, but it points to a non-existent file.
+                            # This might indicate an issue in the PDF service or file system.
+                    except OSError as e:
+                        logger.error(f"Callback: Error renaming file {old_file_on_disk_path} to {new_file_on_disk_path}: {e}", exc_info=True)
+                        # File rename failed. DB will store pdf_service_markdown_filename.
+            else:
+                logger.warning(f"Callback: Job {payload.job_id} - current_db_sanitized_title is missing. Cannot determine expected filename for potential rename.")
+
+            update_data["markdown_filename"] = final_markdown_filename_for_db
+            logger.info(f"Callback: Set markdown_filename for DB: {update_data['markdown_filename']}")
         else:
             logger.warning(f"Callback: Job {payload.job_id} completed but no file_path provided.")
-            # Potentially mark as failed if markdown_filename is critical
             update_data["status"] = "failed"
             update_data["processing_error"] = "Processing reported as completed by PDF service, but no markdown file path was provided."
-        
-        if payload.images:
-            image_filenames = []
-            processed_images_info_for_db = []
-            for img_info in payload.images:
-                if img_info.filename and img_info.path: # Ensure both filename and original path are present
-                    image_filenames.append(img_info.filename)
-                    processed_images_info_for_db.append({
-                        "filename": img_info.filename,
-                        "original_path_in_markdown": img_info.path # Store the original path
-                    })
-                else:
-                    logger.warning(f"Callback: Job {payload.job_id} - Skipping image info due to missing filename or path: {img_info.model_dump_json()}")
-            
-            # We only need to store the final filenames now
-            image_filenames = [img_info.filename for img_info in payload.images if img_info.filename]
-            update_data["image_filenames"] = image_filenames
-            logger.info(f"Callback: Extracted {len(image_filenames)} image filenames.")
-        else:
-            update_data["image_filenames"] = []
-        
-        # --- REMOVE processed_images_info logic ---
-        # update_data["processed_images_info"] = [] # This line is removed
+            update_data["markdown_filename"] = None # Ensure it's cleared
+
+        image_filenames = [img_info.filename for img_info in payload.images if img_info and img_info.filename] if payload.images else []
+        update_data["image_filenames"] = image_filenames
+        logger.info(f"Callback: Extracted {len(image_filenames)} image filenames.")
 
     elif payload.status == "failed":
         update_data["processing_error"] = payload.processing_error or "Processing failed without specific error message from PDF service."
         logger.warning(f"Callback: Job {payload.job_id} failed. Error: {update_data['processing_error']}")
         update_data["markdown_filename"] = None
         update_data["image_filenames"] = []
-        # update_data["processed_images_info"] = [] # This line is removed
-
-    else: 
+    else:
         logger.warning(f"Callback: Received unexpected status '{payload.status}' for job_id {payload.job_id}. Treating as failed.")
         update_data["status"] = "failed"
         update_data["processing_error"] = f"Received unexpected status '{payload.status}' from PDF service. Original message: {payload.message}"
-        update_data["markdown_filename"] = None 
-        update_data["image_filenames"] = []     
+        update_data["markdown_filename"] = None
+        update_data["image_filenames"] = []
 
     try:
-        updated_count = await update_book(book_id_str, update_data)
-        if updated_count: # update_book should return modified_count or similar
+        updated_count = await update_book(book_id_str, db_user_id, update_data) # Pass db_user_id
+        if updated_count:
             logger.info(f"Callback: Successfully updated book {book_id_str} (job_id: {payload.job_id}) with status '{update_data['status']}'.")
             return {"message": "Callback processed successfully."}
         else:
