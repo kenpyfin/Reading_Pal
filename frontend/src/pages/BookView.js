@@ -280,10 +280,25 @@ function BookView() {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`/api/books/${bookId}`);
+      const token = localStorage.getItem('authToken');
+      if (!token) {
+        setError("Authentication token not found. Please log in.");
+        setLoading(false);
+        return;
+      }
+      const response = await fetch(`/api/books/${bookId}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
       if (!response.ok) {
         const errorData = await response.json();
-        if (response.status === 404) {
+        if (response.status === 401) { // Handle specific 401 error
+          setError("Not authenticated. Please log in again.");
+          // Optionally, redirect to login or clear token
+          // localStorage.removeItem('authToken'); 
+          // window.location.href = '/login';
+        } else if (response.status === 404) {
           setBookData(null);
           return;
         }
@@ -317,10 +332,27 @@ function BookView() {
   const fetchBookmarks = async () => {
     if (!bookId) return;
     try {
-      const response = await fetch(`/api/bookmarks/book/${bookId}`);
+      const token = localStorage.getItem('authToken');
+      if (!token) {
+        // setError("Authentication token not found for fetching bookmarks. Please log in."); // Or handle silently
+        logger.warn("[BookView - fetchBookmarks] Auth token not found.");
+        setBookmarks([]); // Clear bookmarks if not authenticated
+        return;
+      }
+      const response = await fetch(`/api/bookmarks/book/${bookId}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(`Failed to fetch bookmarks: ${errorData.detail || response.statusText}`);
+        if (response.status === 401) {
+          logger.warn("[BookView - fetchBookmarks] Not authenticated to fetch bookmarks.");
+          setBookmarks([]);
+        } else {
+          throw new Error(`Failed to fetch bookmarks: ${errorData.detail || response.statusText}`);
+        }
+        return; // Stop further processing if not ok
       }
       let bookmarksData = await response.json();
       logger.info("Raw bookmarks data from API:", JSON.stringify(bookmarksData, null, 2)); // Log raw data
@@ -358,11 +390,22 @@ function BookView() {
     }
     logger.info(`[BookView - handleDeleteBookmark] Attempting to delete bookmark ID: ${bookmarkIdToDelete}`);
     try {
+      const token = localStorage.getItem('authToken');
+      if (!token) {
+        alert("Authentication token not found. Please log in to delete bookmarks.");
+        logger.warn("[BookView - handleDeleteBookmark] Auth token not found.");
+        return;
+      }
       const response = await fetch(`/api/bookmarks/${bookmarkIdToDelete}`, {
         method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
       });
       if (!response.ok) {
-        if (response.status === 404) {
+        if (response.status === 401) {
+          alert("Not authenticated to delete bookmark. Please log in again.");
+        } else if (response.status === 404) {
           throw new Error(`Bookmark not found (ID: ${bookmarkIdToDelete}). It might have already been deleted.`);
         }
         const errorData = await response.json().catch(() => ({ detail: "Failed to delete bookmark. Server error." }));
@@ -471,9 +514,25 @@ function BookView() {
     const fetchNotes = async () => {
       if (!bookId) return;
       try {
-        const response = await fetch(`/api/notes/${bookId}`);
+        const token = localStorage.getItem('authToken');
+        if (!token) {
+          logger.warn("[BookView - fetchNotes] Auth token not found. Cannot fetch notes.");
+          setNotes([]); // Clear notes if not authenticated
+          return;
+        }
+        const response = await fetch(`/api/notes/${bookId}`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+          },
+        });
         if (!response.ok) {
-          throw new Error('Failed to fetch notes');
+          if (response.status === 401) {
+            logger.warn("[BookView - fetchNotes] Not authenticated to fetch notes.");
+            setNotes([]);
+          } else {
+            throw new Error('Failed to fetch notes');
+          }
+          return;
         }
         const notesData = await response.json();
         // Sort notes by creation date or another relevant field if needed for consistent highlighting
@@ -1303,15 +1362,27 @@ function BookView() {
     logger.debug("Attempting to save bookmark with data:", bookmarkData);
 
     try {
+      const token = localStorage.getItem('authToken');
+      if (!token) {
+        setBookmarkError("Authentication token not found. Please log in to save bookmarks.");
+        logger.warn("[BookView - handleSaveBookmark] Auth token not found.");
+        return;
+      }
       const response = await fetch('/api/bookmarks/', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify(bookmarkData),
       });
 
       if (!response.ok) {
+        if (response.status === 401) {
+          const errorData = await response.json().catch(() => ({}));
+          logger.error("Failed to save bookmark - API error (401):", errorData);
+          throw new Error(errorData.detail || "Not authenticated to save bookmark. Please log in again.");
+        }
         const errorData = await response.json();
         logger.error("Failed to save bookmark - API error:", errorData);
         throw new Error(errorData.detail || "Failed to save bookmark");
