@@ -383,10 +383,10 @@ function BookList() {
                 <button
                   title="Rename Book"
                   onClick={(e) => { e.stopPropagation(); handleRenameBook(book.id, book.title || book.original_filename);}}
-                  disabled={renamingId === book.id || deletingId === book.id || book.status === 'processing' || book.status === 'pending'}
+                  disabled={renamingId === book.id || deletingId === book.id || book.status === 'processing'}
                   style={renamingId === book.id ? {...renameButtonStyle, backgroundColor: renameButtonHoverStyle.backgroundColor} : renameButtonStyle}
                   onMouseEnter={(e) => {
-                    if (!(renamingId === book.id || deletingId === book.id || book.status === 'processing' || book.status === 'pending')) {
+                    if (!(renamingId === book.id || deletingId === book.id || book.status === 'processing')) {
                         e.currentTarget.style.backgroundColor = renameButtonHoverStyle.backgroundColor;
                         e.currentTarget.style.borderColor = renameButtonHoverStyle.borderColor;
                         e.currentTarget.style.boxShadow = renameButtonHoverStyle.boxShadow;
@@ -395,7 +395,7 @@ function BookList() {
                   onMouseLeave={(e) => {
                     if (!(renamingId === book.id)) { // Keep active style if renaming
                         e.currentTarget.style.backgroundColor = renameButtonStyle.backgroundColor;
-                        e.currentTarget.style.borderColor = renameButtonStyle.border; // Should be renameButtonStyle.borderColor or baseButtonStyle.border
+                        e.currentTarget.style.borderColor = renameButtonStyle.borderColor; 
                         e.currentTarget.style.boxShadow = baseButtonStyle.boxShadow;
                     }
                   }}
@@ -405,10 +405,10 @@ function BookList() {
                 <button
                   title="Delete Book"
                   onClick={(e) => { e.stopPropagation(); handleDeleteBook(book.id, book.title || book.original_filename);}}
-                  disabled={deletingId === book.id || renamingId === book.id || book.status === 'processing' || book.status === 'pending'}
+                  disabled={deletingId === book.id || renamingId === book.id || book.status === 'processing'}
                   style={deletingId === book.id ? {...deleteButtonStyle, backgroundColor: deleteButtonHoverStyle.backgroundColor} : deleteButtonStyle}
                    onMouseEnter={(e) => {
-                    if (!(renamingId === book.id || deletingId === book.id || book.status === 'processing' || book.status === 'pending')) {
+                    if (!(renamingId === book.id || deletingId === book.id || book.status === 'processing')) {
                         e.currentTarget.style.backgroundColor = deleteButtonHoverStyle.backgroundColor;
                         e.currentTarget.style.borderColor = deleteButtonHoverStyle.borderColor;
                         e.currentTarget.style.boxShadow = deleteButtonHoverStyle.boxShadow;
@@ -417,7 +417,7 @@ function BookList() {
                   onMouseLeave={(e) => {
                      if (!(deletingId === book.id)) { // Keep active style if deleting
                         e.currentTarget.style.backgroundColor = deleteButtonStyle.backgroundColor;
-                        e.currentTarget.style.borderColor = deleteButtonStyle.border; // Should be deleteButtonStyle.borderColor or baseButtonStyle.border
+                        e.currentTarget.style.borderColor = deleteButtonStyle.borderColor; 
                         e.currentTarget.style.boxShadow = baseButtonStyle.boxShadow;
                     }
                   }}
