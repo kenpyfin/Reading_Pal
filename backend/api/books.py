@@ -645,25 +645,42 @@ async def rename_book(book_id: str, payload: BookRenamePayload = Body(...), curr
     new_sanitized_title = sanitize_filename(payload.new_title)
     new_markdown_filename = f"{new_sanitized_title}.md" if new_sanitized_title else None
 
-    # Rename markdown file on filesystem
-    if CONTAINER_MARKDOWN_PATH and old_markdown_filename and new_markdown_filename and old_markdown_filename != new_markdown_filename:
-        old_file_path = os.path.join(CONTAINER_MARKDOWN_PATH, old_markdown_filename)
-        new_file_path = os.path.join(CONTAINER_MARKDOWN_PATH, new_markdown_filename)
-        try:
-            if await run_in_threadpool(os.path.exists, old_file_path):
-                await run_in_threadpool(os.rename, old_file_path, new_file_path)
-                logger.info(f"Renamed markdown file from {old_file_path} to {new_file_path}")
-            else:
-                logger.warning(f"Old markdown file not found at {old_file_path}, cannot rename. Book ID: {book_id}")
-        except OSError as e:
-            logger.error(f"Error renaming markdown file for book ID {book_id} from {old_file_path} to {new_file_path}: {e}", exc_info=True)
-            # Decide if this should be a hard failure. For now, logging and continuing.
-            # To make it a hard failure, you could raise an HTTPException here.
+    # Determine the correct markdown_filename for the database update
+    db_update_markdown_filename = old_markdown_filename  # Default to old, change if conditions met
+
+    if CONTAINER_MARKDOWN_PATH and new_markdown_filename: # Only if there's a path and a potential new filename
+        if not old_markdown_filename:
+            # No old file associated, so the new title implies a new (likely missing) file association
+            db_update_markdown_filename = new_markdown_filename
+        elif old_markdown_filename == new_markdown_filename:
+            # Filename is not changing, no file operation needed, DB value is correct
+            db_update_markdown_filename = new_markdown_filename # or old_markdown_filename, they are the same
+        else:
+            # old_markdown_filename exists and is different from new_markdown_filename, attempt rename
+            old_file_path = os.path.join(CONTAINER_MARKDOWN_PATH, old_markdown_filename)
+            new_file_path = os.path.join(CONTAINER_MARKDOWN_PATH, new_markdown_filename)
+            try:
+                if await run_in_threadpool(os.path.exists, old_file_path):
+                    await run_in_threadpool(os.rename, old_file_path, new_file_path)
+                    logger.info(f"Successfully renamed markdown file from {old_file_path} to {new_file_path}")
+                    db_update_markdown_filename = new_markdown_filename # Rename success, update DB to new name
+                else:
+                    logger.warning(f"Old markdown file '{old_markdown_filename}' not found at {old_file_path} for book ID {book_id}. DB will point to new filename '{new_markdown_filename}', but file is missing.")
+                    db_update_markdown_filename = new_markdown_filename # Old file missing, update DB to new name (still missing)
+            except OSError as e:
+                logger.error(f"OS Error renaming markdown file for book ID {book_id} from '{old_file_path}' to '{new_file_path}': {e}", exc_info=True)
+                # On OSError, db_update_markdown_filename remains old_markdown_filename.
+                # The title will be updated, but the markdown_filename in DB will not change to the new one.
+                # Consider raising HTTPException to inform user of partial failure:
+                # raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to rename book file due to OS error: {e}")
+    elif not new_markdown_filename: # New title results in no valid filename (e.g., empty title)
+        db_update_markdown_filename = None
+    # If CONTAINER_MARKDOWN_PATH is not set, or no new_markdown_filename, db_update_markdown_filename remains old_markdown_filename
 
     update_data_for_db = {
         "title": payload.new_title,
         "sanitized_title": new_sanitized_title,
-        "markdown_filename": new_markdown_filename,
+        "markdown_filename": db_update_markdown_filename, # Use the determined filename
         "updated_at": datetime.utcnow()
     }
 
