@@ -43,6 +43,11 @@ services:
       # CONTAINER_MARKDOWN_PATH: /app/storage/markdown
       # BACKEND_PORT is still needed as an environment variable for the application running inside
       BACKEND_PORT: ${BACKEND_PORT}
+      SECRET_KEY: ${SECRET_KEY}                                     
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}                         
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}                 
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI}                   
+      FRONTEND_URL: ${FRONTEND_URL}  
     # Remove pdf_service dependency. Backend does not depend on frontend.
     # depends_on:
     #   - pdf_service
@@ -53,7 +58,9 @@ services:
   frontend:
     build: ./frontend
     ports:
-      - "${FRONTEND_PORT}:80"
+      # Map the host's FRONTEND_PORT to the container's FRONTEND_PORT
+      # (where 'serve' is listening, as defined in frontend/Dockerfile)
+      - "${FRONTEND_PORT}:${FRONTEND_PORT}"
     volumes: # Add this volumes section for the frontend
       # Mount the IMAGES_PATH to /app/storage/images inside the frontend container
       # This allows Nginx to serve images directly from the shared volume.

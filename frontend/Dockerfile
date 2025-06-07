@@ -13,24 +13,33 @@ RUN npm install
 # Copy the rest of the application code
 COPY . .
 
-# Build the React app
-RUN npm run build
+# --- MODIFICATION START ---
+# Clear Create React App's cache before building
+RUN rm -rf node_modules/.cache && npm run build
+# --- MODIFICATION END ---
 
 # --- Runtime stage ---
-FROM nginx:alpine
+FROM node:18-alpine
 
-# Install gettext for envsubst
-RUN apk add --no-cache gettext
+# Set a default for FRONTEND_PORT, can be overridden at runtime
+# (e.g., by Docker Compose from .env file)
+ENV FRONTEND_PORT=3100
 
-COPY --from=builder /app/build /usr/share/nginx/html
+WORKDIR /app
 
-# Copy the nginx configuration template
-# Copy it to a template location, not directly to conf.d
-COPY nginx.conf /etc/nginx/templates/default.conf.template
+# Install 'serve' to serve static files
+RUN npm install -g serve
 
-EXPOSE 80
+# Copy the build output from the builder stage
+# This copies the contents of /app/build from the builder stage
+# into /app/build in the current stage (since WORKDIR is /app).
+COPY --from=builder /app/build ./build
 
-# Use /bin/sh -c to run envsubst and then start nginx
-# envsubst reads the template, substitutes the variable, and outputs to the final config location
-# exec replaces the shell process with the nginx process
-CMD ["/bin/sh", "-c", "envsubst '$BACKEND_PORT' < /etc/nginx/templates/default.conf.template > /etc/nginx/conf.d/default.conf && exec nginx -g 'daemon off;'"]
+# Expose the port the app runs on. Uses the FRONTEND_PORT env var.
+EXPOSE ${FRONTEND_PORT}
+
+# Command to serve the app using the FRONTEND_PORT environment variable.
+# The '-s' flag is important for Single Page Applications like React.
+# 'serve' will listen on 0.0.0.0 within the container.
+# The 'sh -c' form allows environment variable substitution in the CMD.
+CMD ["sh", "-c", "serve -s build -l tcp://0.0.0.0:${FRONTEND_PORT}"]

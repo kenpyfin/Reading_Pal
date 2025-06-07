@@ -40,58 +40,76 @@ function PdfUploadForm() {
     const signal = controller.signal;
     let timeoutId = null;
 
+    // --- MODIFICATION START: Add Authorization Header ---
+    const rawToken = localStorage.getItem('authToken');
+    if (!rawToken) {
+        console.error("[PdfUploadForm] No auth token found for upload.");
+        setError("Authentication token not found. Please log in again.");
+        setUploading(false);
+        return;
+    }
+    let token = rawToken.trim().replace(/(\r\n|\n|\r)/gm, "");
+    if (!token || token === "null" || token === "undefined") {
+        console.error(`[PdfUploadForm] Invalid auth token for upload. Sanitized token: '${token}'`);
+        setError("Authentication token is invalid. Please log in again.");
+        setUploading(false);
+        return;
+    }
+    console.log(`[PdfUploadForm] Using token for upload: '${token.substring(0,20)}...'`);
+
+    const requestHeaders = {
+        // 'Content-Type': 'multipart/form-data' is NOT set here.
+        // The browser will automatically set it correctly with the boundary
+        // when FormData is used as the body.
+        'Authorization': `Bearer ${token}`
+    };
+    // --- MODIFICATION END ---
+
     try {
-      // Start the timeout timer
       timeoutId = setTimeout(() => {
           console.log(`Upload timed out after ${UPLOAD_TIMEOUT_MS}ms`);
-          controller.abort(); // Abort the fetch request
+          controller.abort(); 
       }, UPLOAD_TIMEOUT_MS);
 
-      // Call backend API for PDF upload
-      // Use /api/books/upload to match Nginx proxy configuration
       const response = await fetch('/api/books/upload', {
         method: 'POST',
+        headers: requestHeaders, // --- MODIFICATION: Add headers ---
         body: formData,
-        signal: signal, // Pass the abort signal to fetch
+        signal: signal, 
       });
 
-      // Clear the timeout if the fetch completes before the timeout
       if (timeoutId) {
           clearTimeout(timeoutId);
-          timeoutId = null; // Reset timeoutId
+          timeoutId = null; 
       }
 
-
       if (!response.ok) {
-        // Attempt to parse error response if it's JSON, otherwise use generic message
         let errorDetail = 'Upload failed';
         try {
             const errorData = await response.json();
-            errorDetail = errorData.detail || JSON.stringify(errorData);
+            // --- MODIFICATION: Check for specific "Not authenticated" message ---
+            if (response.status === 401 && errorData.detail && errorData.detail.toLowerCase().includes("not authenticated")) {
+                errorDetail = "Not authenticated. Please log in again.";
+            } else {
+                errorDetail = errorData.detail || JSON.stringify(errorData);
+            }
         } catch (parseError) {
-            // If parsing fails, the response body might not be JSON (e.g., HTML error page)
             errorDetail = `Upload failed: Received non-JSON response (Status: ${response.status})`;
             console.error("Failed to parse error response as JSON:", parseError);
         }
         throw new Error(errorDetail);
       }
 
-      // Backend confirmed upload initiation
       const bookData = await response.json();
       console.log('Upload initiated successfully, processing started:', bookData);
-
-      // ADDED: Simple alert to confirm initiation before navigating
       alert(`Upload started for "${bookData.title || bookData.original_filename}". It will appear in the book list shortly with status "${bookData.status}".`);
-
-      navigate('/'); // Navigate immediately to the book list
+      navigate('/'); 
 
     } catch (err) {
-      // Clear the timeout if an error occurred before the timeout
       if (timeoutId) {
           clearTimeout(timeoutId);
-          timeoutId = null; // Reset timeoutId
+          timeoutId = null; 
       }
-
       // Check if the error is an AbortError (due to timeout)
       if (err.name === 'AbortError') {
           console.error('Upload aborted due to timeout:', err);

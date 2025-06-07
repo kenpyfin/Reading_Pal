@@ -6,7 +6,7 @@ import { debounce } from 'lodash';
 import './BookView.css';
 import logger from '../utils/logger'; // Ensure logger is imported
 
-const CHARACTERS_PER_PAGE = 5000; // Define characters per page
+const APPROX_CHARS_PER_PAGE = 5000; // Approximate target characters per page
 
 // Function to escape regex special characters
 function escapeRegExp(string) {
@@ -14,6 +14,212 @@ function escapeRegExp(string) {
     return '';
   }
   return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // $& means the whole matched string
+}
+
+// Helper to decode HTML entities (basic version)
+function decodeHtmlEntities(text) {
+  if (typeof text !== 'string' || !text) return ''; // Handle empty or non-string input
+  try {
+    const element = document.createElement('textarea');
+    element.innerHTML = text;
+    return element.value;
+  } catch (e) {
+    // Fallback for environments where DOM might not be fully available (less likely in React frontend)
+    // or if innerHTML assignment fails for some reason.
+    logger.error("[decodeHtmlEntities] Error decoding text:", text, e);
+    return text; // Return original text on error
+  }
+}
+
+// --- Helper function to segment Markdown ---
+function createMarkdownSegments(rawMd) {
+  const segments = [];
+  // Regex for images. Could be expanded for other syntax.
+  // Matches: ![alt text](url "title") or ![alt text](url) or ![](url)
+  const imageRegex = /(!\[(?:[^\]]*)\]\((?:[^\s\)]*)(?:\s"[^"]*")?\))/g;
+  let lastIdx = 0;
+  let matchResult;
+  while ((matchResult = imageRegex.exec(rawMd)) !== null) {
+    if (matchResult.index > lastIdx) {
+      segments.push({ type: 'text', rawContent: rawMd.substring(lastIdx, matchResult.index) });
+    }
+    segments.push({ type: 'image', rawContent: matchResult[0] }); // 'image' is a placeholder for 'syntax'
+    lastIdx = imageRegex.lastIndex;
+  }
+  if (lastIdx < rawMd.length) {
+    segments.push({ type: 'text', rawContent: rawMd.substring(lastIdx) });
+  }
+  return segments;
+}
+
+// --- Helper function for mapping rendered offset to raw offset ---
+function mapRenderedToRawOffset(renderedOffsetTarget, mdSegments) {
+  let currentRawOffset = 0;
+  let currentRenderedOffset = 0;
+  // For debugging:
+  let totalApproxRenderedLengthOfSegments = 0;
+  mdSegments.filter(s => s.type === 'text').forEach(s => {
+      const decodedContent = decodeHtmlEntities(s.rawContent);
+      let approxLen = 0; let inSpace = false;
+      for (let i = 0; i < decodedContent.length; i++) {
+          if (/\s/.test(decodedContent[i])) { if (!inSpace) approxLen++; inSpace = true; }
+          else { approxLen++; inSpace = false; }
+      }
+      totalApproxRenderedLengthOfSegments += approxLen;
+  });
+  logger.debug(`[mapRenderedToRawOffset] Target Rendered Offset: ${renderedOffsetTarget}. Total approx rendered length of all text segments (after decoding + collapse): ${totalApproxRenderedLengthOfSegments}`);
+
+  for (const segment of mdSegments) {
+    if (segment.type === 'text') {
+      const rawContentOfSegment = segment.rawContent;
+      const decodedContent = decodeHtmlEntities(rawContentOfSegment);
+
+      let approxRenderedLengthOfDecoded = 0;
+      let inSpaceSequenceOuter = false;
+      for (let i = 0; i < decodedContent.length; i++) {
+        if (/\s/.test(decodedContent[i])) {
+          if (!inSpaceSequenceOuter) approxRenderedLengthOfDecoded++;
+          inSpaceSequenceOuter = true;
+        } else {
+          approxRenderedLengthOfDecoded++;
+          inSpaceSequenceOuter = false;
+        }
+      }
+      logger.debug(`[mapRenderedToRawOffset] Processing TEXT segment. Raw len: ${rawContentOfSegment.length}, Decoded len: ${decodedContent.length}, ApproxRenderedLenOfDecoded: ${approxRenderedLengthOfDecoded}. currentRenderedOffset: ${currentRenderedOffset}, currentRawOffset: ${currentRawOffset}. Raw (start): "${rawContentOfSegment.substring(0, 30)}", Decoded (start): "${decodedContent.substring(0,30)}"`);
+
+      if (currentRenderedOffset + approxRenderedLengthOfDecoded >= renderedOffsetTarget) {
+        // Target falls within this segment
+        let renderedCharsCountedInDecodedSegment = 0;
+        let inSpaceSequenceInner = false;
+        const targetRenderedCharsInThisDecodedSegment = renderedOffsetTarget - currentRenderedOffset;
+
+        if (targetRenderedCharsInThisDecodedSegment <= 0) {
+          logger.debug(`[mapRenderedToRawOffset] Target ${targetRenderedCharsInThisDecodedSegment} is <=0 for this segment. Returning currentRawOffset ${currentRawOffset}.`);
+          return currentRawOffset; // Selection starts at or before this segment's rendered content
+        }
+
+        let k_decoded = 0;
+        for (k_decoded = 0; k_decoded < decodedContent.length; k_decoded++) {
+          const charIsSpace = /\s/.test(decodedContent[k_decoded]);
+          if (charIsSpace) {
+            if (!inSpaceSequenceInner) renderedCharsCountedInDecodedSegment++;
+            inSpaceSequenceInner = true;
+          } else {
+            renderedCharsCountedInDecodedSegment++;
+            inSpaceSequenceInner = false;
+          }
+
+          if (renderedCharsCountedInDecodedSegment >= targetRenderedCharsInThisDecodedSegment) {
+            // We've found the target in terms of decoded+collapsed characters.
+            // `k_decoded + 1` is the length of the prefix of `decodedContent` (before collapse) that covers the target.
+            // Estimate corresponding raw length:
+            let estimatedRawChars;
+            if (decodedContent.length === 0) { // Avoid division by zero if decoded content is empty
+                estimatedRawChars = 0;
+            } else {
+                const proportionOfDecoded = (k_decoded + 1) / decodedContent.length;
+                estimatedRawChars = Math.round(proportionOfDecoded * rawContentOfSegment.length);
+            }
+            logger.debug(`[mapRenderedToRawOffset] Target met in segment. Decoded prefix len: ${k_decoded + 1}, Rendered chars covered: ${renderedCharsCountedInDecodedSegment}. Estimated raw chars for this part: ${estimatedRawChars}. Returning: ${currentRawOffset + estimatedRawChars}`);
+            return currentRawOffset + estimatedRawChars;
+          }
+        }
+        // If loop finishes, it means all of decodedContent was consumed to attempt to meet the target.
+        // This implies the target was at or beyond the end of this segment's rendered content.
+        logger.debug(`[mapRenderedToRawOffset] Inner loop completed for segment. All decoded chars consumed. Adding full raw length of segment: ${rawContentOfSegment.length}. Returning: ${currentRawOffset + rawContentOfSegment.length}`);
+        return currentRawOffset + rawContentOfSegment.length; // Add full raw length of this segment
+      }
+
+      // Target is beyond this segment
+      currentRenderedOffset += approxRenderedLengthOfDecoded;
+      currentRawOffset += rawContentOfSegment.length; // Always use full raw length for raw offset accumulation
+
+    } else { // 'image' or other non-text syntax
+      logger.debug(`[mapRenderedToRawOffset] Processing IMAGE segment. Raw len: ${segment.rawContent.length}. currentRawOffset before add: ${currentRawOffset}. Content: "${segment.rawContent.substring(0, 30)}"`);
+      currentRawOffset += segment.rawContent.length;
+    }
+  }
+
+  logger.debug(`[mapRenderedToRawOffset] Target ${renderedOffsetTarget} beyond all segments. currentRenderedOffset: ${currentRenderedOffset}. Returning total accumulated raw offset ${currentRawOffset}.`);
+  return currentRawOffset;
+}
+
+// Helper function to calculate page boundaries respecting word breaks
+function calculatePageBoundaries(markdown, targetCharsPerPage) {
+  if (!markdown || typeof markdown !== 'string') { // Added type check for markdown
+    logger.warn("[calculatePageBoundaries] Markdown content is invalid or empty.");
+    return [];
+  }
+  const boundaries = [];
+  let currentOffset = 0;
+  const totalLength = markdown.length;
+  // Heuristic: Don't let pages become too small if a word break is found very early.
+  // This means a page might be slightly larger than targetCharsPerPage if it prevents a tiny next page.
+  const MIN_PAGE_CHARS = targetCharsPerPage * 0.5; // Page should be at least 50% of target
+
+  while (currentOffset < totalLength) {
+    const pageStart = currentOffset;
+    let potentialEnd = Math.min(pageStart + targetCharsPerPage, totalLength);
+    let actualEnd = potentialEnd;
+
+    if (potentialEnd < totalLength) { // If not the last character of the document
+      let boundaryFound = false;
+      // Search backwards from potentialEnd for a natural break (space)
+      for (let i = potentialEnd; i > pageStart; i--) {
+        if (/\s/.test(markdown[i-1])) { // Check character *before* potential cut point
+          actualEnd = i; // End *before* the space if cutting, or *at* the space if space is end of word
+          boundaryFound = true;
+          break;
+        }
+      }
+
+      if (!boundaryFound) {
+        // No space found searching backwards. This means pageStart to potentialEnd is one long token.
+        // Try to find the *next* space *after* potentialEnd, but not too far.
+        let nextSpaceSearchLimit = Math.min(potentialEnd + targetCharsPerPage * 0.25, totalLength); // Search forward a bit
+        let foundNextSpace = false;
+        for (let i = potentialEnd; i < nextSpaceSearchLimit; i++) {
+          if (/\s/.test(markdown[i])) {
+            actualEnd = i + 1; // End after this space
+            foundNextSpace = true;
+            break;
+          }
+        }
+        // If still no space found (very long word/URL), we have to take potentialEnd.
+        // This might break the word if it's longer than targetCharsPerPage.
+        if (!foundNextSpace) {
+          actualEnd = potentialEnd; 
+        }
+      }
+      
+      // If the found boundary makes the current page too short, and it's not the end of the document,
+      // prefer to take the original potentialEnd or even extend a bit if that helps the next page.
+      // This logic can get very complex. A simpler rule: if actualEnd is too close to pageStart,
+      // and we are not near the end of the document, just use potentialEnd.
+      if ((actualEnd - pageStart) < MIN_PAGE_CHARS && (totalLength - pageStart) > targetCharsPerPage) {
+         actualEnd = potentialEnd;
+      }
+    }
+    
+    // Prevent infinite loop if actualEnd doesn't advance
+    if (actualEnd <= pageStart && pageStart < totalLength) {
+        logger.warn(`[calculatePageBoundaries] actualEnd (${actualEnd}) did not advance from pageStart (${pageStart}). Forcing advance.`);
+        actualEnd = Math.min(pageStart + targetCharsPerPage, totalLength);
+    }
+    
+    // Ensure actualEnd does not exceed totalLength
+    actualEnd = Math.min(actualEnd, totalLength);
+
+    boundaries.push({ start: pageStart, end: actualEnd });
+    currentOffset = actualEnd;
+
+    if (boundaries.length > 10000) { // Safety break for very large documents / potential infinite loops
+        logger.error("[calculatePageBoundaries] Exceeded 10000 page boundaries, breaking loop. Check content or logic.");
+        break;
+    }
+  }
+  logger.info(`[calculatePageBoundaries] Calculated ${boundaries.length} pages.`);
+  return boundaries;
 }
 
 function BookView() {
@@ -37,6 +243,7 @@ function BookView() {
   const [currentPageContent, setCurrentPageContent] = useState(''); // Original content for logic
   const [highlightedPageContent, setHighlightedPageContent] = useState(''); // Content with highlights for rendering
   const [pageInput, setPageInput] = useState('');
+  const [pageBoundaries, setPageBoundaries] = useState([]);
 
   const [scrollToGlobalOffset, setScrollToGlobalOffset] = useState(null);
   const [pendingScrollOffsetInPage, setPendingScrollOffsetInPage] = useState(null);
@@ -63,16 +270,35 @@ function BookView() {
   const initialBookPaneWidthPx = useRef(0);
 
   const [showManageBookmarksModal, setShowManageBookmarksModal] = useState(false); // ADD THIS STATE
+  const [isNotePaneVisible, setIsNotePaneVisible] = useState(true); // ADD THIS LINE
+  const [isMobileView, setIsMobileView] = useState(window.innerWidth <= 768); // ADD THIS LINE, initialize directly
+  const [isBookmarkMenuOpen, setIsBookmarkMenuOpen] = useState(false);
+  const bookmarkMenuRef = useRef(null); // For detecting clicks outside
 
 
   const fetchBook = async () => {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`/api/books/${bookId}`);
+      const token = localStorage.getItem('authToken');
+      if (!token) {
+        setError("Authentication token not found. Please log in.");
+        setLoading(false);
+        return;
+      }
+      const response = await fetch(`/api/books/${bookId}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
       if (!response.ok) {
         const errorData = await response.json();
-        if (response.status === 404) {
+        if (response.status === 401) { // Handle specific 401 error
+          setError("Not authenticated. Please log in again.");
+          // Optionally, redirect to login or clear token
+          // localStorage.removeItem('authToken'); 
+          // window.location.href = '/login';
+        } else if (response.status === 404) {
           setBookData(null);
           return;
         }
@@ -82,12 +308,16 @@ function BookView() {
       setBookData(data);
       if (data && data.markdown_content) {
         fullMarkdownContent.current = data.markdown_content;
-        const totalChars = fullMarkdownContent.current.length;
-        const numPages = Math.max(1, Math.ceil(totalChars / CHARACTERS_PER_PAGE));
-        setTotalPages(numPages);
+        // Calculate page boundaries
+        const calculatedBoundaries = calculatePageBoundaries(fullMarkdownContent.current, APPROX_CHARS_PER_PAGE);
+        setPageBoundaries(calculatedBoundaries);
+        setTotalPages(Math.max(1, calculatedBoundaries.length)); // Ensure totalPages is at least 1
+        // setCurrentPage(1); // Ensure currentPage is reset to 1 when new book loads
       } else {
         fullMarkdownContent.current = '';
+        setPageBoundaries([]);
         setTotalPages(1);
+        // setCurrentPage(1);
       }
     } catch (err) {
       logger.error('Failed to fetch book:', err);
@@ -102,10 +332,27 @@ function BookView() {
   const fetchBookmarks = async () => {
     if (!bookId) return;
     try {
-      const response = await fetch(`/api/bookmarks/book/${bookId}`);
+      const token = localStorage.getItem('authToken');
+      if (!token) {
+        // setError("Authentication token not found for fetching bookmarks. Please log in."); // Or handle silently
+        logger.warn("[BookView - fetchBookmarks] Auth token not found.");
+        setBookmarks([]); // Clear bookmarks if not authenticated
+        return;
+      }
+      const response = await fetch(`/api/bookmarks/book/${bookId}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(`Failed to fetch bookmarks: ${errorData.detail || response.statusText}`);
+        if (response.status === 401) {
+          logger.warn("[BookView - fetchBookmarks] Not authenticated to fetch bookmarks.");
+          setBookmarks([]);
+        } else {
+          throw new Error(`Failed to fetch bookmarks: ${errorData.detail || response.statusText}`);
+        }
+        return; // Stop further processing if not ok
       }
       let bookmarksData = await response.json();
       logger.info("Raw bookmarks data from API:", JSON.stringify(bookmarksData, null, 2)); // Log raw data
@@ -143,11 +390,22 @@ function BookView() {
     }
     logger.info(`[BookView - handleDeleteBookmark] Attempting to delete bookmark ID: ${bookmarkIdToDelete}`);
     try {
+      const token = localStorage.getItem('authToken');
+      if (!token) {
+        alert("Authentication token not found. Please log in to delete bookmarks.");
+        logger.warn("[BookView - handleDeleteBookmark] Auth token not found.");
+        return;
+      }
       const response = await fetch(`/api/bookmarks/${bookmarkIdToDelete}`, {
         method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
       });
       if (!response.ok) {
-        if (response.status === 404) {
+        if (response.status === 401) {
+          alert("Not authenticated to delete bookmark. Please log in again.");
+        } else if (response.status === 404) {
           throw new Error(`Bookmark not found (ID: ${bookmarkIdToDelete}). It might have already been deleted.`);
         }
         const errorData = await response.json().catch(() => ({ detail: "Failed to delete bookmark. Server error." }));
@@ -164,7 +422,9 @@ function BookView() {
   useEffect(() => {
     if (bookId) {
       fetchBook();
-      fetchBookmarks(); 
+      fetchBookmarks();
+      setCurrentPage(1); // Reset to page 1 for new book
+      setPageInput('1'); // Reset page input field
     }
   }, [bookId]);
 
@@ -221,15 +481,58 @@ function BookView() {
       };
   }, [handleDocumentMouseMove, handleDocumentMouseUp]);
 
+  useEffect(() => { // ADD THIS useEffect BLOCK
+    const checkMobileView = () => {
+      setIsMobileView(window.innerWidth <= 768);
+    };
+    // checkMobileView(); // Already initialized in useState
+    window.addEventListener('resize', checkMobileView);
+    return () => window.removeEventListener('resize', checkMobileView);
+  }, []);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (bookmarkMenuRef.current && !bookmarkMenuRef.current.contains(event.target)) {
+        setIsBookmarkMenuOpen(false);
+      }
+    };
+
+    if (isBookmarkMenuOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    } else {
+      document.removeEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isBookmarkMenuOpen]);
+
 
   // Fetch notes when bookId changes
   useEffect(() => {
     const fetchNotes = async () => {
       if (!bookId) return;
       try {
-        const response = await fetch(`/api/notes/${bookId}`);
+        const token = localStorage.getItem('authToken');
+        if (!token) {
+          logger.warn("[BookView - fetchNotes] Auth token not found. Cannot fetch notes.");
+          setNotes([]); // Clear notes if not authenticated
+          return;
+        }
+        const response = await fetch(`/api/notes/${bookId}`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+          },
+        });
         if (!response.ok) {
-          throw new Error('Failed to fetch notes');
+          if (response.status === 401) {
+            logger.warn("[BookView - fetchNotes] Not authenticated to fetch notes.");
+            setNotes([]);
+          } else {
+            throw new Error('Failed to fetch notes');
+          }
+          return;
         }
         const notesData = await response.json();
         // Sort notes by creation date or another relevant field if needed for consistent highlighting
@@ -246,111 +549,74 @@ function BookView() {
 
   // Effect for handling pagination logic AND highlighting when bookData, currentPage, or notes change
   useEffect(() => {
-    logger.debug("[BookView - Highlighting Effect] Running. Current Page:", currentPage, "Notes count:", notes.length, "PendingScrollOffsetInPage:", pendingScrollOffsetInPage, "PendingScrollToPercentage:", pendingScrollToPercentage);
-    if (fullMarkdownContent.current) {
-      const totalChars = fullMarkdownContent.current.length;
-      const numPages = Math.max(1, Math.ceil(totalChars / CHARACTERS_PER_PAGE));
-      // setTotalPages(numPages); // Already set when bookData loads
+    logger.debug("[BookView - Page Content Effect] Running. Current Page:", currentPage, "Notes count:", notes.length, "PendingScrollOffsetInPage:", pendingScrollOffsetInPage, "PendingScrollToPercentage:", pendingScrollToPercentage, "PageBoundaries Length:", pageBoundaries.length);
+    if (fullMarkdownContent.current && pageBoundaries.length > 0) { // Check pageBoundaries
+      const numPages = totalPages; // Use totalPages from state (derived from pageBoundaries)
 
       const validCurrentPage = Math.max(1, Math.min(currentPage, numPages || 1));
       if (currentPage !== validCurrentPage) {
+        logger.warn(`[BookView - Page Content Effect] currentPage ${currentPage} was invalid for numPages ${numPages}. Setting to ${validCurrentPage}`);
         setCurrentPage(validCurrentPage); 
         return; 
       }
       
-      const pageStartGlobalOffset = (validCurrentPage - 1) * CHARACTERS_PER_PAGE;
-      const pageEndGlobalOffset = pageStartGlobalOffset + CHARACTERS_PER_PAGE;
-      // logger.debug(`[BookView - Highlighting Effect] Page ${currentPage}: Global Offset Range [${pageStartGlobalOffset} - ${pageEndGlobalOffset})`); // Redundant with below
+      const pageIndex = validCurrentPage - 1;
+      if (pageIndex < 0 || pageIndex >= pageBoundaries.length) {
+          logger.error(`[BookView - Page Content Effect] Invalid pageIndex ${pageIndex} for pageBoundaries length ${pageBoundaries.length}. CurrentPage: ${currentPage}`);
+          setHighlightedPageContent("Error: Page data not found.");
+          setCurrentPageContent("");
+          return;
+      }
+      const { start: pageStartGlobalOffset, end: pageEndGlobalOffset } = pageBoundaries[pageIndex];
       
       const plainPageText = fullMarkdownContent.current.substring(pageStartGlobalOffset, pageEndGlobalOffset);
       setCurrentPageContent(plainPageText); 
-      logger.debug(`[BookView - Highlighting Effect] Plain text for page ${currentPage} (len: ${plainPageText.length}): "${plainPageText.substring(0, 100)}..."`);
+      logger.debug(`[BookView - Page Content Effect] Page ${validCurrentPage}: Global Offset [${pageStartGlobalOffset}-${pageEndGlobalOffset}]. Plain text (len: ${plainPageText.length}): "${plainPageText.substring(0, 100)}..."`);
 
-
-      // Apply highlighting (existing logic for notes)
-      if (notes && notes.length > 0) {
-        // ... (existing note highlighting logic remains unchanged) ...
-        // (Make sure this logic correctly sets setHighlightedPageContent(newHighlightedString);)
-        const relevantNotes = notes
-          .filter(note => {
-            if (note.global_character_offset === undefined || note.global_character_offset === null || !note.source_text || note.source_text.length === 0) {
-              return false;
-            }
-            const noteStartGlobal = note.global_character_offset;
-            const noteEndGlobal = noteStartGlobal + note.source_text.length;
-            const overlaps = Math.max(pageStartGlobalOffset, noteStartGlobal) < Math.min(pageEndGlobalOffset, noteEndGlobal);
-            return overlaps;
-          })
-          .sort((a, b) => a.global_character_offset - b.global_character_offset);
-        
-        let newHighlightedString = "";
-        let lastProcessedIndexInPage = 0;
-
-        relevantNotes.forEach(note => {
-          const noteStartGlobal = note.global_character_offset;
-          const noteLength = note.source_text.length; 
-          let noteStartInPage = noteStartGlobal - pageStartGlobalOffset;
-          const actualSegmentStartInPage = Math.max(noteStartInPage, lastProcessedIndexInPage);
-          
-          if (actualSegmentStartInPage > lastProcessedIndexInPage) {
-            newHighlightedString += plainPageText.substring(lastProcessedIndexInPage, actualSegmentStartInPage);
-          }
-          
-          const highlightSegmentStartOnPage = Math.max(0, noteStartInPage);
-          const highlightSegmentEndOnPage = Math.min(noteStartInPage + noteLength, plainPageText.length);
-          
-          if (highlightSegmentStartOnPage < highlightSegmentEndOnPage && highlightSegmentStartOnPage < plainPageText.length) {
-            const textToHighlight = plainPageText.substring(highlightSegmentStartOnPage, highlightSegmentEndOnPage);
-            newHighlightedString += `<span class="highlighted-note-text" data-note-id="${note.id}">${textToHighlight}</span>`;
-            lastProcessedIndexInPage = highlightSegmentEndOnPage;
-          } else {
-             lastProcessedIndexInPage = Math.max(lastProcessedIndexInPage, actualSegmentStartInPage);
-          }
-        });
-
-        if (lastProcessedIndexInPage < plainPageText.length) {
-          newHighlightedString += plainPageText.substring(lastProcessedIndexInPage);
-        }
-        setHighlightedPageContent(newHighlightedString);
-
-      } else { // No notes or no relevant notes
-        logger.debug(`[BookView - Highlighting Effect] No notes to highlight on page ${currentPage}, setting plain text.`);
-        setHighlightedPageContent(plainPageText); 
-      }
+      // REMOVE NOTE HIGHLIGHTING LOGIC:
+      // The entire block that filters `relevantNotes` and builds `newHighlightedString`
+      // by adding <span class="highlighted-note-text">...</span> is removed.
+      // Instead, just set highlightedPageContent to plainPageText.
+      setHighlightedPageContent(plainPageText);
+      logger.debug(`[BookView - Page Content Effect] Set page content without note highlighting.`);
       
       // Conditional scroll to top:
       if (bookPaneContainerRef.current) {
-        // This effect should scroll to top IF:
-        // 1. No note-specific scroll is pending for this page load (pendingScrollOffsetInPage is null).
-        // 2. No bookmark-specific scroll percentage is pending for this page load (pendingScrollToPercentage is null).
-        // 3. AND no other programmatic scroll has *just* occurred (isProgrammaticScroll.current is false).
         if (pendingScrollOffsetInPage === null && pendingScrollToPercentage === null) {
-            if (!isProgrammaticScroll.current) { // Check if another scroll isn't already in progress/just finished
-                logger.debug("[BookView - Highlighting Effect] Conditions met for scroll-to-top (no pending offset/percentage, and no other recent programmatic scroll). Scrolling to top.");
-                isProgrammaticScroll.current = true; // This effect is now initiating a programmatic scroll
+            if (!isProgrammaticScroll.current) { 
+                logger.debug("[BookView - Page Content Effect] Conditions met for scroll-to-top. Scrolling to top.");
+                isProgrammaticScroll.current = true; 
                 bookPaneContainerRef.current.scrollTop = 0;
-                // Reset isProgrammaticScroll after this effect's action
                 setTimeout(() => { 
                     isProgrammaticScroll.current = false; 
-                    logger.debug("[BookView - Highlighting Effect] Reset isProgrammaticScroll from scroll-to-top action.");
-                }, 100); // Short delay for this specific action
+                    logger.debug("[BookView - Page Content Effect] Reset isProgrammaticScroll from scroll-to-top action.");
+                }, 100); 
             } else {
-                logger.debug("[BookView - Highlighting Effect] Conditions for scroll-to-top met (no pending offset/percentage), BUT isProgrammaticScroll.current is true. Assuming another action just scrolled. Skipping scroll-to-top by this effect.");
-                // If another action (e.g., same-page bookmark jump) set isProgrammaticScroll.current to true,
-                // that action is responsible for resetting it. This effect should not interfere.
+                logger.debug("[BookView - Page Content Effect] Scroll-to-top conditions met, BUT isProgrammaticScroll.current is true. Skipping.");
             }
         } else {
-            logger.debug("[BookView - Highlighting Effect] A scroll (offset for note, or percentage for bookmark on new page) is pending. Skipping automatic scroll to top by Highlighting Effect.");
+            logger.debug("[BookView - Page Content Effect] A scroll is pending. Skipping automatic scroll to top.");
         }
       }
-    } else { // No fullMarkdownContent.current
+
+    } else if (fullMarkdownContent.current && pageBoundaries.length === 0) {
+        logger.warn("[BookView - Page Content Effect] fullMarkdownContent exists but pageBoundaries is empty. This might be initial load. Displaying placeholder or first chunk.");
+        // Fallback: display first chunk if boundaries aren't ready (should be brief)
+        const tempEndOffset = Math.min(APPROX_CHARS_PER_PAGE, fullMarkdownContent.current.length);
+        const tempPageText = fullMarkdownContent.current.substring(0, tempEndOffset);
+        setCurrentPageContent(tempPageText);
+        setHighlightedPageContent(tempPageText);
+        if (totalPages !== 1) setTotalPages(1); // Temporary total pages
+        if (currentPage !== 1) setCurrentPage(1); // Temporary current page
+    } else { // No fullMarkdownContent.current or other invalid state
+      logger.debug("[BookView - Page Content Effect] No fullMarkdownContent or pageBoundaries not ready. Clearing page content.");
       setCurrentPageContent('');
       setHighlightedPageContent('');
-      setTotalPages(1);
-      setCurrentPage(1); // Reset to page 1 if content disappears
+      // setTotalPages(1); // Keep totalPages as is, or reset if book becomes invalid
+      // setCurrentPage(1); 
     }
   // Add pendingScrollToPercentage to the dependency array
-  }, [bookData, currentPage, notes, pendingScrollOffsetInPage, pendingScrollToPercentage]);
+  }, [bookData, currentPage, notes, pendingScrollOffsetInPage, pendingScrollToPercentage, pageBoundaries, totalPages]); // Added pageBoundaries and totalPages
 
 
   useEffect(() => {
@@ -372,101 +638,173 @@ function BookView() {
     }
   };
 
-  const handleTextSelect = (textFromBookPane) => { // textFromBookPane is selection.toString()
-    setSelectedBookText(textFromBookPane); // Store the selected text as is
+  const handleTextSelect = ({ text: textFromBookPane, rangeDetails }) => { // MODIFIED SIGNATURE
+    // const selection = window.getSelection(); // REMOVE THIS LINE
 
-    if (bookPaneContainerRef.current && textFromBookPane && textFromBookPane.trim() !== "") {
-      const selection = window.getSelection();
-      if (selection && selection.rangeCount > 0) {
-        const range = selection.getRangeAt(0);
-        const bookPaneElement = bookPaneContainerRef.current; // This is div.book-pane-container
-
-        let startInPage = -1;
-        const container = bookPaneContainerRef.current; 
-        
-        if (container) {
-            const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
-            let currentOffset = 0;
-            let textNode;
-            let selectionStartNode = range.startContainer;
-            let selectionStartOffset = range.startOffset;
-
-            if (selectionStartNode.nodeType !== Node.TEXT_NODE) {
-                let foundTextNode = false;
-                function findTextNodeRecursive(node, targetDomOffset) {
-                    let currentDomOffset = 0;
-                    for (let i = 0; i < node.childNodes.length; i++) {
-                        const childNode = node.childNodes[i];
-                        if (childNode.nodeType === Node.TEXT_NODE) {
-                            if (currentDomOffset + childNode.textContent.length >= targetDomOffset) {
-                                selectionStartNode = childNode;
-                                selectionStartOffset = targetDomOffset - currentDomOffset;
-                                foundTextNode = true;
-                                return true; 
-                            }
-                            currentDomOffset += childNode.textContent.length;
-                        } else if (childNode.nodeType === Node.ELEMENT_NODE) {
-                            if (findTextNodeRecursive(childNode, targetDomOffset - currentDomOffset)) {
-                                return true; 
-                            }
-                            currentDomOffset += childNode.textContent.length; 
-                        }
-                    }
-                    return false; 
-                }
-
-                if (range.startContainer.nodeType === Node.ELEMENT_NODE) {
-                    findTextNodeRecursive(range.startContainer, range.startOffset);
-                }
-                
-                if (!foundTextNode) {
-                    logger.warn("[BookView - handleTextSelect] Could not precisely map element selection to a text node. Offset might be less accurate.");
-                }
-            }
-
-
-            while ((textNode = walker.nextNode())) {
-                if (textNode === selectionStartNode) {
-                    startInPage = currentOffset + selectionStartOffset;
-                    break;
-                }
-                currentOffset += textNode.textContent.length;
-            }
-        }
-
-        logger.debug("[BookView - handleTextSelect] Selection Text:", `"${textFromBookPane}"`);
-        logger.debug("[BookView - handleTextSelect] Calculated startInPage (DOM Walker):", startInPage);
-
-        if (startInPage !== -1) {
-            const globalOffset = (currentPage - 1) * CHARACTERS_PER_PAGE + startInPage;
-            
-            const canonicalSelectedText = fullMarkdownContent.current.substring(globalOffset, globalOffset + textFromBookPane.length);
-            
-            setSelectedBookText(canonicalSelectedText); 
-            setSelectedGlobalCharOffset(globalOffset);
-            logger.debug("[BookView - handleTextSelect] Successfully calculated: globalOffset:", globalOffset);
-            logger.debug("[BookView - handleTextSelect] canonicalSelectedText (length " + canonicalSelectedText.length + "):", `"${canonicalSelectedText}"`);
-            
-            const element = bookPaneContainerRef.current; 
-            if (element.scrollHeight > element.clientHeight) {
-                const pageScrollPercentage = element.scrollTop / (element.scrollHeight - element.clientHeight);
-                setSelectedScrollPercentage(pageScrollPercentage);
-            } else {
-                setSelectedScrollPercentage(0);
-            }
-        } else {
-            logger.warn("[BookView - handleTextSelect] DOM Walker failed to find selection start. Note location data (global offset) will not be set. Selected text will still be available for LLM.");
-            setSelectedBookText(textFromBookPane); 
-            setSelectedGlobalCharOffset(null);
-            setSelectedScrollPercentage(null);
-        }
-      } else {
-        setSelectedBookText(null);
-        setSelectedGlobalCharOffset(null);
-        setSelectedScrollPercentage(null);
-      }
-    } else {
+    // MODIFIED CONDITION: Use rangeDetails directly
+    if (!textFromBookPane || textFromBookPane.trim() === "" || !rangeDetails || !bookPaneContainerRef.current) {
       setSelectedBookText(null);
+      setSelectedGlobalCharOffset(null);
+      setSelectedScrollPercentage(null);
+      return;
+    }
+
+    // const range = selection.getRangeAt(0); // REMOVE THIS LINE
+    const pageContainerElement = bookPaneContainerRef.current;
+
+    // Use properties from the passed rangeDetails object
+    let selStartNode = rangeDetails.startContainer;
+    let selStartOffset = rangeDetails.startOffset;
+    let selEndNode = rangeDetails.endContainer;
+    let selEndOffset = rangeDetails.endOffset;
+
+    // Helper to find the actual text node and offset if selection is on an element node
+    function resolveToTextNode(containerNode, offsetInContainer) {
+        if (containerNode.nodeType === Node.TEXT_NODE) {
+            return { node: containerNode, offset: offsetInContainer };
+        }
+        // If selection is on an element, offsetInContainer is the index of the child node
+        let cumulativeOffset = 0;
+        let targetNode = containerNode;
+        let targetOffset = 0;
+
+        if (offsetInContainer < containerNode.childNodes.length) {
+            targetNode = containerNode.childNodes[offsetInContainer];
+            // Traverse down to the first text node
+            while(targetNode && targetNode.nodeType !== Node.TEXT_NODE && targetNode.firstChild) {
+                targetNode = targetNode.firstChild;
+            }
+            if (targetNode && targetNode.nodeType === Node.TEXT_NODE) {
+                 targetOffset = 0; // Selection is at the start of this text node
+            } else {
+                // Fallback or complex case: try to find nearest text node or use parent
+                logger.warn("[BookView - handleTextSelect] Complex selection boundary, could not resolve directly to text node start.");
+                targetNode = containerNode; // Fallback to container
+                targetOffset = 0;
+            }
+        } else if (containerNode.childNodes.length > 0) {
+             // Selection is at the end of the container
+            targetNode = containerNode.childNodes[containerNode.childNodes.length -1];
+             // Traverse down to the last text node
+            while(targetNode && targetNode.nodeType !== Node.TEXT_NODE && targetNode.lastChild) {
+                targetNode = targetNode.lastChild;
+            }
+            if (targetNode && targetNode.nodeType === Node.TEXT_NODE) {
+                targetOffset = targetNode.textContent.length; // Selection is at the end of this text node
+            } else {
+                logger.warn("[BookView - handleTextSelect] Complex selection boundary, could not resolve directly to text node end.");
+                targetNode = containerNode; // Fallback to container
+                targetOffset = containerNode.textContent.length;
+            }
+        }
+        return { node: targetNode, offset: targetOffset };
+    }
+
+    const startDetails = resolveToTextNode(selStartNode, selStartOffset);
+    selStartNode = startDetails.node;
+    selStartOffset = startDetails.offset;
+
+    const endDetails = resolveToTextNode(selEndNode, selEndOffset);
+    selEndNode = endDetails.node;
+    selEndOffset = endDetails.offset;
+    
+    logger.debug(`[BookView - handleTextSelect] Resolved Selection: StartNode:`, selStartNode, `StartOffset: ${selStartOffset}, EndNode:`, selEndNode, `EndOffset: ${selEndOffset}`);
+
+    let startInPageRendered = -1;
+    let endInPageRendered = -1;
+
+    const walker = document.createTreeWalker(pageContainerElement, NodeFilter.SHOW_TEXT, null);
+    let currentWalkerOffset = 0;
+    let node;
+    let foundStart = false;
+
+    while ((node = walker.nextNode())) {
+      const nodeLength = node.textContent.length;
+      if (!foundStart && node === selStartNode) {
+        startInPageRendered = currentWalkerOffset + selStartOffset;
+        foundStart = true;
+        // If selection is within this single node
+        if (node === selEndNode) {
+          endInPageRendered = currentWalkerOffset + selEndOffset;
+          break; 
+        }
+      } else if (foundStart && node === selEndNode) {
+        endInPageRendered = currentWalkerOffset + selEndOffset;
+        break; 
+      }
+      currentWalkerOffset += nodeLength;
+    }
+    
+    // If endInPageRendered is still -1 (e.g. selection spans to the very end of content)
+    // and start was found, it implies the selection might go to the end of the last text node encountered by the walker.
+    // Or if selection was empty and start/end are same point.
+    if (startInPageRendered !== -1 && endInPageRendered === -1) {
+        if (selStartNode === selEndNode && selStartOffset === selEndOffset) { // Empty selection at a point
+            endInPageRendered = startInPageRendered;
+        } else {
+            // This might happen if selEndNode was not encountered or other edge cases.
+            // A fallback: use the length of the visually selected text.
+            logger.warn("[BookView - handleTextSelect] endInPageRendered not precisely determined by walker, using textFromBookPane.length as delta.");
+            endInPageRendered = startInPageRendered + textFromBookPane.length;
+        }
+    }
+
+
+    logger.debug(`[BookView - handleTextSelect] Calculated Rendered Offsets: startInPageRendered: ${startInPageRendered}, endInPageRendered: ${endInPageRendered}`);
+
+    if (startInPageRendered !== -1 && endInPageRendered !== -1 && endInPageRendered >= startInPageRendered) {
+      const rawMarkdownForPage = currentPageContent; // This is the raw Markdown for the current page
+      const mdSegments = createMarkdownSegments(rawMarkdownForPage);
+      logger.debug("[BookView - handleTextSelect] Markdown Segments for page:", mdSegments);
+
+      const mappedStartInRawPage = mapRenderedToRawOffset(startInPageRendered, mdSegments);
+      const mappedEndInRawPage = mapRenderedToRawOffset(endInPageRendered, mdSegments);
+      logger.debug(`[BookView - handleTextSelect] Mapped Raw Offsets in Page: Start: ${mappedStartInRawPage}, End: ${mappedEndInRawPage}`);
+
+
+      if (mappedStartInRawPage !== -1 && mappedEndInRawPage !== -1 && mappedEndInRawPage >= mappedStartInRawPage) {
+        // Get current page's actual start offset from boundaries
+        let currentPageStartOffset = 0; // Default for safety
+        const pageIndex = currentPage - 1;
+        if (pageBoundaries.length > 0 && pageIndex >= 0 && pageIndex < pageBoundaries.length) {
+            currentPageStartOffset = pageBoundaries[pageIndex].start;
+        } else {
+            logger.warn(`[BookView - handleTextSelect] pageBoundaries not ready or invalid currentPage for offset calculation. Using fallback. CurrentPage: ${currentPage}, Boundaries Length: ${pageBoundaries.length}`);
+            currentPageStartOffset = (currentPage - 1) * APPROX_CHARS_PER_PAGE; // Fallback
+        }
+
+        const globalOffset = currentPageStartOffset + mappedStartInRawPage;
+        
+        // Set selectedBookText to the text from the selection (textFromBookPane)
+        setSelectedBookText(textFromBookPane); 
+        setSelectedGlobalCharOffset(globalOffset);
+        logger.debug(`[BookView - handleTextSelect] Selected rendered text: "${textFromBookPane.substring(0,100)}...", Global raw offset for start: ${globalOffset}`);
+
+      } else {
+        logger.warn("[BookView - handleTextSelect] Failed to map rendered selection to raw markdown offsets or invalid range. Using visual selection and heuristic offset.");
+        setSelectedBookText(textFromBookPane); 
+        // Fallback globalOffset calculation
+        let fallbackPageStartOffset = (currentPage - 1) * APPROX_CHARS_PER_PAGE;
+        const pageIndex = currentPage - 1;
+        if (pageBoundaries.length > 0 && pageIndex >= 0 && pageIndex < pageBoundaries.length) {
+            fallbackPageStartOffset = pageBoundaries[pageIndex].start;
+        }
+        const fallbackGlobalOffset = fallbackPageStartOffset + startInPageRendered; 
+        setSelectedGlobalCharOffset(fallbackGlobalOffset);
+      }
+
+      // Scroll percentage logic (remains as is)
+      const element = bookPaneContainerRef.current;
+      if (element && element.scrollHeight > element.clientHeight) {
+        const pageScrollPercentage = element.scrollTop / (element.scrollHeight - element.clientHeight);
+        setSelectedScrollPercentage(pageScrollPercentage);
+      } else {
+        setSelectedScrollPercentage(0);
+      }
+
+    } else {
+      logger.warn("[BookView - handleTextSelect] Could not determine valid start/end in page rendered text. Storing visual selection only.");
+      setSelectedBookText(textFromBookPane);
       setSelectedGlobalCharOffset(null);
       setSelectedScrollPercentage(null);
     }
@@ -498,9 +836,9 @@ function BookView() {
 
   // Effect for scrolling to a note when scrollToGlobalOffset changes
   useEffect(() => {
-    if (scrollToGlobalOffset === null || !fullMarkdownContent.current) {
+    if (scrollToGlobalOffset === null || !fullMarkdownContent.current || pageBoundaries.length === 0) { // Check pageBoundaries
       if (scrollToGlobalOffset !== null) {
-        logger.debug(`[ScrollToNoteEffect] Aborting: scrollToGlobalOffset=${scrollToGlobalOffset}, fullMarkdownContent.current=${!!fullMarkdownContent.current}`);
+        logger.debug(`[ScrollToNoteEffect] Aborting: scrollToGlobalOffset=${scrollToGlobalOffset}, fullMarkdownContent.current=${!!fullMarkdownContent.current}, pageBoundaries.length=${pageBoundaries.length}`);
       }
       return;
     }
@@ -508,202 +846,260 @@ function BookView() {
     const targetGlobalOffset = scrollToGlobalOffset;
     logger.info(`[ScrollToNoteEffect] Attempting to scroll to global character offset: ${targetGlobalOffset}`);
 
-    // Determine the target page and offset within that page
-    const targetPageNum = Math.floor(targetGlobalOffset / CHARACTERS_PER_PAGE) + 1;
-    const offsetWithinTargetPage = targetGlobalOffset % CHARACTERS_PER_PAGE;
-    logger.debug(`[ScrollToNoteEffect] Target page: ${targetPageNum}, Offset within page: ${offsetWithinTargetPage}`);
+    // Determine the target page and offset within that page using pageBoundaries
+    let targetPageNum = -1;
+    let offsetWithinTargetPage = -1;
+
+    for (let i = 0; i < pageBoundaries.length; i++) {
+        // Note: A selection/offset can be AT pageBoundaries[i].start
+        // It is considered on page i+1 if targetGlobalOffset is in [start, end)
+        // If targetGlobalOffset is exactly pageBoundaries[i].end, it's effectively the start of the next page,
+        // unless it's the very end of the document.
+        if (targetGlobalOffset >= pageBoundaries[i].start && targetGlobalOffset < pageBoundaries[i].end) {
+            targetPageNum = i + 1;
+            offsetWithinTargetPage = targetGlobalOffset - pageBoundaries[i].start;
+            break;
+        }
+    }
+    // Handle case where offset is exactly at the end of the last page's content
+    if (targetPageNum === -1 && pageBoundaries.length > 0 && targetGlobalOffset === pageBoundaries[pageBoundaries.length - 1].end) {
+        targetPageNum = pageBoundaries.length; // Belongs to the last page
+        offsetWithinTargetPage = targetGlobalOffset - pageBoundaries[targetPageNum - 1].start;
+    }
+    
+    if (targetPageNum === -1) {
+        logger.warn(`[ScrollToNoteEffect] Could not determine target page for global offset ${targetGlobalOffset} using pageBoundaries. Total boundaries: ${pageBoundaries.length}. Last boundary end: ${pageBoundaries.length > 0 ? pageBoundaries[pageBoundaries.length-1].end : 'N/A'}. Attempting fallback.`);
+        // Fallback (less accurate if page lengths vary significantly from APPROX_CHARS_PER_PAGE)
+        targetPageNum = Math.floor(targetGlobalOffset / APPROX_CHARS_PER_PAGE) + 1;
+        const fallbackPageStart = (targetPageNum - 1) * APPROX_CHARS_PER_PAGE;
+        offsetWithinTargetPage = targetGlobalOffset - fallbackPageStart;
+        logger.warn(`[ScrollToNoteEffect] Fallback: targetPageNum=${targetPageNum}, offsetWithinTargetPage=${offsetWithinTargetPage}`);
+    }
+
+    logger.debug(`[ScrollToNoteEffect] Target page: ${targetPageNum}, Offset within page (raw): ${offsetWithinTargetPage}`);
 
     // If the target page is not the current page, change the page
-    // The actual scrolling will happen in the effect that depends on `currentPageContent` and `pendingScrollOffsetInPage`
-    if (targetPageNum !== currentPage) {
+    if (targetPageNum !== currentPage && targetPageNum !== -1) { // Ensure targetPageNum is valid
       logger.info(`[ScrollToNoteEffect] Target page ${targetPageNum} is different from current page ${currentPage}. Setting current page and pending offset.`);
       setCurrentPage(targetPageNum);
-      setPendingScrollOffsetInPage(offsetWithinTargetPage); // This will be picked up by the other useEffect
-      setScrollToGlobalOffset(null); // Reset after initiating page change
+      // The offsetWithinTargetPage is already calculated based on the raw markdown of that page.
+      // The pendingScrollEffect will need to use this raw offset to find the visual scroll position.
+      setPendingScrollOffsetInPage(offsetWithinTargetPage); 
+      setScrollToGlobalOffset(null); 
       return;
     }
-
-    // If already on the correct page, proceed to scroll within this page
-    logger.info(`[ScrollToNoteEffect] Already on target page ${currentPage}. Proceeding with scroll.`);
     
-    if (!bookPaneContainerRef.current) {
-        logger.warn("[ScrollToNoteEffect] bookPaneContainerRef.current is null. Cannot scroll.");
-        setScrollToGlobalOffset(null); // Reset
-        return;
-    }
-    const bookElement = bookPaneContainerRef.current;
+    if (targetPageNum === currentPage && bookPaneContainerRef.current) {
+        logger.info(`[ScrollToNoteEffect] Already on target page ${currentPage}. Proceeding with scroll using raw offset ${offsetWithinTargetPage}.`);
+        const bookElement = bookPaneContainerRef.current;
+        const rawPageContent = currentPageContent; // This is already set for the current page
+        const mdSegments = createMarkdownSegments(rawPageContent);
 
-    // Cleanup previous scroll target highlight
-    if (scrollTargetHighlightRef.current && scrollTargetHighlightRef.current.parentNode) {
-      try {
-        const parent = scrollTargetHighlightRef.current.parentNode;
-        const textContent = scrollTargetHighlightRef.current.textContent || "";
-        parent.replaceChild(document.createTextNode(textContent), scrollTargetHighlightRef.current);
-        logger.debug("[ScrollToNoteEffect] Cleaned up previous scroll target highlight span.");
-      } catch (e) {
-        logger.error("[ScrollToNoteEffect] Error cleaning up previous scroll target highlight span:", e);
-      }
-    }
-    scrollTargetHighlightRef.current = null;
+        // Helper function: mapRawToRenderedOffset (inverse of mapRenderedToRawOffset)
+        // This function takes a raw character offset within a page's markdown
+        // and returns the approximate corresponding rendered character offset.
+        let targetRenderedOffsetInPage = 0;
+        let accumulatedRawOffset = 0;
+        let accumulatedRenderedOffset = 0;
 
-
-    // Find the text node and character offset to scroll to
-    const walker = document.createTreeWalker(bookElement, NodeFilter.SHOW_TEXT, null);
-    let accumulatedOffset = 0;
-    let textNode = null;
-    let foundTargetNodeAndOffset = false;
-
-    while ((textNode = walker.nextNode())) {
-      const nodeText = textNode.textContent || '';
-      const nodeLength = nodeText.length;
-
-      if (accumulatedOffset + nodeLength >= offsetWithinTargetPage) {
-        const startOffsetInNode = offsetWithinTargetPage - accumulatedOffset;
-        
-        if (startOffsetInNode >= 0 && startOffsetInNode <= nodeLength) { // Ensure valid offset
-          logger.info(`[ScrollToNoteEffect] Target text node found. Offset in node: ${startOffsetInNode}. Node content (start): "${nodeText.substring(0, 30)}..."`);
-          
-          const range = document.createRange();
-          range.setStart(textNode, startOffsetInNode);
-          range.setEnd(textNode, startOffsetInNode); 
-          
-          const highlightRange = document.createRange();
-          highlightRange.setStart(textNode, startOffsetInNode);
-          highlightRange.setEnd(textNode, Math.min(nodeLength, startOffsetInNode + 5)); 
-
-          const highlightSpan = document.createElement('span');
-          highlightSpan.className = 'highlighted-note-scroll-target'; 
-          
-          try {
-            highlightRange.surroundContents(highlightSpan);
-            scrollTargetHighlightRef.current = highlightSpan; 
-            logger.debug("[ScrollToNoteEffect] Inserted highlight span for scroll target:", highlightSpan.textContent);
-
-            let spanOffsetTop = 0;
-            let currentElement = highlightSpan;
-            while (currentElement && currentElement !== bookElement) {
-              spanOffsetTop += currentElement.offsetTop;
-              currentElement = currentElement.offsetParent;
-            }
-            
-            logger.info(`[ScrollToNoteEffect] Calculated spanOffsetTop: ${spanOffsetTop}px relative to bookPane.`);
-
-            isProgrammaticScroll.current = true;
-            const scrollTopTarget = Math.max(0, spanOffsetTop - 20); 
-            bookElement.scrollTop = scrollTopTarget;
-            
-            logger.info(`[ScrollToNoteEffect] Programmatically scrolled bookPane to: ${scrollTopTarget}px.`);
-            
-            highlightSpan.style.transition = 'background-color 0.5s ease-out';
-            highlightSpan.style.backgroundColor = 'rgba(255, 255, 0, 0.5)'; 
-            setTimeout(() => {
-                if (highlightSpan) {
-                    highlightSpan.style.backgroundColor = ''; 
-                }
-            }, 1500); 
-
-
-          } catch (e) {
-            logger.error("[ScrollToNoteEffect] Error inserting highlight span or scrolling (surroundContents failed):", e, "Node:", textNode, "Offset:", startOffsetInNode);
-            // Fallback logic
-            try {
-                const markerSpan = document.createElement("span");
-                markerSpan.className = 'highlighted-note-scroll-target-marker'; 
-                
-                // ADD TEMPORARY VISUAL CUE FOR THE MARKER SPAN
-                markerSpan.style.outline = "2px solid red"; // Distinct visual cue
-                markerSpan.style.backgroundColor = "rgba(255, 0, 0, 0.2)"; // Light red background
-
-                range.insertNode(markerSpan); // Insert the (empty) marker span
-                scrollTargetHighlightRef.current = markerSpan; // Store ref for cleanup
-                
-                let markerOffsetTop = 0;
-                let currentMarkerEl = markerSpan;
-                while (currentMarkerEl && currentMarkerEl !== bookElement) {
-                    markerOffsetTop += currentMarkerEl.offsetTop;
-                    currentMarkerEl = currentMarkerEl.offsetParent;
-                }
-                const markerScrollTopTarget = Math.max(0, markerOffsetTop - 20);
-                
-                isProgrammaticScroll.current = true; // Set before scrolling
-                bookElement.scrollTop = markerScrollTopTarget;
-                logger.info("[ScrollToNoteEffect] Fallback: Used markerSpan and direct scroll. Scrolled to:", markerScrollTopTarget);
-
-                // REMOVE TEMPORARY VISUAL CUE AFTER A DELAY
-                setTimeout(() => {
-                    if (markerSpan) {
-                        markerSpan.style.outline = "";
-                        markerSpan.style.backgroundColor = "";
+        for (const segment of mdSegments) {
+            if (accumulatedRawOffset + segment.rawContent.length >= offsetWithinTargetPage) {
+                // Target raw offset is within or at the end of this segment
+                const rawOffsetIntoSegment = offsetWithinTargetPage - accumulatedRawOffset;
+                if (segment.type === 'text') {
+                    const decodedContent = decodeHtmlEntities(segment.rawContent);
+                    let renderedCharsInSegmentPart = 0;
+                    // let rawCharsProcessedInSegment = 0; // This variable was unused in original thought process
+                    let inSpace = false;
+                    // Simplified mapping: find rendered length of the prefix of rawContent
+                    const prefixRaw = segment.rawContent.substring(0, Math.min(rawOffsetIntoSegment, segment.rawContent.length));
+                    const prefixDecoded = decodeHtmlEntities(prefixRaw);
+                    let prefixRenderedLen = 0; 
+                    inSpace = false; // Reset inSpace for each segment part
+                    for(let charIdx = 0; charIdx < prefixDecoded.length; charIdx++) {
+                        if (/\s/.test(prefixDecoded[charIdx])) { if (!inSpace) prefixRenderedLen++; inSpace = true; }
+                        else { prefixRenderedLen++; inSpace = false; }
                     }
-                }, 1500); // Keep cue for 1.5 seconds
+                    renderedCharsInSegmentPart = prefixRenderedLen;
+                    accumulatedRenderedOffset += renderedCharsInSegmentPart;
+                }
+                // If segment is 'image', it adds to raw but not rendered for this mapping.
+                break; // Found the segment containing the raw offset
+            }
+            // Accumulate full segment lengths if target is beyond this segment
+            accumulatedRawOffset += segment.rawContent.length;
+            if (segment.type === 'text') {
+                const decodedContent = decodeHtmlEntities(segment.rawContent);
+                let segmentRenderedLen = 0; let inSpace = false;
+                for (let k = 0; k < decodedContent.length; k++) {
+                    if (/\s/.test(decodedContent[k])) { if (!inSpace) segmentRenderedLen++; inSpace = true; }
+                    else { segmentRenderedLen++; inSpace = false; }
+                }
+                accumulatedRenderedOffset += segmentRenderedLen;
+            }
+        }
+        targetRenderedOffsetInPage = accumulatedRenderedOffset;
+        logger.debug(`[ScrollToNoteEffect] Mapped raw offset ${offsetWithinTargetPage} to rendered offset ${targetRenderedOffsetInPage} for page ${currentPage}.`);
+        
+        // --- Start of TreeWalker logic from original effect, adapted ---
+        if (scrollTargetHighlightRef.current && scrollTargetHighlightRef.current.parentNode) { 
+            try {
+                const parent = scrollTargetHighlightRef.current.parentNode;
+                const textContent = scrollTargetHighlightRef.current.textContent || "";
+                parent.replaceChild(document.createTextNode(textContent), scrollTargetHighlightRef.current);
+            } catch (e) { logger.error("[ScrollToNoteEffect] Error cleaning up previous highlight span:", e); }
+        }
+        scrollTargetHighlightRef.current = null;
 
-            } catch (e2) {
-                logger.error("[ScrollToNoteEffect] Fallback markerSpan insertion/scroll also failed:", e2);
+        const walker = document.createTreeWalker(bookElement, NodeFilter.SHOW_TEXT, null);
+        let currentWalkerRenderedOffset = 0; // This walker counts RENDERED characters
+        let textNode = null;
+        let foundTargetNodeAndOffset = false;
+
+        while ((textNode = walker.nextNode())) {
+          const nodeTextContent = textNode.textContent || ''; // Use textContent for length
+          const nodeRenderedLength = nodeTextContent.length; // Assuming textContent length is rendered length here
+
+          if (currentWalkerRenderedOffset + nodeRenderedLength >= targetRenderedOffsetInPage) {
+            const startOffsetInNodeRendered = targetRenderedOffsetInPage - currentWalkerRenderedOffset;
+            
+            if (startOffsetInNodeRendered >= 0 && startOffsetInNodeRendered <= nodeRenderedLength) {
+              logger.info(`[ScrollToNoteEffect] Target text node found. Rendered offset in node: ${startOffsetInNodeRendered}.`);
+              const range = document.createRange();
+              range.setStart(textNode, startOffsetInNodeRendered);
+              range.setEnd(textNode, startOffsetInNodeRendered); 
+              
+              const highlightRange = document.createRange();
+              highlightRange.setStart(textNode, startOffsetInNodeRendered);
+              highlightRange.setEnd(textNode, Math.min(nodeRenderedLength, startOffsetInNodeRendered + 5)); 
+
+              const highlightSpan = document.createElement('span');
+              highlightSpan.className = 'highlighted-note-scroll-target'; 
+              
+              try {
+                highlightRange.surroundContents(highlightSpan);
+                scrollTargetHighlightRef.current = highlightSpan; 
+                let spanOffsetTop = 0;
+                let currentElement = highlightSpan;
+                while (currentElement && currentElement !== bookElement) {
+                  spanOffsetTop += currentElement.offsetTop;
+                  currentElement = currentElement.offsetParent;
+                }
+                isProgrammaticScroll.current = true;
+                const scrollTopTarget = Math.max(0, spanOffsetTop - 20); 
+                bookElement.scrollTop = scrollTopTarget;
+                highlightSpan.style.transition = 'background-color 0.5s ease-out';
+                highlightSpan.style.backgroundColor = 'rgba(255, 255, 0, 0.5)'; 
+                setTimeout(() => { if (highlightSpan) { highlightSpan.style.backgroundColor = ''; } }, 1500); 
+
+              } catch (e) {
+                logger.error("[ScrollToNoteEffect] Error inserting highlight span or scrolling (surroundContents failed):", e);
+                // Fallback logic
+                try {
+                    const markerSpan = document.createElement("span");
+                    markerSpan.className = 'highlighted-note-scroll-target-marker';
+                    markerSpan.style.outline = "2px solid red"; 
+                    markerSpan.style.backgroundColor = "rgba(255, 0, 0, 0.2)";
+                    range.insertNode(markerSpan); 
+                    scrollTargetHighlightRef.current = markerSpan;
+                    let markerOffsetTop = 0;
+                    let currentMarkerEl = markerSpan;
+                    while (currentMarkerEl && currentMarkerEl !== bookElement) {
+                        markerOffsetTop += currentMarkerEl.offsetTop;
+                        currentMarkerEl = currentMarkerEl.offsetParent;
+                    }
+                    const markerScrollTopTarget = Math.max(0, markerOffsetTop - 20);
+                    isProgrammaticScroll.current = true;
+                    bookElement.scrollTop = markerScrollTopTarget;
+                    setTimeout(() => { if (markerSpan) { markerSpan.style.outline = ""; markerSpan.style.backgroundColor = ""; } }, 1500);
+                } catch (e2) { logger.error("[ScrollToNoteEffect] Fallback markerSpan also failed:", e2); }
+              }
+              foundTargetNodeAndOffset = true;
+              break; 
             }
           }
-          foundTargetNodeAndOffset = true;
-          break; 
+          currentWalkerRenderedOffset += nodeRenderedLength;
         }
-      }
-      accumulatedOffset += nodeLength;
+        // --- End of adapted TreeWalker logic ---
+        if (!foundTargetNodeAndOffset) { 
+            logger.warn(`[ScrollToNoteEffect] Could not find exact node for rendered offset ${targetRenderedOffsetInPage}. Scrolling to top.`);
+            isProgrammaticScroll.current = true; bookElement.scrollTop = 0; 
+        }
+        const timer = setTimeout(() => { isProgrammaticScroll.current = false; logger.debug("[ScrollToNoteEffect] Reset isProgrammaticScroll."); }, 300); 
+        setScrollToGlobalOffset(null); 
+        return () => { 
+            clearTimeout(timer); 
+            if (scrollTargetHighlightRef.current && scrollTargetHighlightRef.current.parentNode) {
+                try {
+                    const parent = scrollTargetHighlightRef.current.parentNode;
+                    const textToRestore = scrollTargetHighlightRef.current.textContent || "";
+                    parent.replaceChild(document.createTextNode(textToRestore), scrollTargetHighlightRef.current);
+                } catch (e) { logger.error("[ScrollToNoteEffect] Cleanup error:", e); }
+            }
+            scrollTargetHighlightRef.current = null;
+        };
+    } else if (targetPageNum === currentPage && !bookPaneContainerRef.current) {
+        logger.warn("[ScrollToNoteEffect] On target page, but bookPaneContainerRef is null.");
+        setScrollToGlobalOffset(null);
     }
 
-    if (!foundTargetNodeAndOffset) {
-      logger.warn(`[ScrollToNoteEffect] Could not find the exact text node and offset for page offset: ${offsetWithinTargetPage}. Total characters processed on page: ${accumulatedOffset}. Scrolling to top of page.`);
-      isProgrammaticScroll.current = true;
-      bookElement.scrollTop = 0; 
-    }
-
-    const timer = setTimeout(() => {
-      isProgrammaticScroll.current = false;
-      logger.debug("[ScrollToNoteEffect] Reset isProgrammaticScroll to false after timeout.");
-    }, 300); 
-
-    setScrollToGlobalOffset(null); 
-
-    return () => {
-      clearTimeout(timer);
-      if (scrollTargetHighlightRef.current && scrollTargetHighlightRef.current.parentNode) {
-        try {
-          const parent = scrollTargetHighlightRef.current.parentNode;
-          const textToRestore = scrollTargetHighlightRef.current.textContent || "";
-          parent.replaceChild(document.createTextNode(textToRestore), scrollTargetHighlightRef.current);
-          logger.debug("[ScrollToNoteEffect] Cleanup: Replaced/Removed scroll target highlight span.");
-        } catch (e) {
-          logger.error("[ScrollToNoteEffect] Cleanup: Error removing scroll target highlight span:", e);
-        }
-      }
-      scrollTargetHighlightRef.current = null;
-    };
-  }, [scrollToGlobalOffset, fullMarkdownContent, currentPage, currentPageContent]);
+  }, [scrollToGlobalOffset, fullMarkdownContent, currentPage, currentPageContent, pageBoundaries]); // Added pageBoundaries
 
 
   useEffect(() => {
-    if (pendingScrollOffsetInPage !== null && bookPaneContainerRef.current && currentPageContent.length > 0) {
+    // This effect handles scrolling when a page changes due to a note click (scrollToGlobalOffset)
+    // pendingScrollOffsetInPage is the RAW character offset within the NEWLY loaded currentPageContent
+    if (pendingScrollOffsetInPage !== null && bookPaneContainerRef.current && currentPageContent.length > 0 && pageBoundaries.length > 0) {
       const bookElement = bookPaneContainerRef.current;
-      // The DOM needs to be updated with currentPageContent before we can find the offset.
-      // This effect runs *after* currentPageContent is updated and the DOM reflects it.
       
-      // Find the text node and character offset to scroll to, similar to the main scroll effect
+      // Map pendingScrollOffsetInPage (raw) to a rendered offset for TreeWalker
+      const rawPageContentForPending = currentPageContent;
+      const mdSegmentsForPending = createMarkdownSegments(rawPageContentForPending);
+      let targetRenderedOffsetForPending = 0;
+      // --- Start of simplified mapping for pending scroll ---
+        let accumulatedRaw = 0;
+        let accumulatedRendered = 0;
+        for (const seg of mdSegmentsForPending) {
+            if (accumulatedRaw + seg.rawContent.length >= pendingScrollOffsetInPage) {
+                const rawOffInSeg = pendingScrollOffsetInPage - accumulatedRaw;
+                if (seg.type === 'text') {
+                    const decCont = decodeHtmlEntities(seg.rawContent.substring(0, rawOffInSeg));
+                    let rendLenPart = 0; let inSp = false;
+                    for(let k=0; k<decCont.length; k++) { if(/\s/.test(decCont[k])){if(!inSp)rendLenPart++;inSp=true;}else{rendLenPart++;inSp=false;} }
+                    accumulatedRendered += rendLenPart;
+                }
+                break;
+            }
+            accumulatedRaw += seg.rawContent.length;
+            if (seg.type === 'text') {
+                const decCont = decodeHtmlEntities(seg.rawContent);
+                let rendLenSeg = 0; let inSp = false;
+                for(let k=0; k<decCont.length; k++) { if(/\s/.test(decCont[k])){if(!inSp)rendLenSeg++;inSp=true;}else{rendLenSeg++;inSp=false;} }
+                accumulatedRendered += rendLenSeg;
+            }
+        }
+        targetRenderedOffsetForPending = accumulatedRendered;
+      // --- End of simplified mapping ---
+      logger.debug(`[PendingScrollEffect] Mapped raw pending offset ${pendingScrollOffsetInPage} to rendered ${targetRenderedOffsetForPending}`);
+
+
       const walker = document.createTreeWalker(bookElement, NodeFilter.SHOW_TEXT, null);
-      let accumulatedOffset = 0;
+      let currentWalkerRenderedOffset = 0; // Walker counts rendered characters
       let textNode = null;
       let foundTargetNodeForPendingScroll = false;
 
       while ((textNode = walker.nextNode())) {
-          const nodeText = textNode.textContent || '';
-          const nodeLength = nodeText.length;
+          const nodeTextContent = textNode.textContent || '';
+          const nodeRenderedLength = nodeTextContent.length;
 
-          if (accumulatedOffset + nodeLength >= pendingScrollOffsetInPage) {
-              const startOffsetInNode = pendingScrollOffsetInPage - accumulatedOffset;
-              if (startOffsetInNode >= 0 && startOffsetInNode <= nodeLength) {
-                  logger.info(`[PendingScrollEffect] Target text node found for pending scroll. Offset in node: ${startOffsetInNode}.`);
-                  
+          if (currentWalkerRenderedOffset + nodeRenderedLength >= targetRenderedOffsetForPending) {
+              const startOffsetInNodeRendered = targetRenderedOffsetForPending - currentWalkerRenderedOffset;
+              if (startOffsetInNodeRendered >= 0 && startOffsetInNodeRendered <= nodeRenderedLength) {
+                  logger.info(`[PendingScrollEffect] Target text node found for pending scroll. Rendered offset in node: ${startOffsetInNodeRendered}.`);
                   const range = document.createRange();
-                  range.setStart(textNode, startOffsetInNode);
-                  range.setEnd(textNode, startOffsetInNode);
-
-                  const tempSpan = document.createElement('span'); // Temporary, non-highlighted marker
+                  range.setStart(textNode, startOffsetInNodeRendered);
+                  range.setEnd(textNode, startOffsetInNodeRendered);
+                  const tempSpan = document.createElement('span');
                   try {
                       range.insertNode(tempSpan);
                       let spanOffsetTop = 0;
@@ -712,53 +1108,45 @@ function BookView() {
                           spanOffsetTop += currentElement.offsetTop;
                           currentElement = currentElement.offsetParent;
                       }
-                      
                       isProgrammaticScroll.current = true;
                       const scrollTopTarget = Math.max(0, spanOffsetTop - 20);
                       bookElement.scrollTop = scrollTopTarget;
                       logger.info(`[PendingScrollEffect] Scrolled to pending offset. Target scrollTop: ${scrollTopTarget}`);
-                      
-                      // Clean up the temporary span
-                      if (tempSpan.parentNode) {
-                          tempSpan.parentNode.removeChild(tempSpan);
-                      }
+                      if (tempSpan.parentNode) tempSpan.parentNode.removeChild(tempSpan);
                   } catch (e) {
                       logger.error("[PendingScrollEffect] Error inserting temp span or scrolling:", e);
-                      // Fallback: scroll based on ratio if precise DOM manipulation fails
                       if (bookElement.scrollHeight > bookElement.clientHeight) {
-                          const scrollRatio = pendingScrollOffsetInPage / currentPageContent.length;
+                          const scrollRatio = targetRenderedOffsetForPending / bookElement.textContent.length; // Approximate ratio
                           const targetScrollTopFallback = scrollRatio * (bookElement.scrollHeight - bookElement.clientHeight);
                           isProgrammaticScroll.current = true;
                           bookElement.scrollTop = Math.max(0, targetScrollTopFallback -20);
                           logger.info(`[PendingScrollEffect] Fallback scroll to ratio. Target scrollTop: ${bookElement.scrollTop}`);
                       } else {
-                          isProgrammaticScroll.current = true;
-                          bookElement.scrollTop = 0;
+                          isProgrammaticScroll.current = true; bookElement.scrollTop = 0;
                       }
                   }
                   foundTargetNodeForPendingScroll = true;
                   break;
               }
           }
-          accumulatedOffset += nodeLength;
+          currentWalkerRenderedOffset += nodeRenderedLength;
       }
       
       if (!foundTargetNodeForPendingScroll) {
-          logger.warn(`[PendingScrollEffect] Could not find exact node for pending offset ${pendingScrollOffsetInPage}. Scrolling to top of page.`);
+          logger.warn(`[PendingScrollEffect] Could not find exact node for pending rendered offset ${targetRenderedOffsetForPending}. Scrolling to top of page.`);
           isProgrammaticScroll.current = true;
           bookElement.scrollTop = 0;
       }
 
       setTimeout(() => { isProgrammaticScroll.current = false; }, 300);
-      setPendingScrollOffsetInPage(null); // Reset after scrolling
+      setPendingScrollOffsetInPage(null); 
     } else if (pendingScrollOffsetInPage !== null && bookPaneContainerRef.current && currentPageContent.length === 0 && pendingScrollOffsetInPage === 0) {
-        // Handle case where page is empty and offset is 0 (scroll to top)
         isProgrammaticScroll.current = true;
         bookPaneContainerRef.current.scrollTop = 0;
         setTimeout(() => { isProgrammaticScroll.current = false; }, 300);
         setPendingScrollOffsetInPage(null);
     }
-  }, [currentPageContent, pendingScrollOffsetInPage]); 
+  }, [currentPageContent, pendingScrollOffsetInPage, pageBoundaries]); // Added pageBoundaries
 
   useEffect(() => {
     // This effect applies scrolling when a pendingScrollToPercentage is set,
@@ -974,15 +1362,27 @@ function BookView() {
     logger.debug("Attempting to save bookmark with data:", bookmarkData);
 
     try {
+      const token = localStorage.getItem('authToken');
+      if (!token) {
+        setBookmarkError("Authentication token not found. Please log in to save bookmarks.");
+        logger.warn("[BookView - handleSaveBookmark] Auth token not found.");
+        return;
+      }
       const response = await fetch('/api/bookmarks/', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify(bookmarkData),
       });
 
       if (!response.ok) {
+        if (response.status === 401) {
+          const errorData = await response.json().catch(() => ({}));
+          logger.error("Failed to save bookmark - API error (401):", errorData);
+          throw new Error(errorData.detail || "Not authenticated to save bookmark. Please log in again.");
+        }
         const errorData = await response.json();
         logger.error("Failed to save bookmark - API error:", errorData);
         throw new Error(errorData.detail || "Failed to save bookmark");
@@ -998,6 +1398,10 @@ function BookView() {
       logger.error("Error saving bookmark:", error);
       setBookmarkError(error.message);
     }
+  };
+
+  const toggleNotePaneVisibility = () => { // ADD THIS FUNCTION
+    setIsNotePaneVisible(prev => !prev);
   };
 
   if (loading) return <div style={{ padding: '20px' }}>Loading book...</div>;
@@ -1043,7 +1447,11 @@ function BookView() {
   }
 
   return (
-    <div className="book-view-container" ref={bookViewContainerRef}> {/* Add ref to the main container */}
+    <div
+      className="book-view-container"
+      ref={bookViewContainerRef}
+      style={{ flexDirection: isMobileView ? 'column' : 'row' }} // ADD/MODIFY THIS STYLE PROP
+    >
         {/* Add Bookmark Modal - Rendered conditionally */}
         {showAddBookmarkModal && (
           <div className="modal-overlay">
@@ -1100,97 +1508,142 @@ function BookView() {
 
         {/* Book Pane Area */}
         <div 
-          className="book-pane-area" 
+          className="book-pane-area"
           ref={bookPaneAreaRef} // Ref for the resizable area
-          style={{ 
-            flexBasis: bookPaneFlexBasis,
-            flexShrink: 0, // Prevent shrinking beyond flex-basis
-            display: 'flex', // To make its child (.book-pane-wrapper) fill it
+          style={{
+            flexBasis: isMobileView
+              ? (isNotePaneVisible ? '50%' : '100%') // Height basis on mobile
+              : (isNotePaneVisible ? bookPaneFlexBasis : '100%'), // Width basis on desktop
+            width: isMobileView ? '100%' : undefined, // Full width on mobile
+            // height: isMobileView ? (isNotePaneVisible ? '50%' : '100%') : '100%', // Let flex-basis handle height on mobile
+            flexShrink: 0,
+            display: 'flex',
             flexDirection: 'column',
-            overflow: 'hidden' // Important
+            overflow: 'hidden'
           }}
         >
           {/* .book-pane-wrapper is the existing structure inside book-pane-area */}
           <div className="book-pane-wrapper"> 
-            {/* Controls Header for Book Pane - ADD THIS SECTION */}
+            {/* --- MODIFIED Controls Header for Book Pane --- */}
             <div className="book-pane-controls-header">
-              <div className="left-controls">
-                <button onClick={openAddBookmarkModal} className="control-button">
-                  Add Bookmark
+              {/* Left: Bookmark Dropdown Menu */}
+              <div className="bookmark-menu-container" ref={bookmarkMenuRef}>
+                <button 
+                  onClick={() => setIsBookmarkMenuOpen(prev => !prev)} 
+                  className="control-button bookmark-menu-button"
+                  aria-haspopup="true"
+                  aria-expanded={isBookmarkMenuOpen}
+                >
+                  Bookmarks <span className={`arrow ${isBookmarkMenuOpen ? 'up' : 'down'}`}></span>
                 </button>
-                {/* Add Bookmark Dropdown */}
-                {bookmarks.length > 0 && (
-                  <select 
-                    onChange={handleBookmarkSelect} 
-                    className="bookmark-select control-button" // Added control-button for consistent styling
-                    defaultValue="" // Ensure placeholder is selected initially
-                    aria-label="Jump to bookmark"
-                  >
-                    <option value="" disabled>Jump to Bookmark...</option>
-                    {bookmarks.map((bookmark, index) => {
-                      // ADD THIS LOG to see what's being assigned to the value attribute
-                      logger.debug(`[BookView - Rendering Bookmark Option ${index}] ID: "${bookmark.id}", Type: ${typeof bookmark.id}, Name: "${bookmark.name}"`);
-                      return (
-                        <option key={bookmark.id} value={bookmark.id}>
-                          {bookmark.name ? `${bookmark.name} (P${bookmark.page_number})` : `Page ${bookmark.page_number} (Unnamed)`}
-                        </option>
-                      );
-                    })}
-                  </select>
+                {isBookmarkMenuOpen && (
+                  <div className="bookmark-dropdown-menu">
+                    <button 
+                      onClick={() => { openAddBookmarkModal(); setIsBookmarkMenuOpen(false); }} 
+                      className="dropdown-item control-button" // Added control-button for consistent styling
+                    >
+                      Add Bookmark
+                    </button>
+                    {bookmarks.length > 0 && (
+                      <div className="dropdown-item-select-container"> {/* Wrapper for select */}
+                        <label htmlFor="jump-to-bookmark-select" className="sr-only">Jump to Bookmark</label>
+                        <select
+                          id="jump-to-bookmark-select"
+                          onChange={(e) => { handleBookmarkSelect(e); setIsBookmarkMenuOpen(false); }}
+                          className="bookmark-select dropdown-item-select control-button" // Added control-button
+                          defaultValue=""
+                          aria-label="Jump to bookmark"
+                        >
+                          <option value="" disabled>Jump to Bookmark...</option>
+                          {bookmarks.map((bookmark, index) => (
+                            <option key={bookmark.id} value={bookmark.id}>
+                              {bookmark.name ? `${bookmark.name} (P${bookmark.page_number})` : `Page ${bookmark.page_number} (Unnamed)`}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                    <button 
+                      onClick={() => { setShowManageBookmarksModal(true); setIsBookmarkMenuOpen(false); }} 
+                      className="dropdown-item control-button" // Added control-button
+                    >
+                      Manage Bookmarks
+                    </button>
+                  </div>
                 )}
               </div>
-              {/* Add Manage Bookmarks Button */}
-              <button onClick={() => setShowManageBookmarksModal(true)} className="control-button">
-                Manage Bookmarks
-              </button>
-            </div>
 
-            <div className="book-pane-container" ref={bookPaneContainerRef}> {/* Ref for scrollable content */}
+              {/* Center: Pagination Controls - MOVED HERE */}
+              {totalPages > 1 && (
+                <div className="pagination-controls header-pagination"> {/* Added header-pagination class */}
+                  <button onClick={handlePreviousPage} disabled={currentPage === 1} className="control-button">
+                    Previous
+                  </button>
+                  <form onSubmit={handleGoToPage} className="page-input-form">
+                    <span> Page </span>
+                    <input
+                      type="number"
+                      value={pageInput}
+                      onChange={handlePageInputChange}
+                      onBlur={handleGoToPage} 
+                      min="1"
+                      max={totalPages}
+                      className="page-input"
+                    />
+                    <span> of {totalPages} </span>
+                  </form>
+                  <button onClick={handleNextPage} disabled={currentPage === totalPages} className="control-button">
+                    Next
+                  </button>
+                </div>
+              )}
+              {/* Placeholder for pagination if totalPages <= 1 to maintain layout balance */}
+              {totalPages <= 1 && <div className="pagination-controls-placeholder"></div>}
+
+
+              {/* Right: Toggle Notes Button */}
+              <div className="right-controls-group"> {/* New wrapper for right-aligned items */}
+                <button onClick={toggleNotePaneVisibility} className="control-button">
+                  {isNotePaneVisible ? 'Hide Notes' : 'Show Notes'}
+                </button>
+              </div>
+            </div>
+            {/* --- END OF MODIFIED Controls Header --- */}
+
+            {/* The BookPane container itself */}
+            <div className="book-pane-container" ref={bookPaneContainerRef}>
               <BookPane
                 markdownContent={highlightedPageContent} 
                 imageUrls={bookData.image_urls}
                 onTextSelect={handleTextSelect}
               />
             </div>
-            <div className="pagination-controls">
-              <button onClick={handlePreviousPage} disabled={currentPage === 1}>
-                Previous
-              </button>
-              <form onSubmit={handleGoToPage} className="page-input-form">
-                <span> Page </span>
-                <input
-                  type="number"
-                  value={pageInput}
-                  onChange={handlePageInputChange}
-                  onBlur={handleGoToPage} 
-                  min="1"
-                  max={totalPages}
-                  className="page-input"
-                />
-                <span> of {totalPages} </span>
-              </form>
-              <button onClick={handleNextPage} disabled={currentPage === totalPages}>
-                Next
-              </button>
-            </div>
+            {/* The original pagination block was here and is now removed */}
           </div>
         </div>
 
-        {/* Resizer Handle */}
-        <div className="resizer-handle" onMouseDown={handleMouseDownOnResizer}></div>
+        {/* Resizer Handle - Conditionally Render */}
+        {isNotePaneVisible && !isMobileView && ( // MODIFIED THIS CONDITION
+          <div className="resizer-handle" onMouseDown={handleMouseDownOnResizer}></div>
+        )}
 
-        {/* New wrapper for note pane area to control its flex properties */}
-        <div 
-          className="note-pane-area"
-          style={{
-            flexGrow: 1,
-            flexShrink: 1,
-            flexBasis: '0%', // Allow it to grow into remaining space
-            display: 'flex', // To make its child (.note-pane-wrapper) fill it
-            flexDirection: 'column',
-            overflow: 'hidden' // Important
-          }}
-        >
+        {/* New wrapper for note pane area to control its flex properties - Conditionally Render */}
+        {isNotePaneVisible && ( // ADD THIS CONDITION
+          <div
+            className="note-pane-area"
+            style={{
+              flexGrow: 1, // Takes remaining space (height on mobile, width on desktop)
+              flexShrink: 1,
+              flexBasis: isMobileView ? '50%' : '0%', // Height basis on mobile, width basis for desktop grow
+              width: isMobileView ? '100%' : undefined, // Full width on mobile
+              // height: isMobileView ? '50%' : '100%', // Let flex-basis/flex-grow handle height on mobile
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+              borderTop: isMobileView ? '1px solid #ccc' : undefined, // Top border on mobile
+              borderLeft: !isMobileView ? '1px solid #ccc' : undefined, // Left border on desktop
+            }}
+          >
           {/* .note-pane-wrapper is the existing structure inside note-pane-area */}
           <div className="note-pane-wrapper"> 
             <div className="note-pane-container" ref={notePaneContainerRef}> {/* Ref for scrollable content */}
@@ -1205,6 +1658,7 @@ function BookView() {
             </div>
           </div>
         </div>
+        )}
     </div>
   );
 }

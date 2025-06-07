@@ -7,6 +7,9 @@ from bson.errors import InvalidId # Import InvalidId for specific error handling
 from typing import Optional, List, Dict, Any # Import types
 from datetime import datetime # Import datetime
 
+# Import UserCreate for type hinting
+from backend.models.user import UserCreate 
+
 load_dotenv()
 logger = logging.getLogger(__name__)
 
@@ -66,25 +69,31 @@ async def save_book(book_data: dict):
         logger.error(f"Error saving book: {e}", exc_info=True)
         return None
 
-async def get_book(book_id: str):
-    """Retrieves book data by ID."""
+async def get_book(book_id: str, user_id: Optional[str] = None):
+    """Retrieves book data by ID, optionally filtered by user_id."""
     database = get_database()
     if database is None:
         logger.error("Database not initialized for get_book.")
         return None
     try:
-        # Use ObjectId to query by MongoDB's primary key
         obj_id = ObjectId(book_id)
     except Exception:
         logger.error(f"Invalid book ID format: {book_id}")
-        return None # Handle invalid ObjectId format
+        return None
+
+    query_filter = {"_id": obj_id}
+    if user_id:
+        query_filter["user_id"] = user_id
+        logger.debug(f"get_book: Querying for book_id {book_id} and user_id {user_id}")
+    else:
+        logger.debug(f"get_book: Querying for book_id {book_id} (no user_id filter)")
 
     try:
-        book = await database.books.find_one({"_id": obj_id})
+        book = await database.books.find_one(query_filter)
         # No need to convert _id here, let the caller handle it if needed for Pydantic
         return book # Return the raw document (dict) or None
     except Exception as e:
-        logger.error(f"Error fetching book {book_id}: {e}", exc_info=True)
+        logger.error(f"Error fetching book {book_id} with user_id {user_id}: {e}", exc_info=True)
         return None
 
 async def get_books(filter: Optional[dict] = None, projection: Optional[dict] = None):
@@ -116,40 +125,45 @@ async def get_book_by_job_id(job_id: str):
         logger.error(f"Error fetching book by job_id {job_id}: {e}", exc_info=True)
         return None
 
-async def update_book(book_id: str, update_data: dict):
-    """Updates a book document by its _id string."""
+async def update_book(book_id: str, user_id: str, update_data: dict) -> bool:
+    """Updates a book document by its _id string, ensuring it belongs to the user."""
     database = get_database()
     if database is None:
         logger.error("Database not initialized for update_book.")
-        return False # Indicate failure
+        return False
     try:
         obj_id = ObjectId(book_id)
     except Exception:
         logger.error(f"Invalid book ID format for update: {book_id}")
         return False
 
+    # Ensure updated_at is set
+    update_data["updated_at"] = datetime.utcnow()
+    
+    query_filter = {"_id": obj_id, "user_id": user_id}
+    logger.debug(f"update_book: Attempting to update book with filter: {query_filter}")
+
     try:
-        # Ensure updated_at is set
-        update_data["updated_at"] = datetime.utcnow()
         result = await database.books.update_one(
-            {"_id": obj_id},
+            query_filter,
             {"$set": update_data}
         )
         if result.matched_count == 0:
-             logger.warning(f"No book found with ID {book_id} to update.")
-             return False
-        logger.info(f"Updated book {book_id}. Matched count: {result.matched_count}, Modified count: {result.modified_count}")
-        # Return True if at least one document was matched (even if no fields changed)
-        return True
+            logger.warning(f"No book found with ID {book_id} and user_id {user_id} to update, or user does not own the book.")
+            return False # No document matched the _id and user_id
+        
+        logger.info(f"Updated book {book_id} for user {user_id}. Matched: {result.matched_count}, Modified: {result.modified_count}")
+        # Return True if a document was matched (even if no fields actually changed, modified_count could be 0)
+        return True 
     except Exception as e:
-        logger.error(f"Error updating book {book_id}: {e}", exc_info=True)
-        return False # Indicate failure
+        logger.error(f"Error updating book {book_id} for user {user_id}: {e}", exc_info=True)
+        return False
 
 
-async def delete_book_record(book_id: str) -> bool:
+async def delete_book_record(book_id: str, user_id: str) -> bool:
     """
-    Deletes a book record from the database by its ID.
-    Returns True if deletion was successful, False otherwise.
+    Deletes a book record from the database by its ID, ensuring it belongs to the user.
+    Returns True if deletion was successful (at least one record deleted), False otherwise.
     """
     database = get_database()
     if database is None:
@@ -157,19 +171,147 @@ async def delete_book_record(book_id: str) -> bool:
         return False
     
     try:
-        object_id = ObjectId(book_id)
-        delete_result = await database.books.delete_one({"_id": object_id})
-        if delete_result.deleted_count == 0:
-            logger.warning(f"No book record found with ID {book_id} to delete.")
+        if not ObjectId.is_valid(book_id):
+            logger.warning(f"Invalid Book ID format for deletion: {book_id}")
             return False
-        logger.info(f"Book record with ID {book_id} deleted successfully from MongoDB.")
-        return True
-    except InvalidId:
-        logger.error(f"Invalid Book ID format for deletion: {book_id}")
+        object_id = ObjectId(book_id)
+        
+        query_filter = {"_id": object_id, "user_id": user_id}
+        logger.debug(f"delete_book_record: Attempting to delete book with filter: {query_filter}")
+        
+        delete_result = await database.books.delete_one(query_filter)
+        
+        if delete_result.deleted_count == 0:
+            logger.warning(f"No book record found with ID {book_id} and user_id {user_id} to delete, or user does not own the book.")
+            return False # No document matched the _id and user_id, or already deleted
+        
+        logger.info(f"Book record with ID {book_id} for user {user_id} deleted successfully from MongoDB. Count: {delete_result.deleted_count}")
+        return True # Successfully deleted one or more documents (should be one)
+    except InvalidId: # This case should be caught by ObjectId.is_valid, but kept for robustness
+        logger.error(f"Invalid Book ID format for deletion (InvalidId exception): {book_id}")
         return False
     except Exception as e:
-        logger.error(f"Error deleting book record {book_id} from MongoDB: {e}", exc_info=True)
+        logger.error(f"Error deleting book record {book_id} for user {user_id} from MongoDB: {e}", exc_info=True)
         return False
+
+# --- User Database Operations ---
+
+async def get_user_by_id(user_id: str) -> Optional[Dict[str, Any]]:
+    """Retrieves a user by their MongoDB ObjectId string."""
+    database = get_database()
+    if database is None:
+        logger.error("Database not initialized for get_user_by_id.")
+        return None
+    try:
+        if not ObjectId.is_valid(user_id):
+            logger.warning(f"Invalid user ID format for get_user_by_id: {user_id}")
+            return None
+        obj_id = ObjectId(user_id)
+        user_doc = await database.users.find_one({"_id": obj_id})
+        return user_doc  # Returns dict or None
+    except Exception as e:
+        logger.error(f"Error fetching user by ID {user_id}: {e}", exc_info=True)
+        return None
+
+async def get_user_by_google_id(google_id: str) -> Optional[Dict[str, Any]]:
+    """Retrieves a user by their Google ID."""
+    database = get_database()
+    if database is None:
+        logger.error("Database not initialized for get_user_by_google_id.")
+        return None
+    try:
+        user_doc = await database.users.find_one({"google_id": google_id})
+        return user_doc # Returns dict or None
+    except Exception as e:
+        logger.error(f"Error fetching user by google_id {google_id}: {e}", exc_info=True)
+        return None
+
+async def create_or_update_user_from_google(user_data: 'UserCreate') -> Optional[str]:
+    """
+    Creates a new user or updates an existing user based on Google profile information.
+    Returns the user's MongoDB ObjectId as a string if successful, otherwise None.
+    'user_data' is an instance of UserCreate Pydantic model.
+    """
+    database = get_database()
+    if database is None:
+        logger.error("Database not initialized for create_or_update_user_from_google.")
+        return None
+
+    now = datetime.utcnow()
+    
+    # 1. Try to find user by google_id
+    user_doc = await database.users.find_one({"google_id": user_data.google_id})
+
+    if user_doc:
+        # User found by google_id, update their information
+        update_fields = {
+            "email": user_data.email, # Google is source of truth for email if linked
+            "full_name": user_data.full_name,
+            "picture": str(user_data.picture) if user_data.picture else None, # Convert HttpUrl to string
+            "updated_at": now
+        }
+        update_fields = {k: v for k, v in update_fields.items() if v is not None} # Remove fields that are None in user_data
+
+        # Ensure 'updated_at' is always part of the update if other fields are present
+        if update_fields: # If there's anything to update (besides potentially just updated_at)
+            await database.users.update_one(
+                {"_id": user_doc["_id"]},
+                {"$set": update_fields}
+            )
+            logger.info(f"Updated user (found by google_id {user_data.google_id}): {user_data.email}. Modified count: {await database.users.count_documents({'_id': user_doc['_id']})}") # Log modified count or similar
+        else: # Only updated_at needs to be set (e.g. if all other fields from Google were None or matched)
+             await database.users.update_one(
+                {"_id": user_doc["_id"]},
+                {"$set": {"updated_at": now}}
+            )
+        logger.info(f"User {user_data.email} (Google ID: {user_data.google_id}) processed. DB ID: {user_doc['_id']}.")
+        return str(user_doc["_id"])
+    else:
+        # No user found by google_id. Try to find by email.
+        logger.info(f"User not found by google_id {user_data.google_id}. Checking by email: {user_data.email}")
+        user_doc_by_email = await database.users.find_one({"email": user_data.email})
+
+        if user_doc_by_email:
+            # User found by email. Link Google ID and update info.
+            logger.info(f"User found by email {user_data.email}. Linking google_id {user_data.google_id}.")
+            update_fields = {
+                "google_id": user_data.google_id, # Add/update google_id
+                "full_name": user_data.full_name, # Update name from Google
+                "picture": str(user_data.picture) if user_data.picture else None,     # Convert HttpUrl to string
+                "updated_at": now
+            }
+            # Ensure email isn't accidentally set to None if user_data.email was None (UserCreate model should enforce email presence)
+            if user_data.email:
+                 update_fields["email"] = user_data.email # This should be redundant if UserCreate enforces email
+            
+            update_fields = {k: v for k, v in update_fields.items() if v is not None}
+
+            await database.users.update_one(
+                {"_id": user_doc_by_email["_id"]},
+                {"$set": update_fields}
+            )
+            logger.info(f"Linked google_id to existing user (found by email {user_data.email}). DB ID: {user_doc_by_email['_id']}.")
+            return str(user_doc_by_email["_id"])
+        else:
+            # No user found by google_id or email. Create a new user.
+            logger.info(f"No user found by email {user_data.email} either. Creating new user.")
+            new_user_doc_data = {
+                "google_id": user_data.google_id,
+                "email": user_data.email,
+                "full_name": user_data.full_name,
+                "picture": str(user_data.picture) if user_data.picture else None, # Convert HttpUrl to string
+                "is_active": True,
+                "is_superuser": False,
+                "created_at": now,
+                "updated_at": now
+            }
+            try:
+                result = await database.users.insert_one(new_user_doc_data)
+                logger.info(f"Created new user {user_data.email} (Google ID: {user_data.google_id}) with DB ID: {result.inserted_id}")
+                return str(result.inserted_id)
+            except Exception as e: # This could still be a different DB error (e.g. connection, other constraint)
+                logger.error(f"Error creating new user {user_data.email} even after checks: {e}", exc_info=True)
+                return None
 
 # --- Keep Note Database Operations ---
 # ... (rest of the note functions remain unchanged)

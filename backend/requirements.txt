@@ -10,6 +10,6 @@ ollama # Ollama LLM client
 google-generativeai # Google Gemini LLM client
 python-multipart # For handling file uploads in FastAPI
 itsdangerous
-pydantic[email]
 authlib
 PyJWT
+pydantic[email]

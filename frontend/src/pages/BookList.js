@@ -2,9 +2,16 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 
+// --- ADD THIS LINE ---
+console.log("[BookList.js SRC MODULE LEVEL] BookList.js module loaded"); 
+// --- END OF ADDED LINE ---
+
 const POLLING_INTERVAL = 5000;
 
 function BookList() {
+  // ... rest of the component ...
+  console.log("[BookList.js SRC FUNCTION LEVEL] BookList component function executed (rendered or re-rendered)");
+
   const [books, setBooks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -68,25 +75,78 @@ function BookList() {
   };
   // --- End of style definitions ---
 
+  // Function to fetch the list of books from the backend
   const fetchBooks = async () => {
-    // setLoading(true); // setLoading is handled in the initial useEffect
-    // setError(null);  // setError is handled in the initial useEffect
-    try {
-      const response = await fetch('/api/books/');
-      if (!response.ok) {
-         const errorData = await response.json();
-         throw new Error(`HTTP error! status: ${response.status} - ${errorData.detail || response.statusText}`);
+      console.log("[BookList.js SRC CONSOLE.LOG] Fetching books list from backend...");
+      const rawToken = localStorage.getItem('authToken'); // Retrieve the token
+
+      if (!rawToken) {
+          console.error("[BookList.js SRC CONSOLE.ERROR] No auth token found (rawToken is falsy). User might not be logged in.");
+          setError("Authentication token not found. Please log in.");
+          setLoading(false); // Stop loading as we can't proceed
+          // Optionally, redirect to login page here
+          // navigate('/login'); 
+          return;
       }
-      const data = await response.json();
-      console.log("Initial fetch /api/books/ data:", data);
-      setBooks(data);
-    } catch (err) {
-      console.error('Failed to fetch books:', err);
-      setError(`Failed to load books: ${err.message || 'Unknown error'}`);
-      setBooks([]);
-    } finally {
-      setLoading(false);
-    }
+
+      // Sanitize token: remove potential leading/trailing whitespace and newlines
+      // which might cause issues with header formation or parsing.
+      let token = rawToken.trim().replace(/(\r\n|\n|\r)/gm, "");
+
+      // Explicitly check for string "null" or "undefined" which might be stored in localStorage
+      if (!token || token === "null" || token === "undefined") {
+          console.error(`[BookList.js SRC CONSOLE.ERROR] Auth token is invalid after sanitization or is a problematic string. Sanitized token value: '${token}'. User might not be logged in or token is invalid.`);
+          setError("Authentication token is invalid. Please log in again.");
+          setLoading(false);
+          return;
+      }
+      
+      console.log(`[BookList.js SRC CONSOLE.LOG] Attempting to use sanitized auth token (first 20 chars): '${token.substring(0, 20)}...'`);
+
+      const requestHeaders = {
+          'Content-Type': 'application/json'
+          // Authorization header will be added below
+      };
+
+      if (token) {
+          requestHeaders['Authorization'] = `Bearer ${token}`;
+      } else {
+          console.error("[BookList.js SRC CONSOLE.ERROR] Critical error: Token became null or empty just before setting Authorization header. Aborting fetch.");
+          setError("Authentication error. Please log in again.");
+          setLoading(false);
+          return;
+      }
+
+      console.log("[BookList.js SRC CONSOLE.LOG] Request headers being sent to /api/books/:", JSON.stringify(requestHeaders));
+
+      try {
+          const response = await fetch('/api/books/', {
+              headers: requestHeaders
+          });
+          if (!response.ok) {
+              const errorText = await response.text(); 
+              console.error(`[BookList.js SRC CONSOLE.ERROR] HTTP error fetching books: ${response.status} - ${errorText}`);
+              let detail = errorText;
+              try {
+                  const errorJson = JSON.parse(errorText);
+                  detail = errorJson.detail || errorText;
+              } catch (e) {
+                  // Not JSON, use raw text
+              }
+              throw new Error(`HTTP error! status: ${response.status} - ${detail}`);
+          }
+          const data = await response.json();
+          console.log(`[BookList.js SRC CONSOLE.LOG] Successfully fetched ${data.length} books.`);
+          const activeBooks = data.filter(book => book.status !== 'failed');
+          setBooks(activeBooks);
+          setError(null); // Clear any previous error on successful fetch
+      } catch (error) {
+          console.error("[BookList.js SRC CONSOLE.ERROR] Error fetching books:", error);
+          setError(error.message || "Failed to load books. Please try again later.");
+          // Do not set books to [] here, allow existing books to be displayed if any
+      } finally {
+          setLoading(false);
+      }
   };
 
   const checkBookStatus = async (bookId, jobId) => {
@@ -163,9 +223,28 @@ function BookList() {
     }
     setDeletingId(bookId);
     setError(null); // Clear previous errors
+
+    const rawToken = localStorage.getItem('authToken');
+    if (!rawToken) {
+        console.error("[BookList.js SRC CONSOLE.ERROR] No auth token found for delete operation.");
+        setError("Authentication token not found. Please log in.");
+        setDeletingId(null);
+        return;
+    }
+    const token = rawToken.trim().replace(/(\r\n|\n|\r)/gm, "");
+    if (!token || token === "null" || token === "undefined") {
+        console.error(`[BookList.js SRC CONSOLE.ERROR] Invalid auth token for delete operation. Sanitized token: '${token}'`);
+        setError("Authentication token is invalid. Please log in again.");
+        setDeletingId(null);
+        return;
+    }
+
     try {
         const response = await fetch(`/api/books/${bookId}`, {
             method: 'DELETE',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+            },
         });
         if (response.status === 204) { // Successfully deleted
             setBooks(prevBooks => prevBooks.filter(book => book.id !== bookId));
@@ -198,11 +277,28 @@ function BookList() {
 
     setRenamingId(bookId);
     setError(null); // Clear previous errors
+
+    const rawToken = localStorage.getItem('authToken');
+    if (!rawToken) {
+        console.error("[BookList.js SRC CONSOLE.ERROR] No auth token found for rename operation.");
+        setError("Authentication token not found. Please log in.");
+        setRenamingId(null);
+        return;
+    }
+    const token = rawToken.trim().replace(/(\r\n|\n|\r)/gm, "");
+    if (!token || token === "null" || token === "undefined") {
+        console.error(`[BookList.js SRC CONSOLE.ERROR] Invalid auth token for rename operation. Sanitized token: '${token}'`);
+        setError("Authentication token is invalid. Please log in again.");
+        setRenamingId(null);
+        return;
+    }
+
     try {
         const response = await fetch(`/api/books/${bookId}/rename`, {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`,
             },
             body: JSON.stringify({ new_title: newTitle.trim() }),
         });
@@ -287,10 +383,10 @@ function BookList() {
                 <button
                   title="Rename Book"
                   onClick={(e) => { e.stopPropagation(); handleRenameBook(book.id, book.title || book.original_filename);}}
-                  disabled={renamingId === book.id || deletingId === book.id || book.status === 'processing' || book.status === 'pending'}
+                  disabled={renamingId === book.id || deletingId === book.id || book.status === 'processing'}
                   style={renamingId === book.id ? {...renameButtonStyle, backgroundColor: renameButtonHoverStyle.backgroundColor} : renameButtonStyle}
                   onMouseEnter={(e) => {
-                    if (!(renamingId === book.id || deletingId === book.id || book.status === 'processing' || book.status === 'pending')) {
+                    if (!(renamingId === book.id || deletingId === book.id || book.status === 'processing')) {
                         e.currentTarget.style.backgroundColor = renameButtonHoverStyle.backgroundColor;
                         e.currentTarget.style.borderColor = renameButtonHoverStyle.borderColor;
                         e.currentTarget.style.boxShadow = renameButtonHoverStyle.boxShadow;
@@ -299,7 +395,7 @@ function BookList() {
                   onMouseLeave={(e) => {
                     if (!(renamingId === book.id)) { // Keep active style if renaming
                         e.currentTarget.style.backgroundColor = renameButtonStyle.backgroundColor;
-                        e.currentTarget.style.borderColor = renameButtonStyle.border; // Should be renameButtonStyle.borderColor or baseButtonStyle.border
+                        e.currentTarget.style.borderColor = renameButtonStyle.borderColor; 
                         e.currentTarget.style.boxShadow = baseButtonStyle.boxShadow;
                     }
                   }}
@@ -309,10 +405,10 @@ function BookList() {
                 <button
                   title="Delete Book"
                   onClick={(e) => { e.stopPropagation(); handleDeleteBook(book.id, book.title || book.original_filename);}}
-                  disabled={deletingId === book.id || renamingId === book.id || book.status === 'processing' || book.status === 'pending'}
+                  disabled={deletingId === book.id || renamingId === book.id || book.status === 'processing'}
                   style={deletingId === book.id ? {...deleteButtonStyle, backgroundColor: deleteButtonHoverStyle.backgroundColor} : deleteButtonStyle}
                    onMouseEnter={(e) => {
-                    if (!(renamingId === book.id || deletingId === book.id || book.status === 'processing' || book.status === 'pending')) {
+                    if (!(renamingId === book.id || deletingId === book.id || book.status === 'processing')) {
                         e.currentTarget.style.backgroundColor = deleteButtonHoverStyle.backgroundColor;
                         e.currentTarget.style.borderColor = deleteButtonHoverStyle.borderColor;
                         e.currentTarget.style.boxShadow = deleteButtonHoverStyle.boxShadow;
@@ -321,7 +417,7 @@ function BookList() {
                   onMouseLeave={(e) => {
                      if (!(deletingId === book.id)) { // Keep active style if deleting
                         e.currentTarget.style.backgroundColor = deleteButtonStyle.backgroundColor;
-                        e.currentTarget.style.borderColor = deleteButtonStyle.border; // Should be deleteButtonStyle.borderColor or baseButtonStyle.border
+                        e.currentTarget.style.borderColor = deleteButtonStyle.borderColor; 
                         e.currentTarget.style.boxShadow = baseButtonStyle.boxShadow;
                     }
                   }}

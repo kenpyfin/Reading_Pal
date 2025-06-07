@@ -30,6 +30,7 @@ class Book(BaseModel):
     # Use Annotated and BeforeValidator for Pydantic v2 ObjectId handling
     # Use Field alias for MongoDB's _id, default_factory=ObjectId for new documents
     id: Annotated[ObjectId, BeforeValidator(validate_objectid)] = Field(alias="_id", default_factory=ObjectId)
+    user_id: Optional[str] = None # ID of the user who owns the book
 
     job_id: Optional[str] = None # Store the ID from the PDF processing service
     title: str
@@ -69,6 +70,7 @@ class Book(BaseModel):
             "example": {
                 "_id": "60f1b0b3b3f3f3f3f3f3f3f3", # Example MongoDB _id
                 "id": "60f1b0b3b3f3f3f3f3f3f3f3", # Example Pydantic id (string representation)
+                "user_id": "user_specific_identifier_string", # Example User ID
                 "title": "Sample Book",
                 "original_filename": "sample.pdf",
                 "job_id": "some-uuid-string",

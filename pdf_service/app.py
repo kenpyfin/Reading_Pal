@@ -526,6 +526,7 @@ async def perform_pdf_processing(job_id: str, temp_pdf_path: str, sanitized_titl
 
     # Prepare and send callback
     logger.info(f"Job {job_id}: Attempting to send callback to backend with status: {callback_status}")
+
     
     if not BACKEND_CALLBACK_URL:
         logger.error(f"Job {job_id}: BACKEND_CALLBACK_URL is not set. Cannot send callback.")

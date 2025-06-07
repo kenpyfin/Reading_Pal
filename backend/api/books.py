@@ -5,7 +5,7 @@ import asyncio # Import asyncio
 import os
 import logging
 import requests # Import requests
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, status, Body, Response
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, status, Body, Response, Depends, Request
 from typing import List, Optional, Dict, Any 
 from bson import ObjectId # Keep ObjectId import
 from bson.errors import InvalidId # Import InvalidId
@@ -24,9 +24,63 @@ from backend.db.mongodb import (
     delete_book_record, # Add delete_book_record
     get_database
 )
+from backend.auth.auth_handler import auth_handler_instance # For decoding JWT
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# Dependency to get current user_id from token
+async def get_current_user_id(request: Request) -> str:
+    # Log all incoming headers for deep debugging
+    logger.info(f"get_current_user_id: All request headers for {request.url.path}: {dict(request.headers)}")
+
+    auth_header = request.headers.get("Authorization")
+    debug_auth_header = request.headers.get("X-Debug-Auth-Header-Seen") # Get the debug header
+    # Log the received headers (or lack thereof) at INFO level for better visibility
+    logger.info(f"get_current_user_id: Specifically checking 'Authorization' header: '{auth_header}'")
+    logger.info(f"get_current_user_id: Specifically checking 'X-Debug-Auth-Header-Seen' header: '{debug_auth_header}'")
+
+    if not auth_header:
+        logger.info(f"get_current_user_id: Authorization header is missing or empty for request to: {request.url.path}. Raising 401.")
+        # logger.warning("get_current_user_id: Authorization header missing.") # Original warning was removed, this info log replaces it for this path
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated", # This is the detail the client will see
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    parts = auth_header.split()
+    if parts[0].lower() != "bearer" or len(parts) == 1 or len(parts) > 2:
+        logger.warning(f"get_current_user_id: Invalid Authorization header format: {auth_header}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token format",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    token = parts[1]
+    logger.debug(f"get_current_user_id: Extracted token: {token[:20]}...") # Log only a portion for security
+
+    payload = auth_handler_instance.decode_token(token)
+    if not payload: # decode_token returns None on failure
+        logger.warning("get_current_user_id: Token decoding failed or returned no payload.")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token", # More specific detail
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+        
+    user_id = payload.get("user_id")
+    if not user_id:
+        logger.warning(f"get_current_user_id: 'user_id' not found in token payload. Payload: {payload}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User ID missing in token", # More specific detail
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    logger.debug(f"get_current_user_id: Successfully obtained user_id: {user_id}")
+    return user_id
 
 # Define container paths (matching docker-compose volumes)
 # Ensure these match the paths where markdown and images are stored *within the backend container*
@@ -96,10 +150,11 @@ async def call_pdf_service_upload(file: UploadFile, title: Optional[str]):
 @router.post("/upload", response_model=Book)
 async def upload_pdf(
     file: UploadFile = File(...),
-    title: str = Form(None)
+    title: str = Form(None),
+    current_user_id: str = Depends(get_current_user_id)
 ):
     """
-    Uploads a PDF file, sends it to the processing service to start background processing,
+    Uploads a PDF file for the current user, sends it to the processing service to start background processing,
     saves the initial book record with job_id and status, and returns the book data.
     """
     logger.info(f"Received upload request for file: {file.filename}")
@@ -124,6 +179,7 @@ async def upload_pdf(
         # --- Prepare data using the Book model structure, matching DB schema ---
         # REMOVE id=None from the constructor
         book_to_save = Book(
+            user_id=current_user_id, # Associate book with the current user
             title=book_title,
             original_filename=file.filename,
             job_id=job_id,
@@ -178,9 +234,9 @@ async def upload_pdf(
 
 
 @router.get("/", response_model=List[Book], response_model_by_alias=False)
-async def list_books():
+async def list_books(current_user_id: str = Depends(get_current_user_id)):
     """
-    Retrieves a list of all books, excluding those with 'failed' status.
+    Retrieves a list of books for the current user, excluding those with 'failed' status.
     Setting response_model_by_alias=False ensures that if the Book model
     has a field named 'id' (e.g., id: SomeType = Field(alias='_id')),
     the output JSON key will be 'id', not '_id'.
@@ -190,6 +246,7 @@ async def list_books():
         # Define the projection to fetch only necessary fields
         projection = {
             "_id": 1,
+            "user_id": 1, # Include user_id in projection
             "title": 1,
             "original_filename": 1,
             "status": 1,
@@ -202,8 +259,9 @@ async def list_books():
             "processing_error": 1
         }
 
-        books_docs = await get_books(filter={"status": {"$ne": "failed"}}, projection=projection)
-        logger.info(f"Fetched {len(books_docs)} book documents from DB (excluding failed).")
+        # Filter books by the current user_id and status
+        books_docs = await get_books(filter={"user_id": current_user_id, "status": {"$ne": "failed"}}, projection=projection)
+        logger.info(f"Fetched {len(books_docs)} book documents from DB for user {current_user_id} (excluding failed).")
 
         # The list_books function currently constructs dictionaries with an "id" key.
         # When response_model=List[Book] and response_model_by_alias=False are used:
@@ -226,6 +284,7 @@ async def list_books():
             # then passing 'id' here is correct for validation.
             item_for_validation = {
                 "id": str(book_doc['_id']), # For Book model's 'id' field
+                "user_id": book_doc.get("user_id"), # Include user_id
                 "title": book_doc.get("title"),
                 "original_filename": book_doc.get("original_filename"),
                 "status": book_doc.get("status"),
@@ -252,19 +311,19 @@ async def list_books():
 
 
 @router.get("/{book_id}", response_model=Book)
-async def get_book_by_id(book_id: str):
+async def get_book_by_id(book_id: str, current_user_id: str = Depends(get_current_user_id)):
     """
-    Retrieves book data by its ID, reads markdown content from file if available.
+    Retrieves book data by its ID for the current user, reads markdown content from file if available.
     """
-    logger.info(f"Received request for book ID: {book_id}")
+    logger.info(f"Received request for book ID: {book_id} by user {current_user_id}")
 
-    book_data_doc = await get_book(book_id) # Fetches the raw document (dict)
+    book_data_doc = await get_book(book_id, current_user_id) # Fetches the raw document (dict) for the user
 
     if not book_data_doc:
-        logger.warning(f"Get endpoint: Book not found in DB for ID: {book_id}")
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found")
+        logger.warning(f"Get endpoint: Book not found in DB for ID: {book_id} and user {current_user_id}")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found or not owned by user")
 
-    logger.info(f"Get endpoint: Book found in DB for ID: {book_id}")
+    logger.info(f"Get endpoint: Book found in DB for ID: {book_id} and user {current_user_id}")
 
     # Convert raw doc to Book model to work with typed fields
     try:
@@ -468,68 +527,76 @@ async def pdf_processing_callback(payload: PDFServiceCallbackData = Body(...)):
 
     if not book_doc:
         logger.error(f"Callback: Book with job_id {payload.job_id} not found. Cannot update.")
-        # Return 200 to acknowledge receipt and prevent PDF service retries for this specific error.
-        # The error is on our side (missing job_id) or a race condition.
         return {"message": "Callback received, but job_id not found or already processed."}
 
     book_id_str = str(book_doc["_id"])
-    logger.info(f"Callback: Found book with ID {book_id_str} for job_id {payload.job_id}.")
+    db_user_id = book_doc.get("user_id")
+    current_db_sanitized_title = book_doc.get("sanitized_title")
+
+    if not db_user_id:
+        logger.error(f"Callback: Book with job_id {payload.job_id} (DB ID {book_id_str}) is missing user_id. Update cannot proceed.")
+        return {"message": "Callback received, but book record is missing user_id. Update skipped."}
+
+    logger.info(f"Callback: Found book with ID {book_id_str} for job_id {payload.job_id}, user_id {db_user_id}.")
 
     update_data = {
         "status": payload.status,
-        "updated_at": datetime.utcnow() # Always update the timestamp
+        "updated_at": datetime.utcnow()
     }
 
     if payload.status == "completed":
         if payload.file_path:
-            update_data["markdown_filename"] = os.path.basename(payload.file_path)
-            logger.info(f"Callback: Extracted markdown_filename: {update_data['markdown_filename']}")
+            pdf_service_markdown_filename = os.path.basename(payload.file_path)
+            final_markdown_filename_for_db = pdf_service_markdown_filename
+
+            if current_db_sanitized_title:
+                expected_markdown_filename_based_on_db = f"{current_db_sanitized_title}.md"
+                if CONTAINER_MARKDOWN_PATH and pdf_service_markdown_filename != expected_markdown_filename_based_on_db:
+                    old_file_on_disk_path = os.path.join(CONTAINER_MARKDOWN_PATH, pdf_service_markdown_filename)
+                    new_file_on_disk_path = os.path.join(CONTAINER_MARKDOWN_PATH, expected_markdown_filename_based_on_db)
+                    try:
+                        if await run_in_threadpool(os.path.exists, old_file_on_disk_path):
+                            await run_in_threadpool(os.rename, old_file_on_disk_path, new_file_on_disk_path)
+                            logger.info(f"Callback: Renamed processed file from {old_file_on_disk_path} to {new_file_on_disk_path} to match current DB title.")
+                            final_markdown_filename_for_db = expected_markdown_filename_based_on_db
+                        else:
+                            logger.warning(f"Callback: PDF service reported file {pdf_service_markdown_filename} at {old_file_on_disk_path}, but it was not found. Cannot rename to {new_file_on_disk_path}.")
+                            # If the original file isn't there, we can't rename it.
+                            # The DB will store pdf_service_markdown_filename, but it points to a non-existent file.
+                            # This might indicate an issue in the PDF service or file system.
+                    except OSError as e:
+                        logger.error(f"Callback: Error renaming file {old_file_on_disk_path} to {new_file_on_disk_path}: {e}", exc_info=True)
+                        # File rename failed. DB will store pdf_service_markdown_filename.
+            else:
+                logger.warning(f"Callback: Job {payload.job_id} - current_db_sanitized_title is missing. Cannot determine expected filename for potential rename.")
+
+            update_data["markdown_filename"] = final_markdown_filename_for_db
+            logger.info(f"Callback: Set markdown_filename for DB: {update_data['markdown_filename']}")
         else:
             logger.warning(f"Callback: Job {payload.job_id} completed but no file_path provided.")
-            # Potentially mark as failed if markdown_filename is critical
             update_data["status"] = "failed"
             update_data["processing_error"] = "Processing reported as completed by PDF service, but no markdown file path was provided."
-        
-        if payload.images:
-            image_filenames = []
-            processed_images_info_for_db = []
-            for img_info in payload.images:
-                if img_info.filename and img_info.path: # Ensure both filename and original path are present
-                    image_filenames.append(img_info.filename)
-                    processed_images_info_for_db.append({
-                        "filename": img_info.filename,
-                        "original_path_in_markdown": img_info.path # Store the original path
-                    })
-                else:
-                    logger.warning(f"Callback: Job {payload.job_id} - Skipping image info due to missing filename or path: {img_info.model_dump_json()}")
-            
-            # We only need to store the final filenames now
-            image_filenames = [img_info.filename for img_info in payload.images if img_info.filename]
-            update_data["image_filenames"] = image_filenames
-            logger.info(f"Callback: Extracted {len(image_filenames)} image filenames.")
-        else:
-            update_data["image_filenames"] = []
-        
-        # --- REMOVE processed_images_info logic ---
-        # update_data["processed_images_info"] = [] # This line is removed
+            update_data["markdown_filename"] = None # Ensure it's cleared
+
+        image_filenames = [img_info.filename for img_info in payload.images if img_info and img_info.filename] if payload.images else []
+        update_data["image_filenames"] = image_filenames
+        logger.info(f"Callback: Extracted {len(image_filenames)} image filenames.")
 
     elif payload.status == "failed":
         update_data["processing_error"] = payload.processing_error or "Processing failed without specific error message from PDF service."
         logger.warning(f"Callback: Job {payload.job_id} failed. Error: {update_data['processing_error']}")
         update_data["markdown_filename"] = None
         update_data["image_filenames"] = []
-        # update_data["processed_images_info"] = [] # This line is removed
-
-    else: 
+    else:
         logger.warning(f"Callback: Received unexpected status '{payload.status}' for job_id {payload.job_id}. Treating as failed.")
         update_data["status"] = "failed"
         update_data["processing_error"] = f"Received unexpected status '{payload.status}' from PDF service. Original message: {payload.message}"
-        update_data["markdown_filename"] = None 
-        update_data["image_filenames"] = []     
+        update_data["markdown_filename"] = None
+        update_data["image_filenames"] = []
 
     try:
-        updated_count = await update_book(book_id_str, update_data)
-        if updated_count: # update_book should return modified_count or similar
+        updated_count = await update_book(book_id_str, db_user_id, update_data) # Pass db_user_id
+        if updated_count:
             logger.info(f"Callback: Successfully updated book {book_id_str} (job_id: {payload.job_id}) with status '{update_data['status']}'.")
             return {"message": "Callback processed successfully."}
         else:
@@ -550,8 +617,8 @@ class BookRenamePayload(BaseModel):
 
 # Add new endpoint for renaming a book
 @router.put("/{book_id}/rename", response_model=Book)
-async def rename_book(book_id: str, payload: BookRenamePayload = Body(...)):
-    logger.info(f"Attempting to rename book ID: {book_id} to '{payload.new_title}'")
+async def rename_book(book_id: str, payload: BookRenamePayload = Body(...), current_user_id: str = Depends(get_current_user_id)):
+    logger.info(f"Attempting to rename book ID: {book_id} to '{payload.new_title}' for user {current_user_id}")
     # db = get_database() # get_database() is not used directly here, db functions are.
     
     try:
@@ -561,10 +628,10 @@ async def rename_book(book_id: str, payload: BookRenamePayload = Body(...)):
     except InvalidId: # Catch InvalidId specifically if ObjectId.is_valid doesn't catch all cases or for robustness
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid book ID format.")
 
-    existing_book_data = await get_book(book_id) # Fetches raw dict
+    existing_book_data = await get_book(book_id, current_user_id) # Fetches raw dict for the user
     if not existing_book_data:
-        logger.warning(f"Rename: Book not found in DB for ID: {book_id}")
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found")
+        logger.warning(f"Rename: Book not found in DB for ID: {book_id} and user {current_user_id}")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found or not owned by user")
 
     try:
         existing_book = Book.model_validate(existing_book_data)
@@ -572,41 +639,26 @@ async def rename_book(book_id: str, payload: BookRenamePayload = Body(...)):
         logger.error(f"Rename: Error converting existing book data (ID: {book_id}) to Book model: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error processing book data")
 
-    old_sanitized_title = existing_book.sanitized_title
-    old_markdown_filename = existing_book.markdown_filename
+    # old_sanitized_title = existing_book.sanitized_title # Not strictly needed anymore
+    # old_markdown_filename = existing_book.markdown_filename # Not strictly needed anymore
 
     new_sanitized_title = sanitize_filename(payload.new_title)
-    new_markdown_filename = f"{new_sanitized_title}.md" if new_sanitized_title else None
-
-    # Rename markdown file on filesystem
-    if CONTAINER_MARKDOWN_PATH and old_markdown_filename and new_markdown_filename and old_markdown_filename != new_markdown_filename:
-        old_file_path = os.path.join(CONTAINER_MARKDOWN_PATH, old_markdown_filename)
-        new_file_path = os.path.join(CONTAINER_MARKDOWN_PATH, new_markdown_filename)
-        try:
-            if await run_in_threadpool(os.path.exists, old_file_path):
-                await run_in_threadpool(os.rename, old_file_path, new_file_path)
-                logger.info(f"Renamed markdown file from {old_file_path} to {new_file_path}")
-            else:
-                logger.warning(f"Old markdown file not found at {old_file_path}, cannot rename. Book ID: {book_id}")
-        except OSError as e:
-            logger.error(f"Error renaming markdown file for book ID {book_id} from {old_file_path} to {new_file_path}: {e}", exc_info=True)
-            # Decide if this should be a hard failure. For now, logging and continuing.
-            # To make it a hard failure, you could raise an HTTPException here.
+    # The markdown_filename will not be changed. File system operations are removed.
 
     update_data_for_db = {
         "title": payload.new_title,
         "sanitized_title": new_sanitized_title,
-        "markdown_filename": new_markdown_filename,
+        # "markdown_filename" is intentionally omitted to keep it unchanged in the database.
         "updated_at": datetime.utcnow()
     }
 
-    updated_count = await update_book(book_id, update_data_for_db)
+    updated_count = await update_book(book_id, current_user_id, update_data_for_db)
     if not updated_count:
-        logger.warning(f"Rename: Book with ID {book_id} was not updated in DB. It might have been deleted or data was identical (except updated_at).")
+        logger.warning(f"Rename: Book with ID {book_id} for user {current_user_id} was not updated in DB. It might have been deleted or data was identical (except updated_at).")
     
-    updated_book_data = await get_book(book_id) # Re-fetch the book
+    updated_book_data = await get_book(book_id, current_user_id) # Re-fetch the book for the user
     if not updated_book_data:
-        logger.error(f"Rename: Book with ID {book_id} not found after update attempt.")
+        logger.error(f"Rename: Book with ID {book_id} for user {current_user_id} not found after update attempt.")
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found after update attempt.")
         
     try:
@@ -621,8 +673,8 @@ async def rename_book(book_id: str, payload: BookRenamePayload = Body(...)):
 
 # Add new endpoint for deleting a book
 @router.delete("/{book_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_book_route(book_id: str):
-    logger.info(f"Attempting to delete book ID: {book_id}")
+async def delete_book_route(book_id: str, current_user_id: str = Depends(get_current_user_id)):
+    logger.info(f"Attempting to delete book ID: {book_id} for user {current_user_id}")
     # db = get_database() # Not used directly
 
     try:
@@ -631,10 +683,10 @@ async def delete_book_route(book_id: str):
     except InvalidId:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid book ID format.")
 
-    book_data = await get_book(book_id) # Fetches raw dict
+    book_data = await get_book(book_id, current_user_id) # Fetches raw dict for the user
     if not book_data:
-        logger.warning(f"Delete: Book not found in DB for ID: {book_id}. No action taken.")
-        # Return 204 as per HTTP spec for DELETE if resource is already gone
+        logger.warning(f"Delete: Book not found in DB for ID: {book_id} and user {current_user_id}. No action taken.")
+        # Return 204 as per HTTP spec for DELETE if resource is already gone or not owned
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     book_to_delete = None # Initialize to None
@@ -683,14 +735,14 @@ async def delete_book_route(book_id: str):
                     else:
                         logger.warning(f"Image file not found for deletion: {image_file_path}. Book ID: {book_id}")
                 except OSError as e:
-                    logger.error(f"Error deleting image file {image_file_path} for book ID {book_id}: {e}", exc_info=True)
+                    logger.error(f"Error deleting image file {image_file_path} for book ID {book_id} user {current_user_id}: {e}", exc_info=True)
 
-    deleted_count = await delete_book_record(book_id)
+    deleted_count = await delete_book_record(book_id, current_user_id)
     if not deleted_count:
-        logger.warning(f"Delete: No book record found to delete with ID: {book_id}, or delete operation failed in DB (already deleted?).")
-        # Still return 204 as the resource is gone.
+        logger.warning(f"Delete: No book record found to delete with ID: {book_id} for user {current_user_id}, or delete operation failed in DB (already deleted or not owned?).")
+        # Still return 204 as the resource is gone or not accessible to this user.
     else:
-        logger.info(f"Successfully deleted book record with ID: {book_id} from database.")
+        logger.info(f"Successfully deleted book record with ID: {book_id} for user {current_user_id} from database.")
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

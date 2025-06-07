@@ -50,6 +50,42 @@
   overflow-y: auto; 
   padding: 20px;
   box-sizing: border-box; 
+  height: 100%; /* Add if not present, helps ensure it fills flex parent */
+}
+
+
+/* Styles for the mobile resizer handle (if not fully covered by inline styles) */
+.resizer-handle-mobile {
+  /* Inline styles are mostly covering this, but you can add more here */
+  /* For example, a subtle box-shadow or gradient */
+  box-shadow: 0px 1px 3px rgba(0,0,0,0.1) inset;
+  /* Ensure it's not affected by other resizer handle styles if names collide */
+}
+
+
+/* Font control buttons in BookPane */
+.font-control-btn {
+  padding: 5px 8px; /* Adjusted padding for potentially smaller buttons */
+  font-size: 0.9em;    /* Adjusted font size */
+  min-width: 30px; 
+  line-height: 1;
+  border: 1px solid #ccc;
+  background-color: #f8f9fa;
+  border-radius: 3px; /* Slightly smaller radius */
+  cursor: pointer;
+  margin-left: 0; 
+  color: #333; /* Ensure text color is set */
+  display: inline-flex; /* Helps with alignment if icons are used */
+  align-items: center;
+  justify-content: center;
+}
+.font-control-btn:hover {
+  background-color: #e9ecef;
+  border-color: #bbb;
+}
+.font-control-btn:active {
+  background-color: #dee2e6;
+  border-color: #aaa;
 }
 
 /* Pagination controls styling */
@@ -396,43 +432,191 @@
   margin-bottom: 5px;
 }
 
-/* Styling for the new button container (optional, adjust as needed) */
+/* --- Styling for the new Book Pane Controls Header --- */
 .book-pane-controls-header {
   display: flex;
-  /* justify-content: flex-end; */ /* Changed to space-between if you want controls spread out */
-  justify-content: space-between; /* Example: Pushes Add/Jump left, Manage right */
-  align-items: center; 
-  padding: 10px 15px; 
-  background-color: #f8f9fa; 
-  border-bottom: 1px solid #dee2e6; 
-  flex-shrink: 0; 
+  justify-content: space-between; /* Key for layout */
+  align-items: center;
+  padding: 8px 12px;
+  border-bottom: 1px solid #e0e0e0;
+  background-color: #f8f9fa;
+  flex-shrink: 0;
+  position: relative; /* For dropdown positioning context */
 }
 
-/* Group for left-aligned controls if using space-between */
-.book-pane-controls-header .left-controls {
-    display: flex;
-    align-items: center;
+/* Bookmark Menu Container (Left) */
+.bookmark-menu-container {
+  position: relative; /* For dropdown positioning */
+  display: inline-block; /* Or flex if needed for internal alignment */
 }
-/* .control-button and .bookmark-select will be children of .left-controls or directly in header */
 
+.bookmark-menu-button .arrow {
+  display: inline-block;
+  margin-left: 6px;
+  transition: transform 0.2s ease-in-out;
+}
+.bookmark-menu-button .arrow.down::before {
+  content: '▼'; /* Simple down arrow */
+  font-size: 0.7em;
+}
+.bookmark-menu-button .arrow.up::before {
+  content: '▲'; /* Simple up arrow */
+  font-size: 0.7em;
+}
 
-.control-button { 
-  padding: 8px 15px;
-  margin-left: 10px; 
-  background-color: #007bff;
-  color: white;
-  border: none;
+.bookmark-dropdown-menu {
+  position: absolute;
+  top: 100%; /* Position below the button */
+  left: 0;
+  background-color: white;
+  border: 1px solid #ccc;
   border-radius: 4px;
-  cursor: pointer;
-  font-size: 0.9em;
-  text-decoration: none; /* If used as a link */
-  line-height: 1.5; /* Ensure text is vertically centered */
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  z-index: 100; /* Ensure it's above other content */
+  min-width: 220px; /* Adjust as needed */
+  padding: 5px 0; /* Padding for top/bottom of the dropdown itself */
+  display: flex;
+  flex-direction: column;
 }
-.control-button:first-child { /* Remove margin-left for the first button in a group */
-    margin-left: 0;
+
+.bookmark-dropdown-menu .dropdown-item,
+.bookmark-dropdown-menu .dropdown-item-select-container {
+  display: block; /* Make items take full width */
+  width: 100%;
+  text-align: left;
+  background-color: transparent;
+  border: none;
+  /* Use padding on items instead of margin for better click area */
+}
+
+/* Apply control-button styles to dropdown items for consistency, but override some */
+.bookmark-dropdown-menu .control-button.dropdown-item {
+  margin: 0; /* Remove margin from base .control-button */
+  border-radius: 0; /* No border-radius for items inside dropdown */
+  border-bottom: 1px solid #f0f0f0; /* Separator line */
+  padding: 8px 12px; /* Consistent padding */
+  width: calc(100% - 0px); /* Full width accounting for potential box-sizing issues */
+  box-sizing: border-box;
+}
+.bookmark-dropdown-menu .control-button.dropdown-item:last-child {
+  border-bottom: none;
+}
+.bookmark-dropdown-menu .control-button.dropdown-item:hover {
+  background-color: #f0f0f0; /* Hover for dropdown items */
+}
+
+
+.dropdown-item-select-container {
+  padding: 5px 0px; /* Padding around the select container */
+  border-bottom: 1px solid #f0f0f0;
+}
+.dropdown-item-select-container:last-child {
+  border-bottom: none;
+}
+
+.bookmark-select.dropdown-item-select.control-button {
+  width: calc(100% - 24px); /* Full width within its container, accounting for padding */
+  margin: 0px 12px; /* Horizontal margin to align with button padding */
+  box-sizing: border-box;
+  /* Ensure it inherits height, font-size etc. from .control-button */
+}
+
+/* Pagination Controls (Center) - now inside header */
+.pagination-controls.header-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center; /* Center its own items */
+  flex-grow: 1; /* Allow it to take available space in the center */
+  padding: 0; /* Remove padding if already handled by header */
+  border: none; /* Remove border if already handled by header */
+  background-color: transparent; /* Inherit header background */
+}
+
+.pagination-controls.header-pagination .control-button {
+  /* Styles for prev/next buttons if they need to be different from other control-buttons */
+  /* Example: make them slightly smaller if header space is tight */
+  padding: 5px 10px;
+  height: 30px; /* Match other control buttons or adjust */
+  line-height: 18px; /* Adjust for new height */
+  font-size: 0.8rem;
+}
+
+.pagination-controls.header-pagination .page-input-form {
+  margin: 0 8px; /* Reduced margin */
+  font-size: 0.85em;
+}
+
+.pagination-controls.header-pagination .page-input {
+  width: 40px; /* Compact input */
+  height: 28px; /* Match button height */
+  padding: 4px;
+  font-size: 0.85em;
+  box-sizing: border-box;
+}
+.pagination-controls.header-pagination span {
+  font-size: 0.85em;
+  margin: 0 3px;
+}
+
+/* Placeholder for pagination to maintain layout balance */
+.pagination-controls-placeholder {
+  flex-grow: 1; /* Occupy the same space as pagination would */
+  /* visibility: hidden; /* Or just be an empty div */
+}
+
+
+/* Right Controls Group */
+.right-controls-group {
+  display: flex;
+  align-items: center;
+  /* No flex-grow, so it stays to the right */
+}
+
+/* General .control-button (ensure it's robust) */
+.control-button { 
+  display: inline-flex; 
+  align-items: center; 
+  justify-content: center; 
+  height: 32px; 
+  padding: 0 10px; 
+  font-size: 0.875rem; 
+  line-height: 30px; 
+  color: #333; 
+  background-color: #ffffff; 
+  border: 1px solid #ccc; 
+  border-radius: 4px; 
+  cursor: pointer;
+  text-decoration: none; 
+  white-space: nowrap; 
+  box-sizing: border-box; 
+  transition: background-color 0.15s ease-in-out, border-color 0.15s ease-in-out;
+  margin-left: 0; /* Remove default margin, use gap on parent or specific margins */
 }
 .control-button:hover {
-  background-color: #0056b3;
+  background-color: #f0f0f0; 
+  border-color: #bbb;
+}
+.control-button:active {
+  background-color: #e0e0e0; 
+  border-color: #aaa;
+}
+
+/* Remove margin from .left-controls and .right-controls if they are no longer direct children with multiple items */
+/* The new structure is: .bookmark-menu-container, .pagination-controls, .right-controls-group */
+/* So, if .left-controls and .right-controls classes are removed from JSX, remove their CSS too or adapt. */
+/* For now, assuming .control-button is used directly or within new wrappers. */
+
+/* Accessibility: screen-reader only class */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
 }
 
 /* frontend/src/pages/BookView.css */
@@ -440,7 +624,7 @@
 /* ... existing styles ... */
 
 .bookmark-select {
-  margin-left: 10px; /* Space from the Add Bookmark button */
+  /* margin-left: 10px; */ /* Space from the Add Bookmark button - Now handled by dropdown structure */
   /* Inherits .control-button styles if class is applied, otherwise define: */
   /* padding: 7px 10px; */
   /* background-color: #007bff; */ /* Or a different color for select */
@@ -499,4 +683,221 @@
 .delete-bookmark-button {
   /* Example: */
   /* padding: 3px 6px; */ /* Make it slightly smaller than note delete button */
+}
+
+
+/* --- Add Mobile Specific Styles at the end or in a dedicated @media block --- */
+@media (max-width: 768px) {
+  .book-view-container {
+    /* flexDirection: column; is handled by inline style in BookView.js */
+    /* height: calc(100vh - YOUR_HEADER_HEIGHT); is handled by parent or inline style */
+  }
+
+  .book-pane-area, .note-pane-area {
+    /* flex-basis and width are handled by inline styles in BookView.js for mobile */
+    /* Ensure they don't have conflicting fixed widths/heights from desktop styles */
+  }
+  
+  .book-pane-controls-header {
+    flex-wrap: wrap; 
+    justify-content: space-around; /* Changed from center to space-around for better distribution */
+    padding: 6px 8px;
+    gap: 8px; /* Increased gap slightly for better touch targets when wrapped */
+  }
+
+  .bookmark-menu-container,
+  .pagination-controls.header-pagination,
+  .right-controls-group {
+    flex-basis: auto; /* Allow items to size based on content, not force full width */
+    flex-grow: 0;     /* Don't grow by default */
+    flex-shrink: 1;   /* Allow shrinking if needed */
+    /* justify-content: center; /* Remove this, let parent handle alignment */
+    margin-bottom: 0; /* Remove bottom margin if they fit on one line */
+    /* Ensure they align to the center of the flex line if they wrap */
+    align-self: center; 
+  }
+
+  /* Allow pagination to take more space if available on the line */
+  .pagination-controls.header-pagination {
+    flex-grow: 1; /* Let pagination try to fill available space */
+    min-width: 160px; /* Give pagination a minimum width to prevent it from becoming too squished */
+                      /* Adjust this based on how compact you make the prev/next/input */
+    justify-content: center; /* Ensure its internal items are centered */
+  }
+  
+  /* Make the bookmark menu button and toggle notes button more compact */
+  .bookmark-menu-container .control-button, /* Target the button directly */
+  .right-controls-group .control-button {   /* Target the button directly */
+    padding: 0 8px; /* Reduce horizontal padding */
+    height: 30px;   /* Slightly smaller height */
+    font-size: 0.8rem; /* Smaller font */
+    line-height: 28px; /* Adjust line height */
+  }
+  .bookmark-menu-button .arrow { /* Ensure this is specific enough if .control-button is too general */
+    margin-left: 4px; /* Reduce space for arrow */
+  }
+  .bookmark-menu-button .arrow.down::before,
+  .bookmark-menu-button .arrow.up::before {
+    font-size: 0.65em; /* Smaller arrow */
+  }
+
+  .bookmark-dropdown-menu {
+    position: absolute;
+    top: 100%; /* Position below the button */
+    
+    left: 0; /* Align to the left edge of the parent (.bookmark-menu-container) */
+    transform: translateX(0); /* Reset any previous transform */
+    
+    width: auto; /* Let content determine width initially */
+    min-width: 200px; /* Minimum sensible width for dropdown items */
+    max-width: 280px; /* A fixed maximum width for mobile dropdowns */
+                      /* Adjust this value as needed based on your content */
+    
+    box-sizing: border-box; 
+    background-color: white;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    z-index: 100; 
+    padding: 5px 0; 
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Ensure items within the dropdown don't cause overflow */
+  .bookmark-dropdown-menu .control-button.dropdown-item,
+  .bookmark-dropdown-menu .dropdown-item-select-container {
+    width: 100%; /* Make items take full width of the dropdown */
+    box-sizing: border-box; /* Include padding/border in width */
+  }
+
+  .bookmark-select.dropdown-item-select.control-button {
+    width: calc(100% - 20px); /* Adjust width considering its own padding/margin */
+    margin: 0 10px; /* Consistent margin */
+    box-sizing: border-box;
+    font-size: 0.8rem; 
+    height: 30px; 
+    line-height: 28px;
+  }
+  
+  .bookmark-dropdown-menu .control-button.dropdown-item {
+    font-size: 0.8rem; 
+    padding: 8px 10px; /* Adjust padding */
+    height: auto; /* Let content determine height, or set fixed like select */
+    line-height: 1.4; /* Normal line height for potentially multi-line text */
+  }
+
+  /* Further compact pagination controls */
+  .pagination-controls.header-pagination .control-button {
+    padding: 0 6px; 
+    height: 30px; /* Match other compact buttons */
+    line-height: 28px; 
+    font-size: 0.75rem; 
+    min-width: auto; 
+  }
+  .pagination-controls.header-pagination .page-input-form {
+    margin: 0 5px; 
+    font-size: 0.8em;
+  }
+  .pagination-controls.header-pagination .page-input {
+    width: 35px; 
+    height: 28px; /* Match button height */
+    padding: 3px;
+    font-size: 0.8em;
+  }
+  .pagination-controls.header-pagination span {
+    font-size: 0.8em;
+    margin: 0 3px;
+  }
+
+  .font-controls {
+    /* Optional: Adjust positioning or size for mobile if needed */
+    /* top: 5px; */
+    /* right: 5px; */
+    /* padding: 2px 3px; */
+  }
+  .font-control-btn {
+    padding: 4px 6px;
+    font-size: 0.8em;
+    min-width: 25px;
+  }
+  .font-controls span { /* Target the spans displaying values */
+    font-size: 12px !important; /* Ensure mobile font size for value display is small */
+    margin: 0 5px !important; /* Adjust margin for mobile */
+  }
+  
+  /* Adjust pagination controls for mobile */
+  .pagination-controls {
+    padding: 6px 0;
+  }
+  .pagination-controls button {
+    padding: 6px 10px;
+    font-size: 0.85em;
+  }
+  .pagination-controls .page-input {
+    width: 40px;
+    padding: 4px;
+    font-size: 0.85em;
+  }
+  .pagination-controls span {
+    font-size: 0.85em;
+  }
+
+  /* Adjust heading sizes in NotePane for mobile if needed */
+  /* These selectors assume NotePane's content is within .note-pane-container */
+  .note-pane-container h2 { /* Targets "Notes & LLM Insights" */
+    font-size: 1.2em;
+    margin-top: 0.5em;
+    margin-bottom: 0.5em;
+    padding-bottom: 5px; /* Adjust if there's a border */
+  }
+  .note-pane-container h3 { /* Targets "Add New Note", "LLM Reading Assistance", "Saved Notes" */
+    font-size: 1.05em;
+    margin-top: 0.8em;
+    margin-bottom: 0.4em;
+  }
+  .note-pane-container h4 { /* Targets "Selected Text from Book:", "LLM Response:" */
+    font-size: 0.95em;
+  }
+
+  /* Ensure textareas and buttons in NotePane are reasonably sized */
+  .note-pane-container .new-note-form textarea, 
+  .note-pane-container .llm-interaction textarea {
+    font-size: 0.9em;
+    padding: 8px;
+  }
+  .note-pane-container .new-note-form button, 
+  .note-pane-container .llm-interaction button {
+    font-size: 0.9em;
+    padding: 7px 12px;
+  }
+
+  /* Hide Note Pane Button (if not fully covered by inline styles) */
+  /* .hide-note-pane-btn is styled inline in NotePane.js, but you can add hover/active states here */
+  .hide-note-pane-btn:hover {
+    background-color: #5a6268; /* Example hover color */
+  }
+
+  /* Modal adjustments for mobile if needed */
+  .modal-content {
+    padding: 20px;
+    max-width: 90%; /* Ensure it doesn't get too wide on small screens */
+  }
+  .modal-content h2 {
+    font-size: 1.4em;
+  }
+  .bookmark-name-input {
+    padding: 10px;
+    font-size: 0.95em;
+  }
+  .modal-actions .button-primary,
+  .modal-actions .button-secondary {
+    padding: 8px 15px;
+    font-size: 0.95em;
+  }
+
+  /* Manage Bookmarks Modal List Item Text */
+  .manage-bookmarks-modal .manage-bookmark-item span {
+    font-size: 0.9em;
+  }
 }
