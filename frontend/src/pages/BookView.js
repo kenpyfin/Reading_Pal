@@ -1516,19 +1516,18 @@ function BookView() {
           className="book-pane-area"
           ref={bookPaneAreaRef} // Ref for the resizable area
           style={{
-            flexBasis: isMobileView
-              ? (isNotePaneVisible ? '50%' : '100%') // Height basis on mobile
-              : (isNotePaneVisible ? bookPaneFlexBasis : '100%'), // Width basis on desktop
+            flexBasis: !isMobileView && isNotePaneVisible ? bookPaneFlexBasis : '100%', // Desktop width, or full if mobile/notes hidden
             width: isMobileView ? '100%' : undefined, // Full width on mobile
-            // height: isMobileView ? (isNotePaneVisible ? '50%' : '100%') : '100%', // Let flex-basis handle height on mobile
+            height: '100%', // Occupy full height of its flex container part
             flexShrink: 0,
             display: 'flex',
             flexDirection: 'column',
-            overflow: 'hidden'
+            overflow: 'hidden',
+            position: isMobileView ? 'relative' : undefined, // Needed if note pane is absolute child for some reason
           }}
         >
           {/* .book-pane-wrapper is the existing structure inside book-pane-area */}
-          <div className="book-pane-wrapper"> 
+          <div className="book-pane-wrapper">
             {/* --- MODIFIED Controls Header for Book Pane --- */}
             <div className="book-pane-controls-header">
               {/* Left: Bookmark Dropdown Menu */}
