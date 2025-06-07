@@ -49,7 +49,6 @@ OLLAMA_REFORMAT_MODEL = os.getenv('OLLAMA_REFORMAT_MODEL') # Use the general LLM
 
 # Get Backend Callback URL from environment variables
 BACKEND_CALLBACK_URL = os.getenv("BACKEND_CALLBACK_URL")
-LOCAL_BACKEND_CALLBACK_URL_OVERRIDE = os.getenv("LOCAL_BACKEND_CALLBACK_URL_OVERRIDE") # For local dev, override BACKEND_CALLBACK_URL
 
 # Get Gemini API Key
 GEMINI_API_KEY_REFORMAT = os.getenv("GEMINI_API_KEY_REFORMAT") # ADD THIS LINE to load Gemini key
@@ -528,14 +527,11 @@ async def perform_pdf_processing(job_id: str, temp_pdf_path: str, sanitized_titl
     # Prepare and send callback
     logger.info(f"Job {job_id}: Attempting to send callback to backend with status: {callback_status}")
 
-    # Determine the actual callback URL to use
-    # Use LOCAL_BACKEND_CALLBACK_URL_OVERRIDE if set, otherwise fall back to BACKEND_CALLBACK_URL
-    actual_callback_url_to_use = LOCAL_BACKEND_CALLBACK_URL_OVERRIDE if LOCAL_BACKEND_CALLBACK_URL_OVERRIDE else BACKEND_CALLBACK_URL
     
-    if not actual_callback_url_to_use:
-        logger.error(f"Job {job_id}: No callback URL configured (checked BACKEND_CALLBACK_URL and LOCAL_BACKEND_CALLBACK_URL_OVERRIDE). Cannot send callback.")
+    if not BACKEND_CALLBACK_URL:
+        logger.error(f"Job {job_id}: BACKEND_CALLBACK_URL is not set. Cannot send callback.")
     else:
-        logger.info(f"Job {job_id}: Effective callback URL for job {job_id}: {actual_callback_url_to_use}") # Log the URL being used
+        callback_url = f"{BACKEND_CALLBACK_URL}" 
 
         # Prepare data for the callback using local variables
         callback_data = {
@@ -549,13 +545,13 @@ async def perform_pdf_processing(job_id: str, temp_pdf_path: str, sanitized_titl
             callback_data["file_path"] = callback_file_path
         
         try:
-            response = requests.post(actual_callback_url_to_use, json=callback_data, timeout=10) # Use the determined URL
+            response = requests.post(callback_url, json=callback_data, timeout=10) # Add a timeout
             response.raise_for_status() # Raise an exception for bad status codes
-            logger.info(f"Job {job_id}: Callback sent successfully to {actual_callback_url_to_use}. Backend response status: {response.status_code}")
+            logger.info(f"Job {job_id}: Callback sent successfully to {callback_url}. Backend response status: {response.status_code}")
         except requests.exceptions.RequestException as e:
-            logger.error(f"Job {job_id}: Failed to send callback to backend {actual_callback_url_to_use}: {e}")
+            logger.error(f"Job {job_id}: Failed to send callback to backend {callback_url}: {e}")
         except Exception as e:
-            logger.error(f"Job {job_id}: An unexpected error occurred while sending callback to {actual_callback_url_to_use}: {e}", exc_info=True)
+            logger.error(f"Job {job_id}: An unexpected error occurred while sending callback: {e}", exc_info=True)
 
 
 @app.post("/process-pdf", response_model=ProcessResponse)
