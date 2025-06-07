@@ -270,7 +270,8 @@ function BookView() {
   const initialBookPaneWidthPx = useRef(0);
 
   const [showManageBookmarksModal, setShowManageBookmarksModal] = useState(false); // ADD THIS STATE
-  const [isNotePaneVisible, setIsNotePaneVisible] = useState(true); // ADD THIS LINE
+  const [isNotePaneVisible, setIsNotePaneVisible] = useState(true); // For desktop side-by-side
+  const [showNotesPanelOnMobile, setShowNotesPanelOnMobile] = useState(false); // For mobile overlay
   const [isMobileView, setIsMobileView] = useState(window.innerWidth <= 768); // ADD THIS LINE, initialize directly
   const [isBookmarkMenuOpen, setIsBookmarkMenuOpen] = useState(false);
   const bookmarkMenuRef = useRef(null); // For detecting clicks outside
@@ -1400,8 +1401,12 @@ function BookView() {
     }
   };
 
-  const toggleNotePaneVisibility = () => { // ADD THIS FUNCTION
-    setIsNotePaneVisible(prev => !prev);
+  const toggleNotePaneVisibility = () => {
+    if (isMobileView) {
+      setShowNotesPanelOnMobile(prev => !prev);
+    } else {
+      setIsNotePaneVisible(prev => !prev);
+    }
   };
 
   if (loading) return <div style={{ padding: '20px' }}>Loading book...</div>;
@@ -1604,7 +1609,9 @@ function BookView() {
               {/* Right: Toggle Notes Button */}
               <div className="right-controls-group"> {/* New wrapper for right-aligned items */}
                 <button onClick={toggleNotePaneVisibility} className="control-button">
-                  {isNotePaneVisible ? 'Hide Notes' : 'Show Notes'}
+                  {isMobileView
+                    ? (showNotesPanelOnMobile ? 'Hide Notes' : 'Show Notes')
+                    : (isNotePaneVisible ? 'Hide Notes' : 'Show Notes')}
                 </button>
               </div>
             </div>
@@ -1627,37 +1634,55 @@ function BookView() {
           <div className="resizer-handle" onMouseDown={handleMouseDownOnResizer}></div>
         )}
 
-        {/* New wrapper for note pane area to control its flex properties - Conditionally Render */}
-        {isNotePaneVisible && ( // ADD THIS CONDITION
+        {/* Desktop: Note Pane Area - side-by-side */}
+        {!isMobileView && isNotePaneVisible && (
           <div
-            className="note-pane-area"
+            className="note-pane-area" // Existing class for desktop
             style={{
-              flexGrow: 1, // Takes remaining space (height on mobile, width on desktop)
+              flexGrow: 1,
               flexShrink: 1,
-              flexBasis: isMobileView ? '50%' : '0%', // Height basis on mobile, width basis for desktop grow
-              width: isMobileView ? '100%' : undefined, // Full width on mobile
-              // height: isMobileView ? '50%' : '100%', // Let flex-basis/flex-grow handle height on mobile
+              flexBasis: '0%', // Grow to fill remaining space from bookPaneFlexBasis
               display: 'flex',
               flexDirection: 'column',
               overflow: 'hidden',
-              borderTop: isMobileView ? '1px solid #ccc' : undefined, // Top border on mobile
-              borderLeft: !isMobileView ? '1px solid #ccc' : undefined, // Left border on desktop
+              borderLeft: '1px solid #ccc', // Always has left border on desktop
             }}
           >
-          {/* .note-pane-wrapper is the existing structure inside note-pane-area */}
-          <div className="note-pane-wrapper"> 
-            <div className="note-pane-container" ref={notePaneContainerRef}> {/* Ref for scrollable content */}
-              <NotePane
-                bookId={bookId}
-                selectedBookText={selectedBookText}
-                selectedScrollPercentage={selectedScrollPercentage}
-                selectedGlobalCharOffset={selectedGlobalCharOffset} 
-                onNoteClick={handleNoteClick} 
-                onNewNoteSaved={handleNewNoteSaved} 
-              />
+            <div className="note-pane-wrapper">
+              <div className="note-pane-container" ref={notePaneContainerRef}>
+                <NotePane
+                  bookId={bookId}
+                  selectedBookText={selectedBookText}
+                  selectedScrollPercentage={selectedScrollPercentage}
+                  selectedGlobalCharOffset={selectedGlobalCharOffset}
+                  onNoteClick={handleNoteClick}
+                  onNewNoteSaved={handleNewNoteSaved}
+                  // No mobile-specific props needed for desktop version
+                />
+              </div>
             </div>
           </div>
-        </div>
+        )}
+
+        {/* Mobile: Note Pane Area - Overlay */}
+        {isMobileView && showNotesPanelOnMobile && (
+          <div className="note-pane-area-mobile-overlay"> {/* New class for overlay styling */}
+            {/* The wrapper and container structure can be similar if NotePane is self-contained */}
+            <div className="note-pane-wrapper">
+              <div className="note-pane-container" ref={notePaneContainerRef}> {/* Still need ref for scrolling */}
+                <NotePane
+                  bookId={bookId}
+                  selectedBookText={selectedBookText}
+                  selectedScrollPercentage={selectedScrollPercentage}
+                  selectedGlobalCharOffset={selectedGlobalCharOffset}
+                  onNoteClick={handleNoteClick}
+                  onNewNoteSaved={handleNewNoteSaved}
+                  isMobileContext={true} // Indicate mobile overlay context
+                  onClosePane={toggleNotePaneVisibility} // Pass the toggle function to close
+                />
+              </div>
+            </div>
+          </div>
         )}
     </div>
   );
