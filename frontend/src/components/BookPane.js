@@ -182,6 +182,10 @@ const BookPane = forwardRef(({ markdownContent, imageUrls, onTextSelect }, ref) 
               // props.src will now be correctly formatted by transformUri
               return <img {...props} style={{ maxWidth: '100%', height: 'auto' }} />;
             },
+            table: ({ node, ...props }) => {
+              // Apply styles to prevent tables from being cut off across page breaks
+              return <table {...props} style={{ breakInside: 'avoid-page', pageBreakInside: 'avoid' }} />;
+            },
           }}
         />
         ) : (
