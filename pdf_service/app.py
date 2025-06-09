@@ -371,10 +371,17 @@ Reformat this markdown:
                 reformatted_chunk = reformatted_chunk_raw.strip() # Strip leading/trailing whitespace anyway
 
             logger.info(f"Received response for chunk {i+1}. Reformatted length: {len(reformatted_chunk)} characters.")
-            
-            if len(reformatted_chunk) < len(chunk) * 0.5 and len(chunk) > 100:
-                logger.warning(f"Gemini Chunk {i+1} significantly shrunk. Original: {len(chunk)}, Reformatted: {len(reformatted_chunk)}")
-            reformatted_chunks.append(reformatted_chunk)
+
+            # Basic validation: Check if the reformatted chunk is not empty if the original wasn't
+            if not reformatted_chunk.strip() and chunk.strip():
+                logger.warning(f"Gemini returned an empty reformatted chunk {i+1} for a non-empty original chunk. USING ORIGINAL CHUNK.")
+                reformatted_chunks.append(chunk)
+            # Check for significant reduction in content (standardized to 75% threshold, 200 char min like Ollama)
+            elif len(reformatted_chunk) < len(chunk) * 0.75 and len(chunk) > 200:
+                logger.warning(f"Gemini Chunk {i+1} significantly shrunk (reformatted < 75% of original). Original: {len(chunk)}, Reformatted: {len(reformatted_chunk)}. USING ORIGINAL CHUNK.")
+                reformatted_chunks.append(chunk) # Use original chunk if significantly shrunk
+            else:
+                reformatted_chunks.append(reformatted_chunk)
         except Exception as e:
             logger.error(f"Error reformatting chunk {i+1} with Gemini: {e}", exc_info=True)
             # Fallback: return the original chunk if reformatting fails
