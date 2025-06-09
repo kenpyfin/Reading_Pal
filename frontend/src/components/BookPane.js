@@ -2,6 +2,9 @@ import React, { forwardRef, useState, useCallback } from 'react'; // Added useCa
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw'; // Import rehype-raw
+import remarkMath from 'remark-math'; // Import remark-math
+import rehypeKatex from 'rehype-katex'; // Import rehype-katex
+import 'katex/dist/katex.min.css'; // Import KaTeX CSS
 
 const BookPane = forwardRef(({ markdownContent, imageUrls, onTextSelect }, ref) => {
   const [fontSize, setFontSize] = useState(16); // Default font size in pixels
@@ -173,11 +176,11 @@ const BookPane = forwardRef(({ markdownContent, imageUrls, onTextSelect }, ref) 
       <div style={{ fontSize: `${fontSize}px`, lineHeight: lineHeight /* Apply unitless line height */ }}> 
         {markdownContent ? (
           <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-          rehypePlugins={[rehypeRaw]} 
-          transformImageUri={transformUri} // USE THE UPDATED TRANSFORM FUNCTION
-          children={markdownContent}
-          components={{
+            remarkPlugins={[remarkGfm, remarkMath]} // Add remarkMath
+            rehypePlugins={[rehypeRaw, rehypeKatex]} // Add rehypeKatex
+            transformImageUri={transformUri} // USE THE UPDATED TRANSFORM FUNCTION
+            children={markdownContent}
+            components={{
             img: ({ node, ...props }) => {
               // props.src will now be correctly formatted by transformUri
               return <img {...props} style={{ maxWidth: '100%', height: 'auto' }} />;
