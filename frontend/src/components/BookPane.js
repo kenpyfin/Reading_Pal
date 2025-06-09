@@ -106,22 +106,29 @@ const BookPane = forwardRef(({ markdownContent, imageUrls, onTextSelect }, ref) 
 
   // Function to transform image URIs from Markdown into accessible paths
   const transformUri = (uri) => {
-    if (!uri) return uri; // Return original if URI is empty or null
+    if (!uri) return uri;
 
-    // If the URI already starts with /images/, it's likely already processed
-    // by the pdf-service/backend to be a web-accessible path.
+    // Check for absolute URLs (http, https, data URIs) - these should be used as-is.
+    if (/^(https?:|data:)/i.test(uri)) {
+      return uri;
+    }
+
+    // If the URI already starts with /images/, it's correctly formatted.
     if (uri.startsWith('/images/')) {
       return uri;
     }
 
-    // Fallback for other cases (e.g., relative paths if any slip through, or just filenames)
-    // This handles cases where URI might be an absolute path from the PDF service's
-    // perspective (e.g., "/pdf_service_storage/images/image.png") or just a filename
-    // (e.g., "image.png").
-    const filename = uri.substring(uri.lastIndexOf('/') + 1);
+    // If the URI starts with a single slash (but not '/images/'),
+    // it implies an absolute path on the server. Prepend /images to make it web-accessible
+    // relative to the /images route, preserving the rest of the path.
+    // e.g., "/some_folder/image.png" becomes "/images/some_folder/image.png"
+    if (uri.startsWith('/')) {
+      return `/images${uri}`;
+    }
 
-    // Prepend the public path for images served by Nginx.
-    return `/images/${filename}`;
+    // For relative paths (e.g., "image.png" or "subdir/image.png")
+    // Prepend /images/ to make it relative to the /images route.
+    return `/images/${uri}`;
   };
 
   return (
