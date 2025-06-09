@@ -1,0 +1,5 @@
+fastapi>=0.100.0
+uvicorn[standard]>=0.20.0
+python-multipart # For FileResponse, though often included with uvicorn[standard]
+python-dotenv # If you plan to use .env file within this service specifically
+````

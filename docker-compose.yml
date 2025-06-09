@@ -55,6 +55,20 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
+  image_server:
+    build: ./image_server
+    ports:
+      - "${IMAGE_SERVICE_PORT}:${IMAGE_SERVICE_PORT}" # e.g., 8503:8503
+    volumes:
+      # Mount the shared IMAGES_PATH so this service can serve them
+      - ${IMAGES_PATH}:/app/storage/images
+    environment:
+      IMAGES_BASE_PATH: /app/storage/images # Internal path to images
+      PORT: ${IMAGE_SERVICE_PORT} # Port for the service to listen on internally
+    # depends_on: # No explicit dependencies needed for other services to start
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
   frontend:
     build: ./frontend
     ports:
@@ -64,6 +78,8 @@ services:
     volumes: # Add this volumes section for the frontend
       # Mount the IMAGES_PATH to /app/storage/images inside the frontend container
       # This allows Nginx to serve images directly from the shared volume.
+      # This might be redundant if image_server handles all image serving via SWAG,
+      # but left for now.
       - ${IMAGES_PATH}:/app/storage/images
     environment:
       # When backend uses host network, it's accessible via localhost on the host machine.
