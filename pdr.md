@@ -2,27 +2,26 @@
 The Reading Pal application aims to provide users with an efficient and engaging way to read books, extract insights, and enhance their understanding through the use of Large Language Models (LLMs). The app will allow users to upload PDF files, process them into a readable format, and interact with LLM services to summarize, analyze, and annotate content. Additionally, the app will feature a user-friendly interface that enables seamless reading, note-taking, and synchronization between the book content and notes.
 
 # Key Features
-- PDF Upload and Processing: Users can upload PDF files from their device via an **authenticated API call**.
-  - Upon successful upload initiation, the user is immediately redirected to the book list page (which itself is loaded via an **authenticated API call**) where the newly uploaded book appears with a status indicator (e.g., 'pending' or 'processing').
-  - The application periodically checks the processing status in the background by polling a backend endpoint (`/api/books/status/{job_id}`).
-  - The PDF is processed **in the background** by a dedicated service and converted into a readable format (e.g., Markdown).
+- PDF Upload and Processing: Users can upload PDF files from their device via an **authenticated API call** (`POST /api/books/upload`).
+  - The backend calls a separate PDF processing service, which returns a `job_id` and "pending" status immediately. The backend creates a book record with this `job_id`.
+  - The user is redirected to the book list page, where the new book appears with a 'pending' or 'processing' status.
+  - The PDF is processed **asynchronously** by the PDF service.
   - The processing service extracts images from the PDF and saves them.
   - The processed Markdown content is saved **to a file** by the PDF service.
-  - **The PDF service returns the server-side path to the saved Markdown file and a list of server-side image info (including filenames and paths) to the backend upon processing completion or failure.**
-  - **The backend receives this information and updates the book's record in the database, storing only the filename of the processed Markdown file and the filenames of the extracted images.**
-  - Once processing is finished and the status updates to 'completed', the book title becomes a clickable link, allowing the user to navigate to the reading view (which involves an **authenticated API call** to fetch book details).
-  - **Books with a 'failed' status are automatically excluded from the book list displayed to the user.**
-  - **A background cleanup service runs periodically in the backend to mark 'processing' jobs as 'failed' if they appear stuck (no status update for a defined period) and to delete book records (with 'pending' or 'failed' status) that are older than a defined threshold (e.g., 6 hours).**
-  - **The backend stores these filenames in the database upon processing completion.**
+  - The PDF service rewrites image paths within the Markdown content to be web-accessible (e.g., `/images/image_name.png`).
+  - **Upon completion or failure, the PDF service sends a callback to a backend endpoint (`/api/books/callback`) with the `job_id`, `status`, the server-side path to the saved Markdown file (if successful), and any error messages.**
+  - **The backend receives this callback, updates the book's record in the database (e.g., status, markdown filename derived from the path). It does not receive or store a separate list of image filenames from the callback.**
+  - The frontend can optionally poll a backend endpoint (`/api/books/status/{job_id}`) to check processing status, but the primary update mechanism is the callback.
+  - Once processing is 'completed', the book is available for reading.
   - **The backend reads the Markdown content from the file system using the stored filename and a configured base path (via volume mounts) when needed for the reading view.**
-  - **The application serves the extracted images statically via a dedicated route (handled by Nginx in the frontend container) using the stored image filenames and a configured base path (via volume mounts).**
+  - **The application serves extracted images statically. The Markdown content contains relative paths (e.g., `/images/image.png`) that the browser uses to request images, typically served by Nginx via a route mapped to the images storage path.**
   - **Book Management:**
     - **Rename Book:** Users can rename books from the book list.
       - This action triggers an **authenticated API call** to the backend, which updates the book's `title` and `sanitized_title` in the database.
       - The backend renames the corresponding Markdown file on the file system to match the new sanitized title.
-    - **Delete Book:** Users can delete books from the book list.
+    - **Delete Book:** Users can delete books from the book list. 
       - This action triggers an **authenticated API call** to the backend, which deletes the book's record from the database.
-      - The backend deletes the associated Markdown file and all extracted image files from the file system.
+      - The backend deletes the associated Markdown file. Deletion of individual image files is complex as their names are not explicitly tracked by the backend from the PDF service callback; images are stored in a common directory.
 - LLM-Powered Reading Assistance:
   - Integrated with LLM services to provide real-time insights, summaries, and interpretations of the book content.
   - Users can ask questions or request specific analyses of the text using natural language prompts.
@@ -46,13 +45,13 @@ The Reading Pal application aims to provide users with an efficient and engaging
 
 # Implementation Requirements
 - Use Python for backend and React for frontend.
-- Use MongoDB to store notes and any metadata needed, including the **filename** of the processed Markdown file and **filenames** of the extracted images for each book.
-- **Do not store the full markdown content string in the database; store only the filename.**
+- Use MongoDB to store notes and book metadata, including the **filename** of the processed Markdown file for each book. The Markdown content itself contains web-relative paths to images.
+- **Do not store the full Markdown content string in the database; store only its filename.**
 - Only use env files for global variable or configuration settings. Do not use a config file layer.
-- The pdf_service folder contains a pdf processing service that needs to run separately and integrate with this app. The backend of this app needs to connect with this service correctly, send the PDF (this initial upload from frontend to backend is **authenticated**), and receive the processed data (**Markdown file path**, image paths).
+- The `pdf_service` folder contains a PDF processing service. The backend sends the PDF to this service. The PDF service processes it asynchronously and sends a callback to the backend with the `job_id`, `status`, and the path to the resulting Markdown file.
 - **The backend must implement logic to read the Markdown content from the file system using the stored filename and a configured base path (via volume mounts).**
 - **The backend includes authenticated API endpoints for listing books, retrieving individual book details, uploading PDFs (`POST /api/books/upload`), renaming (`PUT /api/books/{book_id}/rename`), and deleting (`DELETE /api/books/{book_id}`) books. These operations include managing associated files (Markdown, images) on the file system where applicable.**
-- **The application must implement a static file server route to serve images from the designated storage path (handled by Nginx).**
+- **The application relies on a static file server (e.g., Nginx) to serve images from the designated storage path, using relative paths embedded in the Markdown content.**
 - **The Docker Compose setup uses `host` network mode, meaning services communicate via `localhost` or the host's IP and exposed ports, not internal Docker service names.**
 - **The frontend (BookList page) provides UI controls (e.g., buttons appearing on hover) for renaming and deleting books, with appropriate user confirmations. These UI controls trigger the respective authenticated API calls.**
 
