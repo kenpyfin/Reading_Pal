@@ -132,8 +132,7 @@ def reformat_markdown_with_ollama(md_text):
 
     logger.info(f"Splitting markdown into chunks for Ollama reformatting (model: {OLLAMA_REFORMAT_MODEL}, max_chunk_size={MAX_CHUNK_CHARS})...")
     # Max chunks can be increased if documents are very long and this becomes a bottleneck
-    # Increased max_chunks to prevent problematic recombination into overly large chunks.
-    chunks = split_markdown_into_chunks(md_text, max_chunk_size=MAX_CHUNK_CHARS, max_chunks=1000)
+    chunks = split_markdown_into_chunks(md_text, max_chunk_size=MAX_CHUNK_CHARS, max_chunks=15) 
     logger.info(f"Markdown split into {len(chunks)} chunks.")
 
     reformatted_chunks = []
@@ -191,12 +190,12 @@ Reformat the following Markdown text according to these strict instructions:
             
             # Basic validation: Check if the reformatted chunk is not empty if the original wasn't
             if not reformatted_chunk.strip() and chunk.strip():
-                logger.warning(f"Ollama ({OLLAMA_REFORMAT_MODEL}) returned an empty reformatted chunk {i+1} for a non-empty original chunk (after potential stripping). USING ORIGINAL CHUNK.")
+                logger.warning(f"Ollama ({OLLAMA_REFORMAT_MODEL}) returned an empty reformatted chunk {i+1} for a non-empty original chunk (after potential stripping). Using original chunk.")
                 reformatted_chunks.append(chunk)
-            # Check for significant reduction in content, which might indicate over-summarization or errors by the LLM
+            # Check for significant reduction in content, which might indicate over-summarization or errors
             elif len(reformatted_chunk) < len(chunk) * 0.75 and len(chunk) > 200: # If shrunk by more than 25% for reasonably sized chunks
-                logger.warning(f"Chunk {i+1} significantly shrunk after Ollama ({OLLAMA_REFORMAT_MODEL}) reformatting. Original: {len(chunk)}, Reformatted: {len(reformatted_chunk)}. USING ORIGINAL CHUNK.")
-                reformatted_chunks.append(chunk) # Use original chunk if significantly shrunk
+                logger.warning(f"Chunk {i+1} significantly shrunk after Ollama ({OLLAMA_REFORMAT_MODEL}) reformatting. Original: {len(chunk)}, Reformatted: {len(reformatted_chunk)}. Consider reviewing output. Using reformatted chunk for now.")
+                reformatted_chunks.append(reformatted_chunk)
             else:
                 reformatted_chunks.append(reformatted_chunk)
             logger.info(f"Received response for chunk {i+1}. Reformatted length: {len(reformatted_chunk)} characters.")
@@ -277,7 +276,7 @@ def split_markdown_into_chunks(md_text: str, max_chunk_size: int = 10000, max_ch
         chunks = combined_chunks
         logger.warning(f"Recombined into {len(chunks)} chunks.")
         for i, chunk_item in enumerate(chunks):
-            logger.info(f"  Recombined chunk {i} length: {len(chunk_item)} characters.")
+            logger.info(f"Recombined chunk {i} length: {len(chunk_item)} characters.")
 
 
     # Final check to ensure no empty chunks are returned
@@ -314,8 +313,7 @@ def reformat_markdown_with_gemini(md_text: str) -> str:
     MAX_CHUNK_CHARS_GEMINI = 200000 # Roughly 200,000 characters per chunk
 
     logger.info(f"Splitting markdown into chunks for Gemini reformatting (max_chunk_size={MAX_CHUNK_CHARS_GEMINI})...")
-    # Increased max_chunks to prevent problematic recombination into overly large chunks.
-    chunks = split_markdown_into_chunks(md_text, max_chunk_size=MAX_CHUNK_CHARS_GEMINI, max_chunks=1000)
+    chunks = split_markdown_into_chunks(md_text, max_chunk_size=MAX_CHUNK_CHARS_GEMINI, max_chunks=20) # Allow more chunks if needed
     logger.info(f"Markdown split into {len(chunks)} chunks for Gemini.")
 
     reformatted_chunks = []
@@ -371,17 +369,10 @@ Reformat this markdown:
                 reformatted_chunk = reformatted_chunk_raw.strip() # Strip leading/trailing whitespace anyway
 
             logger.info(f"Received response for chunk {i+1}. Reformatted length: {len(reformatted_chunk)} characters.")
-
-            # Basic validation: Check if the reformatted chunk is not empty if the original wasn't
-            if not reformatted_chunk.strip() and chunk.strip():
-                logger.warning(f"Gemini returned an empty reformatted chunk {i+1} for a non-empty original chunk. USING ORIGINAL CHUNK.")
-                reformatted_chunks.append(chunk)
-            # Check for significant reduction in content (standardized to 75% threshold, 200 char min like Ollama)
-            elif len(reformatted_chunk) < len(chunk) * 0.75 and len(chunk) > 200:
-                logger.warning(f"Gemini Chunk {i+1} significantly shrunk (reformatted < 75% of original). Original: {len(chunk)}, Reformatted: {len(reformatted_chunk)}. USING ORIGINAL CHUNK.")
-                reformatted_chunks.append(chunk) # Use original chunk if significantly shrunk
-            else:
-                reformatted_chunks.append(reformatted_chunk)
+            
+            if len(reformatted_chunk) < len(chunk) * 0.5 and len(chunk) > 100:
+                logger.warning(f"Gemini Chunk {i+1} significantly shrunk. Original: {len(chunk)}, Reformatted: {len(reformatted_chunk)}")
+            reformatted_chunks.append(reformatted_chunk)
         except Exception as e:
             logger.error(f"Error reformatting chunk {i+1} with Gemini: {e}", exc_info=True)
             # Fallback: return the original chunk if reformatting fails
