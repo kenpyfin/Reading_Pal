@@ -270,10 +270,12 @@ function BookView() {
   const initialBookPaneWidthPx = useRef(0);
 
   const [showManageBookmarksModal, setShowManageBookmarksModal] = useState(false); // ADD THIS STATE
-  const [isNotePaneVisible, setIsNotePaneVisible] = useState(true); // ADD THIS LINE
+  const [isNotePaneVisible, setIsNotePaneVisible] = useState(true); // For desktop side-by-side
+  const [showNotesPanelOnMobile, setShowNotesPanelOnMobile] = useState(false); // For mobile overlay
   const [isMobileView, setIsMobileView] = useState(window.innerWidth <= 768); // ADD THIS LINE, initialize directly
   const [isBookmarkMenuOpen, setIsBookmarkMenuOpen] = useState(false);
   const bookmarkMenuRef = useRef(null); // For detecting clicks outside
+  const [initialScrollTop, setInitialScrollTop] = useState(null); // For restoring scroll position
 
 
   const fetchBook = async () => {
@@ -312,7 +314,30 @@ function BookView() {
         const calculatedBoundaries = calculatePageBoundaries(fullMarkdownContent.current, APPROX_CHARS_PER_PAGE);
         setPageBoundaries(calculatedBoundaries);
         setTotalPages(Math.max(1, calculatedBoundaries.length)); // Ensure totalPages is at least 1
-        // setCurrentPage(1); // Ensure currentPage is reset to 1 when new book loads
+        
+        // Try to restore last reading position for this book
+        const savedPositionRaw = localStorage.getItem(`readingPalLastPosition_${bookId}`);
+        if (savedPositionRaw) {
+          try {
+            const savedPosition = JSON.parse(savedPositionRaw);
+            if (savedPosition && typeof savedPosition.page === 'number' && typeof savedPosition.scrollTop === 'number') {
+              const restoredPage = Math.max(1, Math.min(savedPosition.page, calculatedBoundaries.length || 1));
+              logger.info(`[BookView - fetchBook] Restoring saved position for book ${bookId}: Page ${restoredPage}, ScrollTop ${savedPosition.scrollTop}`);
+              setCurrentPage(restoredPage); // Set current page first
+              setInitialScrollTop(savedPosition.scrollTop); // Set initial scroll top to be applied later
+            } else {
+              logger.warn(`[BookView - fetchBook] Invalid saved position data for book ${bookId}:`, savedPosition);
+              setCurrentPage(1); // Default to page 1 if saved data is invalid
+            }
+          } catch (parseError) {
+            logger.error(`[BookView - fetchBook] Error parsing saved position for book ${bookId}:`, parseError);
+            setCurrentPage(1); // Default to page 1 on parse error
+          }
+        } else {
+          // setCurrentPage(1); // Ensure currentPage is reset to 1 if no saved position
+          // No need to explicitly set to 1 here if fetchBook resets it later or if default is 1
+        }
+
       } else {
         fullMarkdownContent.current = '';
         setPageBoundaries([]);
@@ -421,10 +446,12 @@ function BookView() {
 
   useEffect(() => {
     if (bookId) {
-      fetchBook();
+      // Reset initialScrollTop when bookId changes, so it only applies once per book load
+      setInitialScrollTop(null); 
+      fetchBook(); // fetchBook now handles restoring page and setting initialScrollTop
       fetchBookmarks();
-      setCurrentPage(1); // Reset to page 1 for new book
-      setPageInput('1'); // Reset page input field
+      // setCurrentPage(1); // fetchBook handles setting currentPage, potentially from localStorage
+      // setPageInput('1'); // pageInput updates based on currentPage effect
     }
   }, [bookId]);
 
@@ -618,6 +645,20 @@ function BookView() {
   // Add pendingScrollToPercentage to the dependency array
   }, [bookData, currentPage, notes, pendingScrollOffsetInPage, pendingScrollToPercentage, pageBoundaries, totalPages]); // Added pageBoundaries and totalPages
 
+
+  // Effect to apply initial scroll once content is ready
+  useEffect(() => {
+    if (initialScrollTop !== null && bookPaneContainerRef.current && highlightedPageContent) {
+      logger.info(`[BookView - InitialScrollEffect] Applying initial scroll top: ${initialScrollTop}`);
+      isProgrammaticScroll.current = true;
+      bookPaneContainerRef.current.scrollTop = initialScrollTop;
+      setInitialScrollTop(null); // Clear after applying
+      setTimeout(() => {
+        isProgrammaticScroll.current = false;
+        logger.debug("[BookView - InitialScrollEffect] Reset isProgrammaticScroll after initial scroll.");
+      }, 150); // Delay to allow scroll to settle and prevent immediate sync issues
+    }
+  }, [initialScrollTop, highlightedPageContent]); // Depends on highlightedPageContent to ensure page is rendered
 
   useEffect(() => {
     setPageInput(String(currentPage));
@@ -1253,7 +1294,54 @@ function BookView() {
         debouncedNoteScroll.cancel();
       };
     }
-  }, [syncScroll]); 
+  }, [syncScroll]);
+
+  // Debounced function to save reading position
+  const debouncedSaveReadingPosition = useCallback(
+    debounce((bookIdToSave, pageToSave, scrollTopToSave) => {
+      if (bookIdToSave && typeof pageToSave === 'number' && typeof scrollTopToSave === 'number') {
+        const position = { page: pageToSave, scrollTop: scrollTopToSave };
+        localStorage.setItem(`readingPalLastPosition_${bookIdToSave}`, JSON.stringify(position));
+        logger.debug(`[BookView - SavePosition] Saved position for book ${bookIdToSave}: Page ${pageToSave}, ScrollTop ${scrollTopToSave}`);
+      }
+    }, 1000), // Debounce for 1 second
+    [] // No dependencies, relies on arguments
+  );
+
+  // Effect to save reading position on currentPage change or scroll
+  useEffect(() => {
+    const bookElement = bookPaneContainerRef.current;
+
+    const handleScroll = () => {
+      if (bookElement && !isProgrammaticScroll.current && bookId) {
+        // Only save if scroll was user-initiated and bookId is valid
+        debouncedSaveReadingPosition(bookId, currentPage, bookElement.scrollTop);
+      }
+    };
+
+    if (bookElement) {
+      bookElement.addEventListener('scroll', handleScroll);
+    }
+
+    // Save when currentPage changes too (e.g., via pagination buttons)
+    if (bookId && bookElement) {
+       // We might want to save immediately on page change rather than just on next scroll
+       // However, scrollTop might not be stable yet.
+       // The scroll event listener should cover changes after page load.
+       // If user clicks "Next Page", then scrolls, it will be saved.
+       // If they click "Next Page" and immediately refresh, the scrollTop might be 0 for the new page.
+       // Let's also call save on currentPage change, assuming scrollTop is somewhat stable or 0.
+       debouncedSaveReadingPosition(bookId, currentPage, bookElement.scrollTop);
+    }
+
+    return () => {
+      if (bookElement) {
+        bookElement.removeEventListener('scroll', handleScroll);
+      }
+      debouncedSaveReadingPosition.cancel(); // Cancel any pending saves on unmount/cleanup
+    };
+  }, [bookId, currentPage, debouncedSaveReadingPosition]); // Listen to bookId and currentPage
+
 
   const handleBookmarkSelect = (event) => {
     const selectedValueFromEvent = event.target.value;
@@ -1400,8 +1488,12 @@ function BookView() {
     }
   };
 
-  const toggleNotePaneVisibility = () => { // ADD THIS FUNCTION
-    setIsNotePaneVisible(prev => !prev);
+  const toggleNotePaneVisibility = () => {
+    if (isMobileView) {
+      setShowNotesPanelOnMobile(prev => !prev);
+    } else {
+      setIsNotePaneVisible(prev => !prev);
+    }
   };
 
   if (loading) return <div style={{ padding: '20px' }}>Loading book...</div>;
@@ -1511,19 +1603,18 @@ function BookView() {
           className="book-pane-area"
           ref={bookPaneAreaRef} // Ref for the resizable area
           style={{
-            flexBasis: isMobileView
-              ? (isNotePaneVisible ? '50%' : '100%') // Height basis on mobile
-              : (isNotePaneVisible ? bookPaneFlexBasis : '100%'), // Width basis on desktop
+            flexBasis: !isMobileView && isNotePaneVisible ? bookPaneFlexBasis : '100%', // Desktop width, or full if mobile/notes hidden
             width: isMobileView ? '100%' : undefined, // Full width on mobile
-            // height: isMobileView ? (isNotePaneVisible ? '50%' : '100%') : '100%', // Let flex-basis handle height on mobile
+            height: '100%', // Occupy full height of its flex container part
             flexShrink: 0,
             display: 'flex',
             flexDirection: 'column',
-            overflow: 'hidden'
+            overflow: 'hidden',
+            position: isMobileView ? 'relative' : undefined, // Needed if note pane is absolute child for some reason
           }}
         >
           {/* .book-pane-wrapper is the existing structure inside book-pane-area */}
-          <div className="book-pane-wrapper"> 
+          <div className="book-pane-wrapper">
             {/* --- MODIFIED Controls Header for Book Pane --- */}
             <div className="book-pane-controls-header">
               {/* Left: Bookmark Dropdown Menu */}
@@ -1604,7 +1695,9 @@ function BookView() {
               {/* Right: Toggle Notes Button */}
               <div className="right-controls-group"> {/* New wrapper for right-aligned items */}
                 <button onClick={toggleNotePaneVisibility} className="control-button">
-                  {isNotePaneVisible ? 'Hide Notes' : 'Show Notes'}
+                  {isMobileView
+                    ? (showNotesPanelOnMobile ? 'Hide Notes' : 'Show Notes')
+                    : (isNotePaneVisible ? 'Hide Notes' : 'Show Notes')}
                 </button>
               </div>
             </div>
@@ -1627,37 +1720,55 @@ function BookView() {
           <div className="resizer-handle" onMouseDown={handleMouseDownOnResizer}></div>
         )}
 
-        {/* New wrapper for note pane area to control its flex properties - Conditionally Render */}
-        {isNotePaneVisible && ( // ADD THIS CONDITION
+        {/* Desktop: Note Pane Area - side-by-side */}
+        {!isMobileView && isNotePaneVisible && (
           <div
-            className="note-pane-area"
+            className="note-pane-area" // Existing class for desktop
             style={{
-              flexGrow: 1, // Takes remaining space (height on mobile, width on desktop)
+              flexGrow: 1,
               flexShrink: 1,
-              flexBasis: isMobileView ? '50%' : '0%', // Height basis on mobile, width basis for desktop grow
-              width: isMobileView ? '100%' : undefined, // Full width on mobile
-              // height: isMobileView ? '50%' : '100%', // Let flex-basis/flex-grow handle height on mobile
+              flexBasis: '0%', // Grow to fill remaining space from bookPaneFlexBasis
               display: 'flex',
               flexDirection: 'column',
               overflow: 'hidden',
-              borderTop: isMobileView ? '1px solid #ccc' : undefined, // Top border on mobile
-              borderLeft: !isMobileView ? '1px solid #ccc' : undefined, // Left border on desktop
+              borderLeft: '1px solid #ccc', // Always has left border on desktop
             }}
           >
-          {/* .note-pane-wrapper is the existing structure inside note-pane-area */}
-          <div className="note-pane-wrapper"> 
-            <div className="note-pane-container" ref={notePaneContainerRef}> {/* Ref for scrollable content */}
-              <NotePane
-                bookId={bookId}
-                selectedBookText={selectedBookText}
-                selectedScrollPercentage={selectedScrollPercentage}
-                selectedGlobalCharOffset={selectedGlobalCharOffset} 
-                onNoteClick={handleNoteClick} 
-                onNewNoteSaved={handleNewNoteSaved} 
-              />
+            <div className="note-pane-wrapper">
+              <div className="note-pane-container" ref={notePaneContainerRef}>
+                <NotePane
+                  bookId={bookId}
+                  selectedBookText={selectedBookText}
+                  selectedScrollPercentage={selectedScrollPercentage}
+                  selectedGlobalCharOffset={selectedGlobalCharOffset}
+                  onNoteClick={handleNoteClick}
+                  onNewNoteSaved={handleNewNoteSaved}
+                  // No mobile-specific props needed for desktop version
+                />
+              </div>
             </div>
           </div>
-        </div>
+        )}
+
+        {/* Mobile: Note Pane Area - Overlay */}
+        {isMobileView && showNotesPanelOnMobile && (
+          <div className="note-pane-area-mobile-overlay"> {/* New class for overlay styling */}
+            {/* The wrapper and container structure can be similar if NotePane is self-contained */}
+            <div className="note-pane-wrapper">
+              <div className="note-pane-container" ref={notePaneContainerRef}> {/* Still need ref for scrolling */}
+                <NotePane
+                  bookId={bookId}
+                  selectedBookText={selectedBookText}
+                  selectedScrollPercentage={selectedScrollPercentage}
+                  selectedGlobalCharOffset={selectedGlobalCharOffset}
+                  onNoteClick={handleNoteClick}
+                  onNewNoteSaved={handleNewNoteSaved}
+                  isMobileContext={true} // Indicate mobile overlay context
+                  onClosePane={toggleNotePaneVisibility} // Pass the toggle function to close
+                />
+              </div>
+            </div>
+          </div>
         )}
     </div>
   );

@@ -10,7 +10,9 @@ const NotePane = ({ // Removed ref from props
   selectedScrollPercentage,
   selectedGlobalCharOffset, // Make sure this prop is received
   onNoteClick,
-  onNewNoteSaved // ACCEPT THE NEW PROP
+  onNewNoteSaved, // ACCEPT THE NEW PROP
+  isMobileContext, // New prop for mobile overlay context
+  onClosePane // New prop to handle closing the pane in mobile overlay
 }) => {
   const [notes, setNotes] = useState([]); // This state is local to NotePane for display
   const [newNoteContent, setNewNoteContent] = useState('');
@@ -243,7 +245,15 @@ const NotePane = ({ // Removed ref from props
 
   return (
     <div className="note-pane"> {/* Removed ref, root div of NotePane */}
-      <h2>Notes &amp; LLM Insights</h2>
+      {isMobileContext && (
+        <div className="note-pane-mobile-header">
+          <h2>Notes &amp; LLM Insights</h2>
+          <button onClick={onClosePane} className="close-pane-button" aria-label="Close notes panel">
+            ✕ Close
+          </button>
+        </div>
+      )}
+      {!isMobileContext && <h2>Notes &amp; LLM Insights</h2>}
 
       {/* ADDED: Dedicated area for displaying selected text */}
       {selectedBookText && (
