@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import BookPane from '../components/BookPane';
 import NotePane from '../components/NotePane';
+import ReadingGuidePane from '../components/ReadingGuidePane'; // Import ReadingGuidePane
 import { debounce } from 'lodash';
 import './BookView.css';
 import logger from '../utils/logger'; // Ensure logger is imported
@@ -277,6 +278,13 @@ function BookView() {
   const bookmarkMenuRef = useRef(null); // For detecting clicks outside
   const [initialScrollTop, setInitialScrollTop] = useState(null); // For restoring scroll position
 
+  // State for Reading Guide Pane
+  const [showReadingGuidePane, setShowReadingGuidePane] = useState(false);
+  const [readingGuideContent, setReadingGuideContent] = useState([]);
+  const [readingGuideLoading, setReadingGuideLoading] = useState(false);
+  const [readingGuideError, setReadingGuideError] = useState(null);
+  const readingGuideFetched = useRef(false); // To track if guide has been fetched for current book
+
 
   const fetchBook = async () => {
     setLoading(true);
@@ -457,58 +465,34 @@ function BookView() {
 
   // Resizer Event Handlers
   const handleDocumentMouseMove = useCallback((e) => {
-      if (!isResizing.current || !bookViewContainerRef.current || !bookPaneAreaRef.current) {
-          return;
-      }
-      e.preventDefault();
-
-      const deltaX = e.clientX - dragStartX.current;
-      let newWidthPx = initialBookPaneWidthPx.current + deltaX;
-
-      const containerWidth = bookViewContainerRef.current.offsetWidth;
-      // Define minimum width for each pane (e.g., 200px or 20% of container width, whichever is larger)
-      const minPaneWidth = Math.max(200, containerWidth * 0.20); 
-      const maxPaneWidth = containerWidth - minPaneWidth; 
-
-      newWidthPx = Math.max(minPaneWidth, Math.min(newWidthPx, maxPaneWidth));
-      setBookPaneFlexBasis(`${newWidthPx}px`); // Set flex-basis in pixels
+      // This is the old resizer logic, which is now replaced by handleBookNoteResizeMouseMove
+      // and handleMouseDownOnBookNoteResizer.
+      // Keeping the structure for reference if a second resizer (Guide vs Book) is added later.
+      // For now, this specific handleDocumentMouseMove is not used for the Guide Pane.
+      // If you want the guide pane to be resizable with the book pane, this logic would need to be adapted.
+  }, []); 
+  
+  const handleDocumentMouseUp = useCallback(() => {
+    // This is also part of the old resizer logic.
   }, []); 
 
-  const handleDocumentMouseUp = useCallback(() => {
-      if (!isResizing.current) {
-          return;
-      }
-      isResizing.current = false;
-      document.body.classList.remove('resizing-no-select');
-      document.removeEventListener('mousemove', handleDocumentMouseMove);
-      document.removeEventListener('mouseup', handleDocumentMouseUp);
-  }, [handleDocumentMouseMove]); 
-
   const handleMouseDownOnResizer = useCallback((e) => {
-      if (!bookPaneAreaRef.current) return;
+    // This is also part of the old resizer logic.
+  }, []);
 
-      isResizing.current = true;
-      dragStartX.current = e.clientX;
-      initialBookPaneWidthPx.current = bookPaneAreaRef.current.offsetWidth;
-      e.preventDefault(); 
-
-      document.body.classList.add('resizing-no-select');
-      document.addEventListener('mousemove', handleDocumentMouseMove);
-      document.addEventListener('mouseup', handleDocumentMouseUp);
-  }, [handleDocumentMouseMove, handleDocumentMouseUp]);
-
-  // Cleanup useEffect for global event listeners
+  // Cleanup useEffect for global event listeners (related to the old resizer)
   useEffect(() => {
+      // This cleanup is for the old resizer. The new one (handleBookNoteResizeMouseUp) handles its own.
       return () => {
-          if (isResizing.current) {
-              document.body.classList.remove('resizing-no-select');
-              document.removeEventListener('mousemove', handleDocumentMouseMove);
-              document.removeEventListener('mouseup', handleDocumentMouseUp);
-          }
+          // if (isResizing.current) { // This check might be tied to the old logic
+          //     document.body.classList.remove('resizing-no-select');
+          //     document.removeEventListener('mousemove', handleDocumentMouseMove); // Old mousemove
+          //     document.removeEventListener('mouseup', handleDocumentMouseUp);   // Old mouseup
+          // }
       };
-  }, [handleDocumentMouseMove, handleDocumentMouseUp]);
+  }, []); // Empty dependency array as it refers to old handlers
 
-  useEffect(() => { // ADD THIS useEffect BLOCK
+  useEffect(() => {
     const checkMobileView = () => {
       setIsMobileView(window.innerWidth <= 768);
     };
@@ -1090,7 +1074,7 @@ function BookView() {
   useEffect(() => {
     // This effect handles scrolling when a page changes due to a note click (scrollToGlobalOffset)
     // pendingScrollOffsetInPage is the RAW character offset within the NEWLY loaded currentPageContent
-    if (pendingScrollOffsetInPage !== null && bookPaneContainerRef.current && currentPageContent.length > 0 && pageBoundaries.length > 0) {
+    if (pendingScrollOffsetInPage !== null && bookPaneContainerRef.current && (currentPageContent.length > 0 || pendingScrollOffsetInPage === 0) && pageBoundaries.length > 0) {
       const bookElement = bookPaneContainerRef.current;
       
       // Map pendingScrollOffsetInPage (raw) to a rendered offset for TreeWalker
@@ -1491,10 +1475,71 @@ function BookView() {
   const toggleNotePaneVisibility = () => {
     if (isMobileView) {
       setShowNotesPanelOnMobile(prev => !prev);
+      if (showReadingGuidePane) setShowReadingGuidePane(false); // Close guide if opening notes on mobile
     } else {
       setIsNotePaneVisible(prev => !prev);
     }
   };
+
+  const fetchReadingGuide = async () => {
+    if (!bookId || readingGuideFetched.current) return;
+
+    setReadingGuideLoading(true);
+    setReadingGuideError(null);
+    try {
+      const token = localStorage.getItem('authToken');
+      if (!token) {
+        throw new Error("Authentication token not found.");
+      }
+      const response = await fetch(`/api/books/${bookId}/reading-guide`, {
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || `HTTP error ${response.status}`);
+      }
+      const data = await response.json();
+      setReadingGuideContent(data.guide || []);
+      readingGuideFetched.current = true;
+    } catch (err) {
+      logger.error('Failed to fetch reading guide:', err);
+      setReadingGuideError(err.message);
+      setReadingGuideContent([]); // Clear content on error
+    } finally {
+      setReadingGuideLoading(false);
+    }
+  };
+
+  const toggleReadingGuidePane = () => {
+    const newShowState = !showReadingGuidePane;
+    setShowReadingGuidePane(newShowState);
+    if (newShowState && !readingGuideFetched.current) {
+      fetchReadingGuide();
+    }
+    if (isMobileView && newShowState) {
+        setShowNotesPanelOnMobile(false); // Close notes if opening guide on mobile
+    }
+  };
+  
+  const handleReadingGuideItemClick = (pageNumber) => {
+    if (pageNumber && typeof pageNumber === 'number' && pageNumber >= 1 && pageNumber <= totalPages) {
+      logger.info(`[BookView - ReadingGuideClick] Jumping to page: ${pageNumber}`);
+      isProgrammaticScroll.current = true; // Prevent scroll saving/syncing during jump
+      setCurrentPage(pageNumber);
+      // Scroll to top of the new page
+      if (bookPaneContainerRef.current) {
+        bookPaneContainerRef.current.scrollTop = 0;
+      }
+      // Reset programmatic scroll flag after a short delay
+      setTimeout(() => { isProgrammaticScroll.current = false; }, 150);
+      if (isMobileView && showReadingGuidePane) { // Close guide on mobile after click
+        setShowReadingGuidePane(false);
+      }
+    } else {
+      logger.warn(`[BookView - ReadingGuideClick] Invalid page number: ${pageNumber}`);
+    }
+  };
+
 
   if (loading) return <div style={{ padding: '20px' }}>Loading book...</div>;
   if (error) return <div style={{ padding: '20px', color: 'red' }}>Error loading book: {error}</div>;
@@ -1542,8 +1587,61 @@ function BookView() {
     <div
       className="book-view-container"
       ref={bookViewContainerRef}
-      style={{ flexDirection: isMobileView ? 'column' : 'row' }} // ADD/MODIFY THIS STYLE PROP
+      style={{ flexDirection: isMobileView ? 'column' : 'row' }}
     >
+      {/* Reading Guide Pane Area (Left) - Conditional Rendering */}
+      {showReadingGuidePane && !isMobileView && (
+        <div
+          className="reading-guide-pane-area"
+          style={{
+            flex: '0 0 25%', // Example: 25% width, adjust as needed
+            maxWidth: '300px', // Max width for guide
+            minWidth: '200px', // Min width
+            height: '100%',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+          }}
+        >
+          <ReadingGuidePane
+            guideContent={readingGuideContent}
+            onItemClick={handleReadingGuideItemClick}
+            isLoading={readingGuideLoading}
+            error={readingGuideError}
+            isVisible={showReadingGuidePane}
+            // No onClose for desktop version, it's part of layout
+          />
+        </div>
+      )}
+      {/* Mobile: Reading Guide Pane - Overlay */}
+      {showReadingGuidePane && isMobileView && (
+        <div className="reading-guide-pane-area-mobile-overlay">
+          <ReadingGuidePane
+            guideContent={readingGuideContent}
+            onItemClick={handleReadingGuideItemClick}
+            isLoading={readingGuideLoading}
+            error={readingGuideError}
+            onClose={toggleReadingGuidePane} // Pass toggle function to close
+            isVisible={showReadingGuidePane}
+          />
+        </div>
+      )}
+
+
+      {/* Main Content Area (Book and Notes) - Takes remaining space */}
+      <div
+        className="main-content-area"
+        ref={mainContentAreaRef} // Ref for the resizer context
+        style={{
+          flex: '1 1 auto', // Grow and shrink to fill available space
+          display: 'flex',
+          flexDirection: isMobileView ? 'column' : 'row',
+          height: '100%',
+          overflow: 'hidden',
+          // Hide this area if mobile guide is open
+          display: isMobileView && showReadingGuidePane ? 'none' : 'flex',
+        }}
+      >
         {/* Add Bookmark Modal - Rendered conditionally */}
         {showAddBookmarkModal && (
           <div className="modal-overlay">
@@ -1617,54 +1715,60 @@ function BookView() {
           <div className="book-pane-wrapper">
             {/* --- MODIFIED Controls Header for Book Pane --- */}
             <div className="book-pane-controls-header">
-              {/* Left: Bookmark Dropdown Menu */}
-              <div className="bookmark-menu-container" ref={bookmarkMenuRef}>
-                <button 
-                  onClick={() => setIsBookmarkMenuOpen(prev => !prev)} 
-                  className="control-button bookmark-menu-button"
-                  aria-haspopup="true"
-                  aria-expanded={isBookmarkMenuOpen}
-                >
-                  Bookmarks <span className={`arrow ${isBookmarkMenuOpen ? 'up' : 'down'}`}></span>
+              {/* Left Group: Toggle Guide and Bookmarks */}
+              <div className="left-controls-group">
+                <button onClick={toggleReadingGuidePane} className="control-button" title="Toggle Reading Guide">
+                  {/* Icon for guide - using text for now */}
+                  {isMobileView ? 'Guide' : (showReadingGuidePane ? 'Hide Guide' : 'Show Guide')}
                 </button>
-                {isBookmarkMenuOpen && (
-                  <div className="bookmark-dropdown-menu">
-                    <button 
-                      onClick={() => { openAddBookmarkModal(); setIsBookmarkMenuOpen(false); }} 
-                      className="dropdown-item control-button" // Added control-button for consistent styling
-                    >
-                      Add Bookmark
-                    </button>
-                    {bookmarks.length > 0 && (
-                      <div className="dropdown-item-select-container"> {/* Wrapper for select */}
-                        <label htmlFor="jump-to-bookmark-select" className="sr-only">Jump to Bookmark</label>
-                        <select
-                          id="jump-to-bookmark-select"
-                          onChange={(e) => { handleBookmarkSelect(e); setIsBookmarkMenuOpen(false); }}
-                          className="bookmark-select dropdown-item-select control-button" // Added control-button
-                          defaultValue=""
-                          aria-label="Jump to bookmark"
-                        >
-                          <option value="" disabled>Jump to Bookmark...</option>
-                          {bookmarks.map((bookmark, index) => (
-                            <option key={bookmark.id} value={bookmark.id}>
-                              {bookmark.name ? `${bookmark.name} (P${bookmark.page_number})` : `Page ${bookmark.page_number} (Unnamed)`}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    )}
-                    <button 
-                      onClick={() => { setShowManageBookmarksModal(true); setIsBookmarkMenuOpen(false); }} 
-                      className="dropdown-item control-button" // Added control-button
-                    >
-                      Manage Bookmarks
-                    </button>
-                  </div>
-                )}
+                <div className="bookmark-menu-container" ref={bookmarkMenuRef} style={{ marginLeft: '8px' }}>
+                  <button 
+                    onClick={() => setIsBookmarkMenuOpen(prev => !prev)} 
+                    className="control-button bookmark-menu-button"
+                    aria-haspopup="true"
+                    aria-expanded={isBookmarkMenuOpen}
+                  >
+                    Bookmarks <span className={`arrow ${isBookmarkMenuOpen ? 'up' : 'down'}`}></span>
+                  </button>
+                  {isBookmarkMenuOpen && (
+                    <div className="bookmark-dropdown-menu">
+                      <button 
+                        onClick={() => { openAddBookmarkModal(); setIsBookmarkMenuOpen(false); }} 
+                        className="dropdown-item control-button"
+                      >
+                        Add Bookmark
+                      </button>
+                      {bookmarks.length > 0 && (
+                        <div className="dropdown-item-select-container">
+                          <label htmlFor="jump-to-bookmark-select" className="sr-only">Jump to Bookmark</label>
+                          <select
+                            id="jump-to-bookmark-select"
+                            onChange={(e) => { handleBookmarkSelect(e); setIsBookmarkMenuOpen(false); }}
+                            className="bookmark-select dropdown-item-select control-button"
+                            defaultValue=""
+                            aria-label="Jump to bookmark"
+                          >
+                            <option value="" disabled>Jump to Bookmark...</option>
+                            {bookmarks.map((bookmark) => (
+                              <option key={bookmark.id} value={bookmark.id}>
+                                {bookmark.name ? `${bookmark.name} (P${bookmark.page_number})` : `Page ${bookmark.page_number} (Unnamed)`}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                      <button 
+                        onClick={() => { setShowManageBookmarksModal(true); setIsBookmarkMenuOpen(false); }} 
+                        className="dropdown-item control-button"
+                      >
+                        Manage Bookmarks
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
-
-              {/* Center: Pagination Controls - MOVED HERE */}
+              
+              {/* Center: Pagination Controls */}
               {totalPages > 1 && (
                 <div className="pagination-controls header-pagination"> {/* Added header-pagination class */}
                   <button onClick={handlePreviousPage} disabled={currentPage === 1} className="control-button">
@@ -1715,9 +1819,9 @@ function BookView() {
           </div>
         </div>
 
-        {/* Resizer Handle - Conditionally Render */}
-        {isNotePaneVisible && !isMobileView && ( // MODIFIED THIS CONDITION
-          <div className="resizer-handle" onMouseDown={handleMouseDownOnResizer}></div>
+        {/* Resizer Handle for Book/Note Panes - Conditionally Render */}
+        {isNotePaneVisible && !isMobileView && (
+          <div className="resizer-handle" onMouseDown={handleMouseDownOnBookNoteResizer}></div>
         )}
 
         {/* Desktop: Note Pane Area - side-by-side */}

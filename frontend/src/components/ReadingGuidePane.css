@@ -1,0 +1,114 @@
+/* frontend/src/components/ReadingGuidePane.css */
+.reading-guide-pane {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background-color: #f8f9fa; /* Light background */
+  border-right: 1px solid #e0e0e0; /* Separator from book pane */
+  box-sizing: border-box;
+  overflow: hidden; /* Prevent parent from scrolling, content will scroll */
+}
+
+.reading-guide-pane.visible {
+  /* Styles when visible, if needed for transitions, etc. */
+}
+
+.reading-guide-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 15px;
+  border-bottom: 1px solid #d0d0d0;
+  background-color: #f1f3f5; /* Slightly different header background */
+  flex-shrink: 0; /* Header should not shrink */
+}
+
+.reading-guide-header h3 {
+  margin: 0;
+  font-size: 1.1em;
+  color: #333;
+}
+
+.close-guide-pane-btn {
+  background: none;
+  border: none;
+  font-size: 1.5em; /* Larger close button */
+  font-weight: bold;
+  color: #555;
+  cursor: pointer;
+  padding: 0 5px;
+  line-height: 1;
+}
+.close-guide-pane-btn:hover {
+  color: #000;
+}
+
+.reading-guide-content {
+  padding: 15px;
+  overflow-y: auto; /* Allow content to scroll */
+  flex-grow: 1; /* Content area takes remaining space */
+}
+
+.reading-guide-content ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.guide-item {
+  margin-bottom: 15px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #e9ecef; /* Lighter separator for items */
+}
+.guide-item:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+}
+
+.guide-item-button {
+  background: none;
+  border: none;
+  padding: 5px 0; /* Minimal padding, text alignment handles spacing */
+  text-align: left;
+  width: 100%;
+  cursor: pointer;
+  display: block; /* Make it block to contain children properly */
+  color: #007bff; /* Link-like color */
+}
+.guide-item-button:hover .guide-item-title {
+  text-decoration: underline;
+}
+
+.guide-item-title {
+  font-weight: bold;
+  font-size: 1em;
+  color: #0056b3; /* Darker blue for title */
+  margin-right: 8px; /* Space between title and page number */
+}
+
+.guide-item-page {
+  font-size: 0.85em;
+  color: #555;
+}
+
+.guide-item-summary {
+  font-size: 0.9em;
+  color: #495057;
+  margin-top: 5px; /* Space between button and summary */
+  line-height: 1.4;
+}
+
+.reading-guide-content .error-message {
+  color: #dc3545; /* Bootstrap danger color */
+}
+
+/* Mobile specific adjustments if needed, can also be handled in BookView.css @media query */
+@media (max-width: 768px) {
+  .reading-guide-pane {
+    /* When used as an overlay, it might need position: fixed, width: 100%, height: 100%, z-index */
+    /* These are handled by BookView.js conditional styling for the overlay */
+  }
+  .reading-guide-header h3 {
+    font-size: 1em; /* Slightly smaller header for mobile */
+  }
+}

@@ -12,7 +12,7 @@
 .book-pane-area {
   /* flex-basis is set by inline style */
   /* flex-shrink: 0; is set by inline style */
-  display: flex; /* Important for its children to fill it */
+  /* display: flex; Important for its children to fill it */ /* Flex is now on parent */
   flex-direction: column;
   overflow: hidden; /* Prevent this area from causing scrollbars */
   position: relative; /* If needed for child positioning */
@@ -20,7 +20,7 @@
 
 .note-pane-area {
   /* flex-grow: 1; flex-shrink: 1; flex-basis: 0%; are set by inline style */
-  display: flex; /* Important for its children to fill it */
+  /* display: flex; Important for its children to fill it */ /* Flex is now on parent */
   flex-direction: column;
   overflow: hidden; /* Prevent this area from causing scrollbars */
   position: relative; /* If needed for child positioning */
@@ -621,6 +621,54 @@
 
 /* frontend/src/pages/BookView.css */
 
+/* Layout for Reading Guide, Book, and Note Panes */
+.reading-guide-pane-area {
+  /* Styles are applied inline in BookView.js for flex behavior */
+  /* e.g., flex: 0 0 25%; max-width: 300px; */
+  height: 100%; /* Ensure it fills the vertical space */
+  overflow-y: auto; /* Allow scrolling within the guide pane itself if content overflows */
+  background-color: #f8f9fa; /* Match ReadingGuidePane.css or choose a theme color */
+  border-right: 1px solid #dee2e6; /* Separator */
+}
+
+.main-content-area {
+  /* Styles are applied inline in BookView.js for flex behavior */
+  /* e.g., flex: 1 1 auto; */
+  display: flex;
+  flex-direction: row; /* BookPane and NotePane side-by-side */
+  height: 100%;
+  overflow: hidden; /* Important to contain children */
+}
+
+
+/* Mobile overlay for Reading Guide Pane */
+.reading-guide-pane-area-mobile-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: white; /* Or your app's background color */
+  z-index: 1001; /* Higher than note pane overlay if they can overlap, or same if not */
+  display: flex; /* To make ReadingGuidePane component fill it */
+  flex-direction: column;
+  overflow-y: auto; /* Allow scrolling within the overlay if content exceeds height */
+}
+
+
+/* Adjust controls header for new button */
+.book-pane-controls-header .left-controls-group {
+  display: flex;
+  align-items: center;
+}
+.book-pane-controls-header .left-controls-group .control-button {
+  margin-right: 8px; /* Space between buttons in the left group */
+}
+.book-pane-controls-header .left-controls-group .control-button:last-child {
+  margin-right: 0;
+}
+
+
 /* ... existing styles ... */
 
 .bookmark-select {
@@ -693,9 +741,14 @@
     /* height: calc(100vh - YOUR_HEADER_HEIGHT); is handled by parent or inline style */
   }
 
-  .book-pane-area, .note-pane-area {
+  .book-pane-area, .note-pane-area, .reading-guide-pane-area {
     /* flex-basis and width are handled by inline styles in BookView.js for mobile */
     /* Ensure they don't have conflicting fixed widths/heights from desktop styles */
+    /* On mobile, reading-guide-pane-area and note-pane-area become overlays */
+  }
+
+  .main-content-area { /* This wraps Book and Note panes */
+    flex-direction: column; /* Stack Book and Note panes if both are visible (though usually one is an overlay) */
   }
   
   .book-pane-controls-header {
@@ -705,36 +758,41 @@
     gap: 8px; /* Increased gap slightly for better touch targets when wrapped */
   }
 
-  .bookmark-menu-container,
+  .left-controls-group, /* New group for guide/bookmarks */
   .pagination-controls.header-pagination,
   .right-controls-group {
-    flex-basis: auto; /* Allow items to size based on content, not force full width */
-    flex-grow: 0;     /* Don't grow by default */
-    flex-shrink: 1;   /* Allow shrinking if needed */
-    /* justify-content: center; /* Remove this, let parent handle alignment */
-    margin-bottom: 0; /* Remove bottom margin if they fit on one line */
-    /* Ensure they align to the center of the flex line if they wrap */
-    align-self: center; 
+    flex-basis: auto; /* Allow items to size based on content */
+    flex-grow: 0;
+    flex-shrink: 1;
+    align-self: center;
+    /* margin-bottom: 5px; /* Add some margin if they wrap to new line */
   }
+  
+  /* Ensure left and right groups don't take all space from pagination */
+  .left-controls-group, .right-controls-group {
+    flex-grow: 0; /* Don't let side button groups grow excessively */
+    flex-shrink: 0; /* Prevent them from shrinking too much */
+  }
+
 
   /* Allow pagination to take more space if available on the line */
   .pagination-controls.header-pagination {
     flex-grow: 1; /* Let pagination try to fill available space */
-    min-width: 160px; /* Give pagination a minimum width to prevent it from becoming too squished */
-                      /* Adjust this based on how compact you make the prev/next/input */
+    min-width: 150px; /* Give pagination a minimum width */
     justify-content: center; /* Ensure its internal items are centered */
   }
   
-  /* Make the bookmark menu button and toggle notes button more compact */
-  .bookmark-menu-container .control-button, /* Target the button directly */
-  .right-controls-group .control-button {   /* Target the button directly */
-    padding: 0 8px; /* Reduce horizontal padding */
-    height: 30px;   /* Slightly smaller height */
-    font-size: 0.8rem; /* Smaller font */
-    line-height: 28px; /* Adjust line height */
+  /* Make all control buttons in header compact on mobile */
+  .book-pane-controls-header .control-button {
+    padding: 0 8px; 
+    height: 30px;   
+    font-size: 0.75rem; /* Even smaller font for all header buttons */
+    line-height: 28px; 
   }
-  .bookmark-menu-button .arrow { /* Ensure this is specific enough if .control-button is too general */
-    margin-left: 4px; /* Reduce space for arrow */
+
+  /* Specific adjustments for bookmark menu button if needed */
+  .bookmark-menu-button .arrow { 
+    margin-left: 4px; 
   }
   .bookmark-menu-button .arrow.down::before,
   .bookmark-menu-button .arrow.up::before {
