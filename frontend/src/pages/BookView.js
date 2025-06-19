@@ -460,8 +460,55 @@ function BookView() {
       fetchBookmarks();
       // setCurrentPage(1); // fetchBook handles setting currentPage, potentially from localStorage
       // setPageInput('1'); // pageInput updates based on currentPage effect
+      readingGuideFetched.current = false; // Reset guide fetched status on new book load
+      setReadingGuideContent([]); // Clear old guide content
+      setShowReadingGuidePane(false); // Close guide pane when book changes
     }
   }, [bookId]);
+
+  // Resizer Event Handlers for BookPane and NotePane
+  // This resizer will now operate within the 'main-content-area'
+  const mainContentAreaRef = useRef(null); // New ref for the container of Book and Note panes
+  const handleBookNoteResizeMouseMove = useCallback((e) => {
+    if (!isResizing.current || !mainContentAreaRef.current || !bookPaneAreaRef.current) {
+        return;
+    }
+    e.preventDefault();
+
+    const deltaX = e.clientX - dragStartX.current;
+    let newBookPaneWidthPx = initialBookPaneWidthPx.current + deltaX;
+
+    const contentAreaWidth = mainContentAreaRef.current.offsetWidth;
+    const minPaneWidth = Math.max(200, contentAreaWidth * 0.20);
+    const maxBookPaneWidth = contentAreaWidth - minPaneWidth;
+
+    newBookPaneWidthPx = Math.max(minPaneWidth, Math.min(newBookPaneWidthPx, maxBookPaneWidth));
+    setBookPaneFlexBasis(`${newBookPaneWidthPx}px`);
+  }, []);
+
+  const handleBookNoteResizeMouseUp = useCallback(() => {
+    if (!isResizing.current) {
+        return;
+    }
+    isResizing.current = false;
+    document.body.classList.remove('resizing-no-select');
+    document.removeEventListener('mousemove', handleBookNoteResizeMouseMove);
+    document.removeEventListener('mouseup', handleBookNoteResizeMouseUp);
+  }, [handleBookNoteResizeMouseMove]);
+
+  const handleMouseDownOnBookNoteResizer = useCallback((e) => {
+    if (!bookPaneAreaRef.current || !mainContentAreaRef.current) return;
+
+    isResizing.current = true;
+    dragStartX.current = e.clientX;
+    initialBookPaneWidthPx.current = bookPaneAreaRef.current.offsetWidth;
+    e.preventDefault();
+
+    document.body.classList.add('resizing-no-select');
+    document.addEventListener('mousemove', handleBookNoteResizeMouseMove);
+    document.addEventListener('mouseup', handleBookNoteResizeMouseUp);
+  }, [handleBookNoteResizeMouseMove, handleBookNoteResizeMouseUp]);
+
 
   // Resizer Event Handlers
   const handleDocumentMouseMove = useCallback((e) => {
