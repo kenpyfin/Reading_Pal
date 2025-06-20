@@ -1634,7 +1634,11 @@ function BookView() {
     <div
       className="book-view-container"
       ref={bookViewContainerRef}
-      style={{ flexDirection: isMobileView ? 'column' : 'row' }}
+      style={{
+        display: 'flex',
+        flexDirection: isMobileView ? 'column' : 'row',
+        justifyContent: 'flex-start'
+      }}
     >
       {/* Reading Guide Pane Area (Left) - Conditional Rendering */}
       {showReadingGuidePane && !isMobileView && (
@@ -1681,12 +1685,11 @@ function BookView() {
         ref={mainContentAreaRef} // Ref for the resizer context
         style={{
           flex: '1 1 auto', // Grow and shrink to fill available space
-          display: 'flex',
           flexDirection: isMobileView ? 'column' : 'row',
           height: '100%',
           overflow: 'hidden',
-          // Hide this area if mobile guide is open
-          display: isMobileView && showReadingGuidePane ? 'none' : 'flex',
+          // Hide this area if mobile guide is open, otherwise display as flex
+          display: (isMobileView && showReadingGuidePane) ? 'none' : 'flex',
         }}
       >
         {/* Add Bookmark Modal - Rendered conditionally */}
