@@ -1690,63 +1690,9 @@ function BookView() {
           overflow: 'hidden',
           // Hide this area if mobile guide is open, otherwise display as flex
           display: (isMobileView && showReadingGuidePane) ? 'none' : 'flex',
+          minWidth: !isMobileView ? 0 : undefined, // Prevent flex item from overflowing
         }}
       >
-        {/* Add Bookmark Modal - Rendered conditionally */}
-        {showAddBookmarkModal && (
-          <div className="modal-overlay">
-            <div className="modal-content">
-              <h2>Add Bookmark</h2>
-              <input
-                type="text"
-                value={newBookmarkName}
-                onChange={(e) => setNewBookmarkName(e.target.value)}
-                placeholder="Enter bookmark name"
-                className="bookmark-name-input"
-                aria-label="Bookmark name"
-              />
-              {bookmarkError && <p className="error-message">{bookmarkError}</p>}
-              <div className="modal-actions">
-                <button onClick={handleSaveBookmark} className="button-primary">Save</button>
-                <button onClick={closeAddBookmarkModal} className="button-secondary">Cancel</button>
-              </div>
-            </div>
-          </div>
-        )}
-        </div>
-
-      {/* Manage Bookmarks Modal - ADD THIS */}
-      {showManageBookmarksModal && (
-        <div className="modal-overlay">
-          <div className="modal-content manage-bookmarks-modal">
-            <h2>Manage Bookmarks</h2>
-            {bookmarks.length === 0 ? (
-              <p>No bookmarks to manage.</p>
-            ) : (
-              <ul className="manage-bookmarks-list">
-                {bookmarks.map(bookmark => (
-                  <li key={bookmark.id} className="manage-bookmark-item">
-                    <span>
-                      {bookmark.name ? `${bookmark.name} (P${bookmark.page_number})` : `Page ${bookmark.page_number} (Unnamed)`}
-                    </span>
-                    <button
-                      onClick={() => handleDeleteBookmark(bookmark.id)}
-                      className="delete-button delete-bookmark-button"
-                      title="Delete this bookmark"
-                    >
-                      ✕
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-            <div className="modal-actions">
-              <button onClick={() => setShowManageBookmarksModal(false)} className="button-secondary">Close</button>
-            </div>
-          </div>
-        </div>
-      )}
-
         {/* Book Pane Area */}
         <div 
           className="book-pane-area"
@@ -1925,7 +1871,62 @@ function BookView() {
             </div>
           </div>
         )}
-    </div>
+    </div> {/* End of main-content-area */}
+
+    {/* Add Bookmark Modal - Rendered conditionally (MOVED HERE) */}
+    {showAddBookmarkModal && (
+      <div className="modal-overlay">
+        <div className="modal-content">
+          <h2>Add Bookmark</h2>
+          <input
+            type="text"
+            value={newBookmarkName}
+            onChange={(e) => setNewBookmarkName(e.target.value)}
+            placeholder="Enter bookmark name"
+            className="bookmark-name-input"
+            aria-label="Bookmark name"
+          />
+          {bookmarkError && <p className="error-message">{bookmarkError}</p>}
+          <div className="modal-actions">
+            <button onClick={handleSaveBookmark} className="button-primary">Save</button>
+            <button onClick={closeAddBookmarkModal} className="button-secondary">Cancel</button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* Manage Bookmarks Modal - (MOVED HERE) */}
+    {showManageBookmarksModal && (
+      <div className="modal-overlay">
+        <div className="modal-content manage-bookmarks-modal">
+          <h2>Manage Bookmarks</h2>
+          {bookmarks.length === 0 ? (
+            <p>No bookmarks to manage.</p>
+          ) : (
+            <ul className="manage-bookmarks-list">
+              {bookmarks.map(bookmark => (
+                <li key={bookmark.id} className="manage-bookmark-item">
+                  <span>
+                    {bookmark.name ? `${bookmark.name} (P${bookmark.page_number})` : `Page ${bookmark.page_number} (Unnamed)`}
+                  </span>
+                  <button
+                    onClick={() => handleDeleteBookmark(bookmark.id)}
+                    className="delete-button delete-bookmark-button"
+                    title="Delete this bookmark"
+                  >
+                    ✕
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <div className="modal-actions">
+            <button onClick={() => setShowManageBookmarksModal(false)} className="button-secondary">Close</button>
+          </div>
+        </div>
+      </div>
+    )}
+  </div> // End of book-view-container
   );
 }
 
