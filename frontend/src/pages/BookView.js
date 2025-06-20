@@ -285,6 +285,12 @@ function BookView() {
   const [readingGuideError, setReadingGuideError] = useState(null);
   const readingGuideFetched = useRef(false); // To track if guide has been fetched for current book
 
+  // State and Refs for Reading Guide Pane Resizing
+  const [readingGuidePaneFlexBasis, setReadingGuidePaneFlexBasis] = useState('25%'); // Initial width
+  const readingGuidePaneAreaRef = useRef(null); // Ref for the reading-guide-pane-area div
+  const initialReadingGuidePaneWidthPx = useRef(0);
+  // dragStartX is already defined and can be reused if we ensure no overlap in active resizing
+  // isResizing is also already defined, might need a separate one or careful management
 
   const fetchBook = async () => {
     setLoading(true);
@@ -511,21 +517,54 @@ function BookView() {
 
 
   // Resizer Event Handlers
-  const handleDocumentMouseMove = useCallback((e) => {
-      // This is the old resizer logic, which is now replaced by handleBookNoteResizeMouseMove
-      // and handleMouseDownOnBookNoteResizer.
-      // Keeping the structure for reference if a second resizer (Guide vs Book) is added later.
-      // For now, this specific handleDocumentMouseMove is not used for the Guide Pane.
-      // If you want the guide pane to be resizable with the book pane, this logic would need to be adapted.
-  }, []); 
-  
-  const handleDocumentMouseUp = useCallback(() => {
-    // This is also part of the old resizer logic.
-  }, []); 
+  // Note: The existing handleDocumentMouseMove, handleDocumentMouseUp, handleMouseDownOnResizer
+  // were placeholders or part of an older/different resizer logic.
+  // We are adding specific handlers for each resizer.
 
-  const handleMouseDownOnResizer = useCallback((e) => {
-    // This is also part of the old resizer logic.
-  }, []);
+  // --- Reading Guide Pane Resizer Handlers ---
+  const handleGuideResizeMouseMove = useCallback((e) => {
+    if (!isResizing.current || !bookViewContainerRef.current || !readingGuidePaneAreaRef.current) {
+      return;
+    }
+    e.preventDefault();
+
+    const deltaX = e.clientX - dragStartX.current;
+    let newGuidePaneWidthPx = initialReadingGuidePaneWidthPx.current + deltaX;
+
+    const containerWidth = bookViewContainerRef.current.offsetWidth;
+    // Ensure main content area also has a minimum width
+    const minMainContentWidth = Math.max(200, containerWidth * 0.30); 
+    const minGuidePaneWidth = Math.max(150, containerWidth * 0.15); // Min width for guide
+    const maxGuidePaneWidth = containerWidth - minMainContentWidth; // Max width for guide
+
+    newGuidePaneWidthPx = Math.max(minGuidePaneWidth, Math.min(newGuidePaneWidthPx, maxGuidePaneWidth));
+    setReadingGuidePaneFlexBasis(`${newGuidePaneWidthPx}px`);
+  }, []); // Dependencies: isResizing, dragStartX, initialReadingGuidePaneWidthPx, bookViewContainerRef, readingGuidePaneAreaRef
+
+  const handleGuideResizeMouseUp = useCallback(() => {
+    if (!isResizing.current) {
+      return;
+    }
+    // Check which resizer was active if using a shared isResizing flag, or use separate flags.
+    // For now, assuming isResizing is general.
+    isResizing.current = false;
+    document.body.classList.remove('resizing-no-select');
+    document.removeEventListener('mousemove', handleGuideResizeMouseMove);
+    document.removeEventListener('mouseup', handleGuideResizeMouseUp);
+  }, [handleGuideResizeMouseMove]); // Dependency: handleGuideResizeMouseMove
+
+  const handleMouseDownOnGuideResizer = useCallback((e) => {
+    if (!readingGuidePaneAreaRef.current || !bookViewContainerRef.current) return;
+
+    isResizing.current = true; // This flag might need to be specific if both resizers can be active
+    dragStartX.current = e.clientX;
+    initialReadingGuidePaneWidthPx.current = readingGuidePaneAreaRef.current.offsetWidth;
+    e.preventDefault();
+
+    document.body.classList.add('resizing-no-select');
+    document.addEventListener('mousemove', handleGuideResizeMouseMove);
+    document.addEventListener('mouseup', handleGuideResizeMouseUp);
+  }, [handleGuideResizeMouseMove, handleGuideResizeMouseUp]); // Dependencies
 
   // Cleanup useEffect for global event listeners (related to the old resizer)
   useEffect(() => {
@@ -1644,14 +1683,17 @@ function BookView() {
       {showReadingGuidePane && !isMobileView && (
         <div
           className="reading-guide-pane-area"
+          ref={readingGuidePaneAreaRef} // Add ref
           style={{
-            flex: '0 0 25%', // Example: 25% width, adjust as needed
-            maxWidth: '300px', // Max width for guide
-            minWidth: '200px', // Min width
+            flexBasis: readingGuidePaneFlexBasis, // Use state for flex-basis
+            // flex: `0 0 ${readingGuidePaneFlexBasis}`, // Alternative if using flex shorthand
+            // maxWidth: '500px', // Max width for guide - can be controlled by resizer logic
+            // minWidth: '150px', // Min width for guide - can be controlled by resizer logic
             height: '100%',
             display: 'flex',
             flexDirection: 'column',
             overflow: 'hidden',
+            position: 'relative', // For potential absolute positioned children or resizer
           }}
         >
           <ReadingGuidePane
@@ -1664,6 +1706,16 @@ function BookView() {
           />
         </div>
       )}
+
+      {/* Resizer Handle for Guide Pane / Main Content - Conditionally Render */}
+      {showReadingGuidePane && !isMobileView && (
+        <div 
+          className="resizer-handle resizer-handle-vertical" // Added resizer-handle-vertical for specific styling
+          onMouseDown={handleMouseDownOnGuideResizer}
+          title="Resize Reading Guide" // Accessibility
+        ></div>
+      )}
+
       {/* Mobile: Reading Guide Pane - Overlay */}
       {showReadingGuidePane && isMobileView && (
         <div className="reading-guide-pane-area-mobile-overlay">
