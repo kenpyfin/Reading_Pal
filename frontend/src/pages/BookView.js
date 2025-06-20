@@ -266,7 +266,9 @@ function BookView() {
   const bookViewContainerRef = useRef(null); // Ref for the main flex container
   const bookPaneAreaRef = useRef(null);      // Ref for the book-pane-area div
 
-  const isResizing = useRef(false);
+  // const isResizing = useRef(false); // This will be replaced by specific flags
+  const isResizingGuideMainActive = useRef(false); // For Guide Pane vs Main Content Area
+  const isResizingBookNoteActive = useRef(false);  // For Book Pane vs Note Pane
   const dragStartX = useRef(0);
   const initialBookPaneWidthPx = useRef(0);
 
@@ -476,7 +478,7 @@ function BookView() {
   // This resizer will now operate within the 'main-content-area'
   const mainContentAreaRef = useRef(null); // New ref for the container of Book and Note panes
   const handleBookNoteResizeMouseMove = useCallback((e) => {
-    if (!isResizing.current || !mainContentAreaRef.current || !bookPaneAreaRef.current) {
+    if (!isResizingBookNoteActive.current || !mainContentAreaRef.current || !bookPaneAreaRef.current) { // Use specific flag
         return;
     }
     e.preventDefault();
@@ -493,10 +495,10 @@ function BookView() {
   }, []);
 
   const handleBookNoteResizeMouseUp = useCallback(() => {
-    if (!isResizing.current) {
+    if (!isResizingBookNoteActive.current) { // Use specific flag
         return;
     }
-    isResizing.current = false;
+    isResizingBookNoteActive.current = false; // Use specific flag
     document.body.classList.remove('resizing-no-select');
     document.removeEventListener('mousemove', handleBookNoteResizeMouseMove);
     document.removeEventListener('mouseup', handleBookNoteResizeMouseUp);
@@ -505,7 +507,7 @@ function BookView() {
   const handleMouseDownOnBookNoteResizer = useCallback((e) => {
     if (!bookPaneAreaRef.current || !mainContentAreaRef.current) return;
 
-    isResizing.current = true;
+    isResizingBookNoteActive.current = true; // Use specific flag
     dragStartX.current = e.clientX;
     initialBookPaneWidthPx.current = bookPaneAreaRef.current.offsetWidth;
     e.preventDefault();
@@ -523,7 +525,7 @@ function BookView() {
 
   // --- Reading Guide Pane Resizer Handlers ---
   const handleGuideResizeMouseMove = useCallback((e) => {
-    if (!isResizing.current || !bookViewContainerRef.current || !readingGuidePaneAreaRef.current) {
+    if (!isResizingGuideMainActive.current || !bookViewContainerRef.current || !readingGuidePaneAreaRef.current) { // Use specific flag
       return;
     }
     e.preventDefault();
@@ -539,15 +541,15 @@ function BookView() {
 
     newGuidePaneWidthPx = Math.max(minGuidePaneWidth, Math.min(newGuidePaneWidthPx, maxGuidePaneWidth));
     setReadingGuidePaneFlexBasis(`${newGuidePaneWidthPx}px`);
-  }, []); // Dependencies: isResizing, dragStartX, initialReadingGuidePaneWidthPx, bookViewContainerRef, readingGuidePaneAreaRef
+  }, []); // Dependencies: isResizingGuideMainActive, dragStartX, initialReadingGuidePaneWidthPx, bookViewContainerRef, readingGuidePaneAreaRef
 
   const handleGuideResizeMouseUp = useCallback(() => {
-    if (!isResizing.current) {
+    if (!isResizingGuideMainActive.current) { // Use specific flag
       return;
     }
     // Check which resizer was active if using a shared isResizing flag, or use separate flags.
     // For now, assuming isResizing is general.
-    isResizing.current = false;
+    isResizingGuideMainActive.current = false; // Use specific flag
     document.body.classList.remove('resizing-no-select');
     document.removeEventListener('mousemove', handleGuideResizeMouseMove);
     document.removeEventListener('mouseup', handleGuideResizeMouseUp);
@@ -556,7 +558,7 @@ function BookView() {
   const handleMouseDownOnGuideResizer = useCallback((e) => {
     if (!readingGuidePaneAreaRef.current || !bookViewContainerRef.current) return;
 
-    isResizing.current = true; // This flag might need to be specific if both resizers can be active
+    isResizingGuideMainActive.current = true; // Use specific flag
     dragStartX.current = e.clientX;
     initialReadingGuidePaneWidthPx.current = readingGuidePaneAreaRef.current.offsetWidth;
     e.preventDefault();
@@ -568,13 +570,11 @@ function BookView() {
 
   // Cleanup useEffect for global event listeners (related to the old resizer)
   useEffect(() => {
-      // This cleanup is for the old resizer. The new one (handleBookNoteResizeMouseUp) handles its own.
+      // This cleanup is for the old resizer. The new ones (handleBookNoteResizeMouseUp and handleGuideResizeMouseUp) handle their own.
       return () => {
-          // if (isResizing.current) { // This check might be tied to the old logic
-          //     document.body.classList.remove('resizing-no-select');
-          //     document.removeEventListener('mousemove', handleDocumentMouseMove); // Old mousemove
-          //     document.removeEventListener('mouseup', handleDocumentMouseUp);   // Old mouseup
-          // }
+          // Example: if an old global listener was set up based on a shared isResizing.current,
+          // it would be cleaned up here. Current setup doesn't require this specific cleanup
+          // as listeners are added/removed in the mousedown/mouseup handlers directly.
       };
   }, []); // Empty dependency array as it refers to old handlers
 
