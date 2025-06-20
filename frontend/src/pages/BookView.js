@@ -1673,7 +1673,7 @@ function BookView() {
           />
         </div>
       )}
-
+      
 
       {/* Main Content Area (Book and Notes) - Takes remaining space */}
       <div
@@ -1710,6 +1710,7 @@ function BookView() {
             </div>
           </div>
         )}
+        </div>
 
       {/* Manage Bookmarks Modal - ADD THIS */}
       {showManageBookmarksModal && (
