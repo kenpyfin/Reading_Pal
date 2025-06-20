@@ -492,7 +492,7 @@ function BookView() {
 
     newBookPaneWidthPx = Math.max(minPaneWidth, Math.min(newBookPaneWidthPx, maxBookPaneWidth));
     setBookPaneFlexBasis(`${newBookPaneWidthPx}px`);
-  }, []);
+  }, [isResizingBookNoteActive, dragStartX, initialBookPaneWidthPx, mainContentAreaRef, bookPaneAreaRef]); // Added dependencies
 
   const handleBookNoteResizeMouseUp = useCallback(() => {
     if (!isResizingBookNoteActive.current) { // Use specific flag
@@ -541,7 +541,7 @@ function BookView() {
 
     newGuidePaneWidthPx = Math.max(minGuidePaneWidth, Math.min(newGuidePaneWidthPx, maxGuidePaneWidth));
     setReadingGuidePaneFlexBasis(`${newGuidePaneWidthPx}px`);
-  }, []); // Dependencies: isResizingGuideMainActive, dragStartX, initialReadingGuidePaneWidthPx, bookViewContainerRef, readingGuidePaneAreaRef
+  }, [isResizingGuideMainActive, dragStartX, initialReadingGuidePaneWidthPx, bookViewContainerRef, readingGuidePaneAreaRef]); // Dependencies: isResizingGuideMainActive, dragStartX, initialReadingGuidePaneWidthPx, bookViewContainerRef, readingGuidePaneAreaRef
 
   const handleGuideResizeMouseUp = useCallback(() => {
     if (!isResizingGuideMainActive.current) { // Use specific flag
