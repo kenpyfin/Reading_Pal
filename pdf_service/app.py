@@ -463,33 +463,63 @@ async def perform_pdf_processing(job_id: str, temp_pdf_path: str, sanitized_titl
 
         # Ensure md_content is a string
         if isinstance(md_content, list):
-            md_text = "\n".join(md_content)
+            raw_md_text_from_pipe = "\n".join(md_content)
         elif isinstance(md_content, str):
-            md_text = md_content
+            raw_md_text_from_pipe = md_content
         else:
             logger.error(f"Job {job_id}: Unexpected markdown content type: {type(md_content)}")
-            md_text = "" # Default to empty string on unexpected type
+            raw_md_text_from_pipe = "" # Default to empty string on unexpected type
         
-        logger.info(f"Job {job_id}: Markdown content prepared for reformatting. Length: {len(md_text)} chars.")
+        logger.info(f"Job {job_id}: Raw markdown content from pipe. Length: {len(raw_md_text_from_pipe)} chars.")
 
-        # --- TEMPORARY DEBUGGING: Save raw markdown from magic_pdf ---
+        # --- TEMPORARY DEBUGGING: Save raw markdown from magic_pdf (before page merging) ---
         raw_markdown_path = os.path.join(MARKDOWN_PATH, f"{sanitized_title}_raw_magic_pdf.md")
         try:
             with open(raw_markdown_path, 'w', encoding='utf-8') as raw_f:
-                raw_f.write(md_text)
-            logger.info(f"Job {job_id}: Saved raw markdown from magic_pdf to {raw_markdown_path}")
+                raw_f.write(raw_md_text_from_pipe)
+            logger.info(f"Job {job_id}: Saved raw markdown (pre-merge) from magic_pdf to {raw_markdown_path}")
         except Exception as e_raw_save:
-            logger.error(f"Job {job_id}: Failed to save raw markdown: {e_raw_save}")
+            logger.error(f"Job {job_id}: Failed to save raw markdown (pre-merge): {e_raw_save}")
         # --- END TEMPORARY DEBUGGING ---
 
-        # Reformat markdown
+        # --- MERGE PAGES TO MAKE THEM LONGER ---
+        # Define how many original "pages" (sections separated by '---') to merge into one.
+        # For example, 2 means two original pages become one new page.
+        NUM_ORIGINAL_PAGES_TO_MERGE = 2 
+        PAGE_SEPARATOR_PATTERN = r'\n-{3,}\n' # Matches '---' or more hyphens on its own line
+
+        if NUM_ORIGINAL_PAGES_TO_MERGE > 1 and raw_md_text_from_pipe.strip():
+            logger.info(f"Job {job_id}: Attempting to merge {NUM_ORIGINAL_PAGES_TO_MERGE} original pages into one.")
+            original_pages = re.split(PAGE_SEPARATOR_PATTERN, raw_md_text_from_pipe)
+            
+            merged_content_parts = []
+            for i in range(0, len(original_pages), NUM_ORIGINAL_PAGES_TO_MERGE):
+                chunk_to_merge = original_pages[i:i + NUM_ORIGINAL_PAGES_TO_MERGE]
+                # Join parts within a new "longer" page with double newlines
+                merged_chunk = "\n\n".join(part.strip() for part in chunk_to_merge if part.strip()) 
+                if merged_chunk:
+                    merged_content_parts.append(merged_chunk)
+            
+            if merged_content_parts:
+                # Join the new "longer" pages with the original separator
+                md_text_for_reformatting = ("\n" + PAGE_SEPARATOR_PATTERN.strip() + "\n").join(merged_content_parts)
+                logger.info(f"Job {job_id}: Page merging complete. New length: {len(md_text_for_reformatting)} chars. Original sections: {len(original_pages)}, New sections: {len(merged_content_parts)}")
+            else:
+                md_text_for_reformatting = raw_md_text_from_pipe # Fallback if merging resulted in empty
+                logger.info(f"Job {job_id}: Page merging resulted in no content, using original raw markdown.")
+        else:
+            md_text_for_reformatting = raw_md_text_from_pipe
+            logger.info(f"Job {job_id}: Page merging skipped (NUM_ORIGINAL_PAGES_TO_MERGE <= 1 or empty input).")
+        # --- END MERGE PAGES ---
+
+        # Reformat markdown using the potentially merged text
         reformatted_md_text = ""
         if GEMINI_API_KEY_REFORMAT: # Check if Gemini API key is available and configured
             logger.info(f"Job {job_id}: Attempting markdown reformatting with Google Gemini...")
-            reformatted_md_text = reformat_markdown_with_gemini(md_text)
+            reformatted_md_text = reformat_markdown_with_gemini(md_text_for_reformatting)
         elif OLLAMA_API_BASE and OLLAMA_REFORMAT_MODEL: # Fallback to Ollama if configured
             logger.info(f"Job {job_id}: Gemini not available/configured. Attempting markdown reformatting with Ollama...")
-            reformatted_md_text = reformat_markdown_with_ollama(md_text)
+            reformatted_md_text = reformat_markdown_with_ollama(md_text_for_reformatting)
         else:
             logger.warning(f"Job {job_id}: Neither Gemini nor Ollama reformatting services are configured. Using raw markdown.")
             reformatted_md_text = md_text
