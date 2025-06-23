@@ -25,7 +25,7 @@ from backend.db.mongodb import (
     get_database
 )
 from backend.auth.auth_handler import auth_handler_instance # For decoding JWT
-from backend.services.llm_service import LLMService # For Reading Guide
+from backend.services.llm_service import llm_service # For Reading Guide (Import instance)
 import json # For parsing LLM response for Reading Guide
 
 # Import new model and DB functions for page-specific reading guides
@@ -844,8 +844,8 @@ async def generate_page_reading_guide(
         logger.error(f"Error reading or processing markdown for guide: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error processing book content for guide.")
 
-    # Assuming llm_service_instance is available (e.g., from LLMService())
-    llm_service_instance = LLMService() 
+    # Use the imported llm_service instance
+    # llm_service_instance = LLMService() # REMOVE THIS LINE
 
     llm_prompt = (
         f"You are an expert reading assistant. Generate a concise reading guide for page {page_number} "
@@ -863,7 +863,7 @@ async def generate_page_reading_guide(
     
     try:
         logger.info(f"Sending prompt to LLM for book {book.id}, page {page_number}. Prompt length (approx): {len(llm_prompt)}")
-        guide_text = await llm_service_instance.ask(prompt=llm_prompt, context=None) 
+        guide_text = await llm_service.ask(prompt=llm_prompt, context=None) # Use imported llm_service instance
         if not guide_text or not guide_text.strip():
             guide_text = "The LLM did not provide a guide for this page. It might be empty or contain non-textual content."
             logger.warning(f"LLM returned empty guide for book {book.id}, page {page_number}")
