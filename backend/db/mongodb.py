@@ -8,7 +8,8 @@ from typing import Optional, List, Dict, Any # Import types
 from datetime import datetime # Import datetime
 
 # Import UserCreate for type hinting
-from backend.models.user import UserCreate 
+from backend.models.user import UserCreate
+# from backend.models.reading_guide import ReadingGuidePageInDB # Moved to function scope to avoid circular import
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -527,3 +528,94 @@ async def update_bookmark_name(bookmark_id: str, name: str) -> Optional[Dict[str
     except Exception as e:
         logger.error(f"Error updating bookmark name for {bookmark_id}: {e}", exc_info=True)
         return None
+
+# --- Reading Guide Page Database Operations ---
+def get_reading_guides_collection():
+    database = get_database()
+    if database is None:
+        logger.error("Database not initialized for get_reading_guides_collection.")
+        # This situation should ideally be handled by connect_to_mongo ensuring db is set,
+        # or by raising an exception if db is None when get_database() is called.
+        # For robustness, we can check here too.
+        raise ConnectionError("Database not initialized for reading guide operations.")
+    return database["reading_guide_pages"]
+
+async def upsert_reading_guide_page(
+    book_id: str, user_id: str, page_number: int, content: str
+) -> Optional['ReadingGuidePageInDB']: # Forward reference for type hint
+    collection = get_reading_guides_collection()
+    now = datetime.utcnow()
+    
+    try:
+        book_obj_id = ObjectId(book_id)
+    except Exception:
+        logger.error(f"Invalid book_id format for ObjectId in upsert_reading_guide_page: {book_id}")
+        return None
+
+    query = {"book_id": book_obj_id, "user_id": user_id, "page_number": page_number}
+    update = {
+        "$set": {"content": content, "updated_at": now},
+        "$setOnInsert": {"book_id": book_obj_id, "user_id": user_id, "page_number": page_number, "created_at": now}
+    }
+    
+    try:
+        result_doc = await collection.find_one_and_update(
+            query,
+            update,
+            upsert=True,
+            return_document=True # Motor typically returns the updated document with True
+        )
+        if result_doc:
+            # Import locally to avoid circular dependency if ReadingGuidePageInDB imports PyObjectId from this module
+            from backend.models.reading_guide import ReadingGuidePageInDB
+            return ReadingGuidePageInDB.model_validate(result_doc)
+        else:
+            logger.error(f"Upsert for reading guide page for book {book_id}, page {page_number} did not return a document.")
+            return None
+    except Exception as e:
+        logger.error(f"Error in upsert_reading_guide_page for book {book_id}, page {page_number}: {e}", exc_info=True)
+        return None
+
+
+async def get_reading_guide_page(
+    book_id: str, user_id: str, page_number: int
+) -> Optional['ReadingGuidePageInDB']: # Forward reference
+    collection = get_reading_guides_collection()
+    try:
+        book_obj_id = ObjectId(book_id)
+    except Exception:
+        logger.error(f"Invalid book_id format for ObjectId in get_reading_guide_page: {book_id}")
+        return None
+           
+    query = {"book_id": book_obj_id, "user_id": user_id, "page_number": page_number}
+    try:
+        document = await collection.find_one(query)
+        if document:
+            from backend.models.reading_guide import ReadingGuidePageInDB
+            return ReadingGuidePageInDB.model_validate(document)
+        return None
+    except Exception as e:
+        logger.error(f"Error in get_reading_guide_page for book {book_id}, page {page_number}: {e}", exc_info=True)
+        return None
+
+async def get_reading_guides_for_book( 
+    book_id: str, user_id: str
+) -> List['ReadingGuidePageInDB']: # Forward reference
+    collection = get_reading_guides_collection()
+    guides = []
+    try:
+        book_obj_id = ObjectId(book_id)
+    except Exception:
+        logger.error(f"Invalid book_id format for ObjectId in get_reading_guides_for_book: {book_id}")
+        return guides
+
+    query = {"book_id": book_obj_id, "user_id": user_id}
+    try:
+        from backend.models.reading_guide import ReadingGuidePageInDB
+        cursor = collection.find(query).sort("page_number", 1) 
+        async for document in cursor:
+            guides.append(ReadingGuidePageInDB.model_validate(document))
+        return guides
+    except Exception as e:
+        logger.error(f"Error in get_reading_guides_for_book for book {book_id}: {e}", exc_info=True)
+        return guides

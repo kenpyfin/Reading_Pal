@@ -28,6 +28,15 @@ from backend.auth.auth_handler import auth_handler_instance # For decoding JWT
 from backend.services.llm_service import LLMService # For Reading Guide
 import json # For parsing LLM response for Reading Guide
 
+# Import new model and DB functions for page-specific reading guides
+from backend.models.reading_guide import ReadingGuidePageInDB
+from backend.db.mongodb import (
+    upsert_reading_guide_page,
+    get_reading_guide_page,
+    # get_reading_guides_for_book # Not used in these endpoints directly
+)
+
+
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
@@ -515,14 +524,34 @@ class PDFServiceCallbackData(BaseModel):
     images: Optional[List[PDFServiceImageInfo]] = []
     processing_error: Optional[str] = None
 
-# Pydantic Models for Reading Guide
-class ReadingGuideItem(BaseModel):
-    title: str
-    summary: str
-    estimated_page: int
+# Pydantic Models for Reading Guide - OLD, TO BE REMOVED
+# class ReadingGuideItem(BaseModel):
+# title: str
+# summary: str
+# estimated_page: int
 
-class ReadingGuideResponse(BaseModel):
-    guide: List[ReadingGuideItem]
+# class ReadingGuideResponse(BaseModel):
+# guide: List[ReadingGuideItem]
+
+# Define APPROX_CHARS_PER_PAGE, must match frontend's BookView.js
+# This is crucial for consistency.
+APPROX_CHARS_PER_PAGE_FOR_GUIDE = 15000 # Based on BookView.js current value
+
+def _get_page_content_from_markdown(markdown_content: str, page_number: int, chars_per_page: int) -> Optional[str]:
+    """
+    Extracts content for a specific page from the full markdown.
+    Page numbers are 1-indexed.
+    """
+    if page_number <= 0:
+        return None
+    
+    start_char = (page_number - 1) * chars_per_page
+    end_char = start_char + chars_per_page
+
+    if start_char >= len(markdown_content):
+        return None # Page number is out of bounds
+
+    return markdown_content[start_char:end_char]
 
 
 @router.post("/callback", status_code=status.HTTP_200_OK)
@@ -758,130 +787,122 @@ async def delete_book_route(book_id: str, current_user_id: str = Depends(get_cur
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.get("/{book_id}/reading-guide", response_model=ReadingGuideResponse)
-async def get_reading_guide(book_id: str, current_user_id: str = Depends(get_current_user_id)):
-    logger.info(f"Received request for reading guide for book ID: {book_id} by user {current_user_id}")
+# OLD Full Book Reading Guide - REMOVE OR COMMENT OUT
+# @router.get("/{book_id}/reading-guide", response_model=ReadingGuideResponse)
+# async def get_reading_guide(book_id: str, current_user_id: str = Depends(get_current_user_id)):
+    # ... (entire old implementation) ...
 
+
+@router.post("/{book_id}/pages/{page_number}/reading-guide", response_model=ReadingGuidePageInDB, response_model_by_alias=False)
+async def generate_page_reading_guide(
+    book_id: str,
+    page_number: int,
+    current_user_id: str = Depends(get_current_user_id)
+):
+    logger.info(f"Request to generate reading guide for book {book_id}, page {page_number} by user {current_user_id}")
+    
     book_data_doc = await get_book(book_id, current_user_id)
     if not book_data_doc:
-        logger.warning(f"Reading Guide: Book not found in DB for ID: {book_id} and user {current_user_id}")
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found or not owned by user")
 
     try:
         book = Book.model_validate(book_data_doc)
     except Exception as validation_error:
-        logger.error(f"Reading Guide: Failed to validate book data from DB for ID {book_id}: {validation_error}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Invalid book data found in database.")
+        logger.error(f"Generate Guide: Failed to validate book data from DB for ID {book_id}: {validation_error}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Invalid book data found in database.")
 
     if book.status != 'completed' or not book.markdown_filename:
-        logger.warning(f"Reading Guide: Book {book_id} is not completed or has no markdown file. Status: {book.status}")
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Book processing not complete or content unavailable.")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Book processing not complete or markdown not available")
 
     if not CONTAINER_MARKDOWN_PATH:
-        logger.error("Reading Guide: CONTAINER_MARKDOWN_PATH is not set. Cannot read markdown file.")
+        logger.error("CONTAINER_MARKDOWN_PATH is not set. Cannot read markdown file for guide.")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Server configuration error: Markdown path not set.")
 
-    container_markdown_path = os.path.join(CONTAINER_MARKDOWN_PATH, book.markdown_filename)
+    markdown_file_path = os.path.join(CONTAINER_MARKDOWN_PATH, book.markdown_filename)
     
-    markdown_content = ""
+    page_content_text = None
     try:
-        def read_file(path):
+        def read_file_sync(path):
             if not os.path.exists(path):
-                logger.error(f"Reading Guide: Markdown file not found at {path}")
+                logger.error(f"Markdown file not found at {path} for reading guide generation.")
                 return None
             with open(path, 'r', encoding='utf-8') as f:
                 return f.read()
         
-        markdown_content = await run_in_threadpool(read_file, container_markdown_path)
-        if markdown_content is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Processed content file not found.")
-        logger.info(f"Reading Guide: Successfully read markdown for book {book_id} (length: {len(markdown_content)})")
-    except Exception as e:
-        logger.error(f"Reading Guide: Error reading markdown file {container_markdown_path}: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error reading book content.")
+        full_markdown_content = await run_in_threadpool(read_file_sync, markdown_file_path)
 
-    # Instantiate LLMService - In a real app, this might come from a dependency injector
-    # For now, direct instantiation based on environment variables for simplicity.
-    # This assumes LLM_SERVICE, OLLAMA_BASE_URL etc. are correctly set in the environment.
-    # The LLMService constructor in the summary takes specific clients.
-    # We'll assume a simplified instantiation or that the default constructor works.
-    # For the purpose of this change, we'll call the class method `ask` if available,
-    # or instantiate and call an instance method. The summary shows an instance method.
-    # The LLMService needs to be configured based on .env (LLM_SERVICE, LLM_MODEL, etc.)
-    # This part is tricky without seeing how LLMService is typically initialized in the project.
-    # Let's assume a simple instantiation for now.
+        if not full_markdown_content:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Markdown content not found or empty.")
+
+        page_content_text = _get_page_content_from_markdown(
+            full_markdown_content, page_number, APPROX_CHARS_PER_PAGE_FOR_GUIDE
+        )
+        # Allow LLM to process potentially empty/short content.
+        # If page_content_text is None or empty, the prompt will reflect that.
+
+    except Exception as e:
+        logger.error(f"Error reading or processing markdown for guide: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error processing book content for guide.")
+
+    # Assuming llm_service_instance is available (e.g., from LLMService())
+    llm_service_instance = LLMService() 
+
+    llm_prompt = (
+        f"You are an expert reading assistant. Generate a concise reading guide for page {page_number} "
+        f"of the book titled '{book.title}'. The text from this page is provided below. "
+        "Focus on identifying key themes, main ideas, important characters or events if any, "
+        "and suggest 1-2 thought-provoking questions related to this specific page's content. "
+        "If the content is very short, a header, or seems like an image caption, note that. "
+        "If the content is blank or unavailable, state that the page appears to be empty or mainly visual. "
+        "Format the guide clearly. Keep the guide concise, suitable for a small panel in a reading application.\n\n"
+        "Page Content:\n\"\"\"\n"
+        f"{page_content_text if page_content_text and page_content_text.strip() else 'Content for this page is empty or unavailable.'}\n"
+        "\"\"\"\n\n"
+        "Reading Guide:"
+    )
+    
     try:
-        # This is a placeholder for proper LLMService instantiation
-        # In a full app, you'd likely get this from a dependency injection system
-        # or a factory that reads .env for OLLAMA_BASE_URL, ANTHROPIC_API_KEY etc.
-        llm_service_instance = LLMService() # This might need actual client instances
+        logger.info(f"Sending prompt to LLM for book {book.id}, page {page_number}. Prompt length (approx): {len(llm_prompt)}")
+        guide_text = await llm_service_instance.ask(prompt=llm_prompt, context=None) 
+        if not guide_text or not guide_text.strip():
+            guide_text = "The LLM did not provide a guide for this page. It might be empty or contain non-textual content."
+            logger.warning(f"LLM returned empty guide for book {book.id}, page {page_number}")
     except Exception as e:
-        logger.error(f"Reading Guide: Failed to initialize LLMService: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="LLM service initialization failed.")
+        logger.error(f"LLM service error for book {book.id}, page {page_number}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="LLM service unavailable or failed.")
 
-    prompt = f"""
-You are an expert reading assistant. Analyze the following book content and generate a structured reading guide.
-The guide should help a user quickly understand the book's main topics and navigate to relevant sections.
-The output MUST be a valid JSON array of objects. Each object should represent a key section or chapter and have the following fields:
-- "title": A concise and descriptive title for the section (e.g., "Introduction to Core Concepts", "Chapter 3: Advanced Techniques", "Key Themes and Analysis").
-- "summary": A brief 1-2 sentence summary of what the section covers.
-- "estimated_page": An estimated page number where this section begins. Base your estimation on the flow of the content and assuming approximately 5000 characters per page. This should be an integer.
+    db_guide_page = await upsert_reading_guide_page(
+        book_id=str(book.id), user_id=current_user_id, page_number=page_number, content=guide_text.strip()
+    )
 
-Ensure the JSON is well-formed. Do not include any text outside the JSON array.
+    if not db_guide_page:
+        logger.error(f"Failed to save reading guide for book {book.id}, page {page_number} to DB.")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to save reading guide.")
+    
+    logger.info(f"Successfully generated and saved reading guide for book {book.id}, page {page_number}")
+    return db_guide_page
 
-Book Content (first 50000 characters for brevity):
----
-{markdown_content[:50000]} 
----
 
-JSON Reading Guide:
-"""
+@router.get("/{book_id}/pages/{page_number}/reading-guide", response_model=Optional[ReadingGuidePageInDB], response_model_by_alias=False)
+async def get_page_reading_guide(
+    book_id: str,
+    page_number: int,
+    current_user_id: str = Depends(get_current_user_id)
+):
+    logger.info(f"Request to get reading guide for book {book_id}, page {page_number} by user {current_user_id}")
+    
+    if not ObjectId.is_valid(book_id):
+        logger.warning(f"Get Page Guide: Invalid book_id format: {book_id}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid book ID format.")
 
-    try:
-        logger.info(f"Reading Guide: Sending prompt to LLM for book {book_id}")
-        # Using the instance method 'ask'
-        llm_response_str = await llm_service_instance.ask(prompt=prompt, context=None) # Context can be None if prompt contains all
-        logger.info(f"Reading Guide: Received LLM response string (first 300 chars): {llm_response_str[:300]}")
-
-        # Attempt to parse the LLM response string as JSON
-        try:
-            # Clean the response: find the first '[' and last ']'
-            start_index = llm_response_str.find('[')
-            end_index = llm_response_str.rfind(']')
-            if start_index != -1 and end_index != -1 and end_index > start_index:
-                json_str = llm_response_str[start_index : end_index+1]
-                guide_data_list = json.loads(json_str)
-                # Validate that it's a list of dicts with required keys
-                if not isinstance(guide_data_list, list) or \
-                   not all(isinstance(item, dict) and
-                           "title" in item and "summary" in item and "estimated_page" in item and
-                           isinstance(item["title"], str) and
-                           isinstance(item["summary"], str) and
-                           isinstance(item["estimated_page"], int)
-                           for item in guide_data_list):
-                    logger.error(f"Reading Guide: LLM response JSON structure is invalid. Data: {guide_data_list}")
-                    raise ValueError("LLM response JSON structure is invalid.")
-            else:
-                logger.error(f"Reading Guide: Could not find JSON array in LLM response. Raw: {llm_response_str}")
-                raise ValueError("Could not find JSON array in LLM response.")
-
-        except json.JSONDecodeError as e:
-            logger.error(f"Reading Guide: Failed to parse LLM response as JSON: {e}. Response: {llm_response_str}", exc_info=True)
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error processing LLM response: Invalid JSON format.")
-        except ValueError as e: # Catch custom validation error
-            logger.error(f"Reading Guide: LLM response validation error: {e}. Response: {llm_response_str}", exc_info=True)
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error processing LLM response: {e}")
-
-        # Convert list of dicts to list of ReadingGuideItem models
-        guide_items = [ReadingGuideItem(**item) for item in guide_data_list]
-        
-        logger.info(f"Reading Guide: Successfully generated and parsed reading guide for book {book_id}. Items: {len(guide_items)}")
-        return ReadingGuideResponse(guide=guide_items)
-
-    except HTTPException as http_exc: # Re-raise HTTPExceptions
-        raise http_exc
-    except Exception as e:
-        logger.error(f"Reading Guide: Unexpected error generating reading guide for book {book_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to generate reading guide.")
+    db_guide_page = await get_reading_guide_page(
+        book_id=book_id, user_id=current_user_id, page_number=page_number
+    )
+    if not db_guide_page:
+        logger.info(f"No reading guide found for book {book_id}, page {page_number}")
+        return None 
+    
+    logger.info(f"Successfully retrieved reading guide for book {book_id}, page {page_number}")
+    return db_guide_page
 
 # ... (rest of the file) ...

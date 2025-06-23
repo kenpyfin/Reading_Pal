@@ -282,10 +282,18 @@ function BookView() {
 
   // State for Reading Guide Pane
   const [showReadingGuidePane, setShowReadingGuidePane] = useState(false);
-  const [readingGuideContent, setReadingGuideContent] = useState([]);
-  const [readingGuideLoading, setReadingGuideLoading] = useState(false);
-  const [readingGuideError, setReadingGuideError] = useState(null);
-  const readingGuideFetched = useRef(false); // To track if guide has been fetched for current book
+  // const [readingGuideContent, setReadingGuideContent] = useState([]); // REMOVED - Replaced by page-specific
+  // const [readingGuideLoading, setReadingGuideLoading] = useState(false); // REMOVED - Replaced by page-specific
+  // const [readingGuideError, setReadingGuideError] = useState(null); // REMOVED - Replaced by page-specific
+  // const readingGuideFetched = useRef(false); // REMOVED - Replaced by page-specific logic
+
+  // --- NEW State for Page-Specific Reading Guide ---
+  const [currentPageGuide, setCurrentPageGuide] = useState(null); // Stores the guide content string
+  const [guideLoading, setGuideLoading] = useState(false);
+  const [guideError, setGuideError] = useState(null);
+  const [hasGuideForCurrentPage, setHasGuideForCurrentPage] = useState(false);
+  const [isGeneratingGuide, setIsGeneratingGuide] = useState(false);
+  // --- END NEW State for Page-Specific Reading Guide ---
 
   // State and Refs for Reading Guide Pane Resizing
   const [readingGuidePaneFlexBasis, setReadingGuidePaneFlexBasis] = useState('25%'); // Initial width
@@ -468,11 +476,115 @@ function BookView() {
       fetchBookmarks();
       // setCurrentPage(1); // fetchBook handles setting currentPage, potentially from localStorage
       // setPageInput('1'); // pageInput updates based on currentPage effect
-      readingGuideFetched.current = false; // Reset guide fetched status on new book load
-      setReadingGuideContent([]); // Clear old guide content
+      // readingGuideFetched.current = false; // Old logic for full guide
+      // setReadingGuideContent([]); // Old logic for full guide
+      setCurrentPageGuide(null); // Clear page-specific guide for new book
+      setGuideError(null);
+      setHasGuideForCurrentPage(false);
       setShowReadingGuidePane(false); // Close guide pane when book changes
     }
   }, [bookId]);
+
+
+  // --- NEW: Function to fetch page-specific reading guide ---
+  const fetchPageGuide = useCallback(async (pageNumberToFetch) => {
+    if (!bookId || !pageNumberToFetch) return;
+    logger.debug(`[BookView - fetchPageGuide] Fetching guide for page ${pageNumberToFetch}`);
+    setGuideLoading(true);
+    setGuideError(null);
+    setCurrentPageGuide(null); // Clear previous guide
+    setHasGuideForCurrentPage(false);
+
+    try {
+      const token = localStorage.getItem('authToken');
+      if (!token) {
+        throw new Error("Authentication token not found.");
+      }
+      const response = await fetch(`/api/books/${bookId}/pages/${pageNumberToFetch}/reading-guide`, {
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      if (!response.ok) {
+        if (response.status === 404) {
+          logger.info(`[BookView - fetchPageGuide] No guide found for page ${pageNumberToFetch}.`);
+          setCurrentPageGuide(null);
+          setHasGuideForCurrentPage(false);
+          // No error state needed for 404, just means no guide exists
+        } else {
+          const errorData = await response.json().catch(() => ({ detail: `HTTP error ${response.status}` }));
+          throw new Error(errorData.detail);
+        }
+      } else {
+        const data = await response.json();
+        if (data && data.content) {
+          setCurrentPageGuide(data.content);
+          setHasGuideForCurrentPage(true);
+          logger.info(`[BookView - fetchPageGuide] Successfully fetched guide for page ${pageNumberToFetch}.`);
+        } else {
+          setCurrentPageGuide(null);
+          setHasGuideForCurrentPage(false); 
+          logger.info(`[BookView - fetchPageGuide] Guide endpoint returned OK but no content for page ${pageNumberToFetch}.`);
+        }
+      }
+    } catch (err) {
+      logger.error(`[BookView - fetchPageGuide] Failed to fetch guide for page ${pageNumberToFetch}:`, err);
+      setGuideError(err.message);
+      setCurrentPageGuide(null);
+      setHasGuideForCurrentPage(false);
+    } finally {
+      setGuideLoading(false);
+    }
+  }, [bookId]);
+
+  // --- NEW: Function to generate/regenerate page-specific reading guide ---
+  const handleGeneratePageGuide = async () => {
+    if (!bookId || !currentPage) return;
+    logger.info(`[BookView - handleGeneratePageGuide] Generating guide for current page: ${currentPage}`);
+    setIsGeneratingGuide(true);
+    setGuideError(null);
+
+    try {
+      const token = localStorage.getItem('authToken');
+      if (!token) {
+        throw new Error("Authentication token not found.");
+      }
+      const response = await fetch(`/api/books/${bookId}/pages/${currentPage}/reading-guide`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: `HTTP error ${response.status}` }));
+        throw new Error(errorData.detail);
+      }
+      const data = await response.json();
+      if (data && data.content) {
+        setCurrentPageGuide(data.content);
+        setHasGuideForCurrentPage(true);
+        logger.info(`[BookView - handleGeneratePageGuide] Successfully generated and received guide for page ${currentPage}.`);
+      } else {
+        throw new Error("Generated guide content was not received correctly.");
+      }
+    } catch (err) {
+      logger.error(`[BookView - handleGeneratePageGuide] Failed to generate guide for page ${currentPage}:`, err);
+      setGuideError(err.message);
+    } finally {
+      setIsGeneratingGuide(false);
+    }
+  };
+
+  // Effect to fetch page guide when currentPage or bookId changes, if pane is visible
+  useEffect(() => {
+    if (bookId && currentPage && showReadingGuidePane) {
+      fetchPageGuide(currentPage);
+    } else if (!showReadingGuidePane) {
+      setCurrentPageGuide(null);
+      setGuideError(null);
+      setHasGuideForCurrentPage(false);
+    }
+  }, [bookId, currentPage, fetchPageGuide, showReadingGuidePane]);
+
 
   // Resizer Event Handlers for BookPane and NotePane
   // This resizer will now operate within the 'main-content-area'
@@ -1567,64 +1679,23 @@ function BookView() {
     }
   };
 
-  const fetchReadingGuide = async () => {
-    if (!bookId || readingGuideFetched.current) return;
-
-    setReadingGuideLoading(true);
-    setReadingGuideError(null);
-    try {
-      const token = localStorage.getItem('authToken');
-      if (!token) {
-        throw new Error("Authentication token not found.");
-      }
-      const response = await fetch(`/api/books/${bookId}/reading-guide`, {
-        headers: { 'Authorization': `Bearer ${token}` },
-      });
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || `HTTP error ${response.status}`);
-      }
-      const data = await response.json();
-      setReadingGuideContent(data.guide || []);
-      readingGuideFetched.current = true;
-    } catch (err) {
-      logger.error('Failed to fetch reading guide:', err);
-      setReadingGuideError(err.message);
-      setReadingGuideContent([]); // Clear content on error
-    } finally {
-      setReadingGuideLoading(false);
-    }
-  };
+  // const fetchReadingGuide = async () => { // OLD - Full book guide
+  // ...
+  // };
 
   const toggleReadingGuidePane = () => {
     const newShowState = !showReadingGuidePane;
     setShowReadingGuidePane(newShowState);
-    if (newShowState && !readingGuideFetched.current) {
-      fetchReadingGuide();
-    }
+    // The useEffect for [bookId, currentPage, fetchPageGuide, showReadingGuidePane]
+    // will handle fetching the guide if newShowState is true.
     if (isMobileView && newShowState) {
         setShowNotesPanelOnMobile(false); // Close notes if opening guide on mobile
     }
   };
   
-  const handleReadingGuideItemClick = (pageNumber) => {
-    if (pageNumber && typeof pageNumber === 'number' && pageNumber >= 1 && pageNumber <= totalPages) {
-      logger.info(`[BookView - ReadingGuideClick] Jumping to page: ${pageNumber}`);
-      isProgrammaticScroll.current = true; // Prevent scroll saving/syncing during jump
-      setCurrentPage(pageNumber);
-      // Scroll to top of the new page
-      if (bookPaneContainerRef.current) {
-        bookPaneContainerRef.current.scrollTop = 0;
-      }
-      // Reset programmatic scroll flag after a short delay
-      setTimeout(() => { isProgrammaticScroll.current = false; }, 150);
-      if (isMobileView && showReadingGuidePane) { // Close guide on mobile after click
-        setShowReadingGuidePane(false);
-      }
-    } else {
-      logger.warn(`[BookView - ReadingGuideClick] Invalid page number: ${pageNumber}`);
-    }
-  };
+  // const handleReadingGuideItemClick = (pageNumber) => { // OLD - Full book guide item click
+  // ...
+  // };
 
 
   if (loading) return <div style={{ padding: '20px' }}>Loading book...</div>;
@@ -1685,24 +1756,23 @@ function BookView() {
           className="reading-guide-pane-area"
           ref={readingGuidePaneAreaRef} // Add ref
           style={{
-            flexBasis: readingGuidePaneFlexBasis, // Use state for flex-basis
-            // flex: `0 0 ${readingGuidePaneFlexBasis}`, // Alternative if using flex shorthand
-            // maxWidth: '500px', // Max width for guide - can be controlled by resizer logic
-            // minWidth: '150px', // Min width for guide - can be controlled by resizer logic
+            flexBasis: readingGuidePaneFlexBasis,
             height: '100%',
             display: 'flex',
             flexDirection: 'column',
             overflow: 'hidden',
-            position: 'relative', // For potential absolute positioned children or resizer
+            position: 'relative',
           }}
         >
           <ReadingGuidePane
-            guideContent={readingGuideContent}
-            onItemClick={handleReadingGuideItemClick}
-            isLoading={readingGuideLoading}
-            error={readingGuideError}
+            guideContent={currentPageGuide}
+            onGenerateGuide={handleGeneratePageGuide}
+            isLoading={guideLoading}
+            error={guideError}
             isVisible={showReadingGuidePane}
-            // No onClose for desktop version, it's part of layout
+            hasGuideForCurrentPage={hasGuideForCurrentPage}
+            isGenerating={isGeneratingGuide}
+            // No onClose for desktop version
           />
         </div>
       )}
@@ -1710,9 +1780,9 @@ function BookView() {
       {/* Resizer Handle for Guide Pane / Main Content - Conditionally Render */}
       {showReadingGuidePane && !isMobileView && (
         <div 
-          className="resizer-handle resizer-handle-vertical" // Added resizer-handle-vertical for specific styling
+          className="resizer-handle resizer-handle-vertical"
           onMouseDown={handleMouseDownOnGuideResizer}
-          title="Resize Reading Guide" // Accessibility
+          title="Resize Reading Guide"
         ></div>
       )}
 
@@ -1720,12 +1790,14 @@ function BookView() {
       {showReadingGuidePane && isMobileView && (
         <div className="reading-guide-pane-area-mobile-overlay">
           <ReadingGuidePane
-            guideContent={readingGuideContent}
-            onItemClick={handleReadingGuideItemClick}
-            isLoading={readingGuideLoading}
-            error={readingGuideError}
-            onClose={toggleReadingGuidePane} // Pass toggle function to close
+            guideContent={currentPageGuide}
+            onGenerateGuide={handleGeneratePageGuide}
+            isLoading={guideLoading}
+            error={guideError}
+            onClose={toggleReadingGuidePane}
             isVisible={showReadingGuidePane}
+            hasGuideForCurrentPage={hasGuideForCurrentPage}
+            isGenerating={isGeneratingGuide}
           />
         </div>
       )}

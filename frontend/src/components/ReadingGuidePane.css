@@ -32,7 +32,7 @@
 .close-guide-pane-btn {
   background: none;
   border: none;
-  font-size: 1.5em; /* Larger close button */
+  font-size: 1.5em;
   font-weight: bold;
   color: #555;
   cursor: pointer;
@@ -43,60 +43,57 @@
   color: #000;
 }
 
+/* New styles for the actions area (generate button) */
+.reading-guide-actions {
+  padding: 10px 15px;
+  border-bottom: 1px solid #e0e0e0;
+  flex-shrink: 0;
+}
+
+.generate-guide-btn {
+  background-color: #007bff;
+  color: white;
+  border: none;
+  padding: 8px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9em;
+  width: 100%; /* Make button full width of its container */
+  box-sizing: border-box;
+}
+
+.generate-guide-btn:hover {
+  background-color: #0056b3;
+}
+
+.generate-guide-btn:disabled {
+  background-color: #cccccc;
+  cursor: not-allowed;
+}
+
 .reading-guide-content {
   padding: 15px;
   overflow-y: auto; /* Allow content to scroll */
   flex-grow: 1; /* Content area takes remaining space */
+  font-size: 0.9em; /* Adjust base font size for guide content */
+  line-height: 1.5;
 }
 
-.reading-guide-content ul {
-  list-style: none;
-  padding: 0;
-  margin: 0;
+/* Style for the actual guide text display */
+.guide-text-content {
+  white-space: pre-wrap; /* Preserve line breaks and spaces from the LLM response */
+  word-wrap: break-word; /* Ensure long words don't overflow */
+  color: #333; /* Standard text color */
 }
 
-.guide-item {
-  margin-bottom: 15px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid #e9ecef; /* Lighter separator for items */
-}
-.guide-item:last-child {
-  border-bottom: none;
-  margin-bottom: 0;
-}
 
-.guide-item-button {
-  background: none;
-  border: none;
-  padding: 5px 0; /* Minimal padding, text alignment handles spacing */
-  text-align: left;
-  width: 100%;
-  cursor: pointer;
-  display: block; /* Make it block to contain children properly */
-  color: #007bff; /* Link-like color */
-}
-.guide-item-button:hover .guide-item-title {
-  text-decoration: underline;
-}
-
-.guide-item-title {
-  font-weight: bold;
-  font-size: 1em;
-  color: #0056b3; /* Darker blue for title */
-  margin-right: 8px; /* Space between title and page number */
-}
-
-.guide-item-page {
-  font-size: 0.85em;
-  color: #555;
-}
-
-.guide-item-summary {
-  font-size: 0.9em;
-  color: #495057;
-  margin-top: 5px; /* Space between button and summary */
-  line-height: 1.4;
-}
+/* Remove old list-based styles if no longer applicable */
+/* .reading-guide-content ul { ... } */
+/* .guide-item { ... } */
+/* .guide-item-button { ... } */
+/* .guide-item-title { ... } */
+/* .guide-item-page { ... } */
+/* .guide-item-summary { ... } */
 
 .reading-guide-content .error-message {
   color: #dc3545; /* Bootstrap danger color */
