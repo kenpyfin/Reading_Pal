@@ -12,6 +12,7 @@ import google.generativeai as genai
 # Assuming requests is used for DeepSeek (adjust if a specific client library is available)
 import requests
 import json # Import json for DeepSeek requests
+import re # Import re for regular expressions
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -110,6 +111,13 @@ class LLMService:
         self.service_name = LLM_SERVICE
         self.model_name = LLM_MODEL
 
+    def _remove_think_tags(self, text: str) -> str:
+        """Removes content within <think>...</think> tags."""
+        if not text:
+            return ""
+        # Using re.DOTALL to make '.' match newlines as well
+        return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+
     async def ask(self, prompt: str, context: Optional[str]) -> str:
         """
         Sends a question to the configured LLM with optional provided context (selected text).
@@ -142,7 +150,8 @@ class LLMService:
                         {"role": "user", "content": full_prompt}
                     ]
                 )
-                return message.content[0].text if message.content else "No response from LLM."
+                response_text = message.content[0].text if message.content else "No response from LLM."
+                return self._remove_think_tags(response_text)
 
             elif self.service_name == "ollama" and self.ollama_client:
                  # ... (Ollama async client call using full_prompt)
@@ -152,7 +161,8 @@ class LLMService:
                          {'role': 'user', 'content': full_prompt},
                      ],
                  )
-                 return response['message']['content'] if response and 'message' in response else "No response from LLM."
+                 response_text = response['message']['content'] if response and 'message' in response else "No response from LLM."
+                 return self._remove_think_tags(response_text)
 
             elif self.service_name == "gemini" and self.gemini_model:
                  # ... (Gemini async client call using full_prompt)
@@ -161,7 +171,8 @@ class LLMService:
                          {"role": "user", "parts": [full_prompt]}
                      ]
                  )
-                 return response.text if response and response.text else "No response from LLM."
+                 response_text = response.text if response and response.text else "No response from LLM."
+                 return self._remove_think_tags(response_text)
 
             elif self.service_name == "deepseek" and self.deepseek_config:
                  # ... (DeepSeek API call using requests (synchronous, needs run_in_threadpool) using full_prompt)
@@ -187,13 +198,14 @@ class LLMService:
                      )
                      response.raise_for_status()
                      response_data = response.json()
-                     return response_data['choices'][0]['message']['content'] if response_data and 'choices' in response_data and len(response_data['choices']) > 0 else "No response from LLM."
+                     response_text = response_data['choices'][0]['message']['content'] if response_data and 'choices' in response_data and len(response_data['choices']) > 0 else "No response from LLM."
+                     return self._remove_think_tags(response_text)
                  except requests.exceptions.RequestException as req_err:
                      logger.error(f"DeepSeek API request failed: {req_err}")
-                     return f"Error from DeepSeek API: {req_err}"
+                     return self._remove_think_tags(f"Error from DeepSeek API: {req_err}")
                  except json.JSONDecodeError:
                      logger.error(f"DeepSeek API returned invalid JSON: {response.text}")
-                     return f"Error from DeepSeek API: Invalid response format."
+                     return self._remove_think_tags(f"Error from DeepSeek API: Invalid response format.")
 
             else:
                  error_msg = f"LLM service '{self.service_name}' is configured but client is not initialized or implemented."
@@ -226,7 +238,8 @@ class LLMService:
                         {"role": "user", "content": prompt}
                     ]
                 )
-                 return message.content[0].text if message.content else "No summary from LLM."
+                 response_text = message.content[0].text if message.content else "No summary from LLM."
+                 return self._remove_think_tags(response_text)
 
             elif self.service_name == "ollama" and self.ollama_client:
                  # Ollama async client call
@@ -236,7 +249,8 @@ class LLMService:
                          {'role': 'user', 'content': prompt},
                      ],
                  )
-                 return response['message']['content'] if response and 'message' in response else "No summary from LLM."
+                 response_text = response['message']['content'] if response and 'message' in response else "No summary from LLM."
+                 return self._remove_think_tags(response_text)
 
             elif self.service_name == "gemini" and self.gemini_model:
                  # Gemini async client call
@@ -245,7 +259,8 @@ class LLMService:
                          {"role": "user", "parts": [prompt]}
                      ]
                  )
-                 return response.text if response and response.text else "No summary from LLM."
+                 response_text = response.text if response and response.text else "No summary from LLM."
+                 return self._remove_think_tags(response_text)
 
             elif self.service_name == "deepseek" and self.deepseek_config:
                  # DeepSeek API call using requests (synchronous, needs run_in_threadpool)
@@ -271,13 +286,14 @@ class LLMService:
                      )
                      response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
                      response_data = response.json()
-                     return response_data['choices'][0]['message']['content'] if response_data and 'choices' in response_data and len(response_data['choices']) > 0 else "No summary from LLM."
+                     response_text = response_data['choices'][0]['message']['content'] if response_data and 'choices' in response_data and len(response_data['choices']) > 0 else "No summary from LLM."
+                     return self._remove_think_tags(response_text)
                  except requests.exceptions.RequestException as req_err:
                      logger.error(f"DeepSeek API request failed: {req_err}")
-                     return f"Error from DeepSeek API: {req_err}"
+                     return self._remove_think_tags(f"Error from DeepSeek API: {req_err}")
                  except json.JSONDecodeError:
                      logger.error(f"DeepSeek API returned invalid JSON: {response.text}")
-                     return f"Error from DeepSeek API: Invalid response format."
+                     return self._remove_think_tags(f"Error from DeepSeek API: Invalid response format.")
 
             else:
                  # This case should ideally not be reached
