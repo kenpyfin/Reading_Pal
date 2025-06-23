@@ -485,7 +485,7 @@ async def perform_pdf_processing(job_id: str, temp_pdf_path: str, sanitized_titl
         # --- MERGE PAGES TO MAKE THEM LONGER ---
         # Define how many original "pages" (sections separated by '---') to merge into one.
         # For example, 2 means two original pages become one new page.
-        NUM_ORIGINAL_PAGES_TO_MERGE = 2 
+        NUM_ORIGINAL_PAGES_TO_MERGE = 5 
         PAGE_SEPARATOR_PATTERN = r'\n-{3,}\n' # Matches '---' or more hyphens on its own line
 
         if NUM_ORIGINAL_PAGES_TO_MERGE > 1 and raw_md_text_from_pipe.strip():
