@@ -108,4 +108,7 @@
   .reading-guide-header h3 {
     font-size: 1em; /* Slightly smaller header for mobile */
   }
+  .generate-guide-btn {
+    font-size: 1em; /* Slightly larger button text on mobile for touch */
+  }
 }
