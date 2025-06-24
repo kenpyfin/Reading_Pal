@@ -47,7 +47,9 @@ services:
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}                         
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}                 
       GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI}                   
-      FRONTEND_URL: ${FRONTEND_URL}  
+      FRONTEND_URL: ${FRONTEND_URL}
+      ADMIN_USERNAME: ${ADMIN_USERNAME}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
     # Remove pdf_service dependency. Backend does not depend on frontend.
     # depends_on:
     #   - pdf_service
