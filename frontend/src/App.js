@@ -8,6 +8,7 @@ import NavBar from './components/NavBar';
 import LoginPage from './pages/LoginPage'; // Import LoginPage
 import AuthCallbackPage from './pages/AuthCallbackPage'; // Import AuthCallbackPage
 import AdminLoginPage from './pages/AdminLoginPage'; // Import AdminLoginPage
+import UserManagementPage from './pages/UserManagementPage'; // Import UserManagementPage
 
 // Helper to decode JWT (simplified, use a library like jwt-decode in a real app for production)
 const decodeJwt = (token) => {
@@ -73,7 +74,7 @@ function App() {
             </>
           ) : isAdmin ? ( // Logged in and IS ADMIN
             <>
-              <Route path="/admin/user-management" element={<div>Admin User Management Page Placeholder</div>} />
+              <Route path="/admin/user-management" element={<UserManagementPage />} />
               {/* Decide if admins should access these or be redirected */}
               <Route path="/upload" element={<PdfUploadForm />} /> 
               <Route path="/book/:bookId" element={<BookView />} />
