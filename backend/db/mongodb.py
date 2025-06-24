@@ -314,6 +314,51 @@ async def create_or_update_user_from_google(user_data: 'UserCreate') -> Optional
                 logger.error(f"Error creating new user {user_data.email} even after checks: {e}", exc_info=True)
                 return None
 
+async def get_all_users() -> List[Dict[str, Any]]:
+    """Retrieves all users from the database."""
+    database = get_database()
+    if database is None:
+        logger.error("Database not initialized for get_all_users.")
+        return []
+    try:
+        users_cursor = database.users.find({})
+        users_list = await users_cursor.to_list(length=None) # Get all users
+        logger.info(f"Retrieved {len(users_list)} users from the database.")
+        return users_list
+    except Exception as e:
+        logger.error(f"Error fetching all users: {e}", exc_info=True)
+        return []
+
+async def delete_user_by_id(user_id: str) -> bool:
+    """Deletes a user from the database by their MongoDB ObjectId string."""
+    database = get_database()
+    if database is None:
+        logger.error("Database not initialized for delete_user_by_id.")
+        return False
+    try:
+        if not ObjectId.is_valid(user_id):
+            logger.warning(f"Invalid user ID format for deletion: {user_id}")
+            return False
+        obj_id = ObjectId(user_id)
+        
+        # Optional: Check if the user being deleted is the admin user from .env
+        # This might be complex if admin is not stored as a regular user.
+        # For now, we allow deletion of any user by ID if the requester is admin.
+
+        result = await database.users.delete_one({"_id": obj_id})
+        if result.deleted_count > 0:
+            logger.info(f"User with ID {user_id} deleted successfully.")
+            return True
+        else:
+            logger.warning(f"User with ID {user_id} not found for deletion.")
+            return False
+    except InvalidId:
+        logger.error(f"Invalid user ID format (InvalidId exception): {user_id}")
+        return False
+    except Exception as e:
+        logger.error(f"Error deleting user {user_id}: {e}", exc_info=True)
+        return False
+
 # --- Keep Note Database Operations ---
 # ... (rest of the note functions remain unchanged)
 async def save_note(note_data: dict):

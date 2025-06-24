@@ -6,10 +6,11 @@ from authlib.integrations.starlette_client import OAuth # Will be needed for OAu
 from authlib.integrations.base_client import OAuthError # Import OAuthError
 from starlette.responses import RedirectResponse, JSONResponse # Will be needed for OAuth & JSONResponse
 from pydantic import BaseModel # Import BaseModel for request body
+from typing import List, Dict, Any # Import List for response model
 
-from backend.auth.auth_handler import auth_handler_instance, ACCESS_TOKEN_EXPIRE_MINUTES # For JWT creation/validation
-from backend.db.mongodb import get_user_by_google_id, create_or_update_user_from_google # Example db functions
-from backend.models.user import UserCreate, User # Example models
+from backend.auth.auth_handler import auth_handler_instance, ACCESS_TOKEN_EXPIRE_MINUTES, get_current_admin_user # For JWT creation/validation and admin check
+from backend.db.mongodb import get_user_by_google_id, create_or_update_user_from_google, get_all_users, delete_user_by_id # DB functions
+from backend.models.user import UserCreate, User # Pydantic models
 # from backend.core.config import settings # If you re-introduce settings
 
 logger = logging.getLogger(__name__)
@@ -207,5 +208,45 @@ async def auth_via_google(request: Request):
     #     path="/"
     # )
     return response
+
+
+# --- Admin User Management Endpoints ---
+
+@router.get("/admin/users", response_model=List[User], summary="List all users (Admin only)")
+async def list_users_admin(current_admin: Dict[str, Any] = Depends(get_current_admin_user)):
+    """
+    Retrieves a list of all users. Requires admin privileges.
+    """
+    logger.info(f"Admin user '{current_admin.get('sub')}' requesting to list all users.")
+    users_data = await get_all_users()
+    # Convert MongoDB documents to Pydantic User models
+    # This ensures that only fields defined in User model are returned
+    # and _id is correctly aliased to id and serialized.
+    return [User.model_validate(user) for user in users_data]
+
+
+@router.delete("/admin/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete a user (Admin only)")
+async def delete_user_admin(user_id: str, current_admin: Dict[str, Any] = Depends(get_current_admin_user)):
+    """
+    Deletes a user by their ID. Requires admin privileges.
+    """
+    logger.info(f"Admin user '{current_admin.get('sub')}' attempting to delete user with ID: {user_id}.")
+    
+    # Prevent admin from deleting themselves if their ID matches the one being deleted
+    # This assumes the admin's JWT 'sub' or a 'user_id' claim matches the user_id in the DB.
+    # If admin logs in with username/password and isn't a regular user, this check might not apply directly.
+    # For now, we'll assume admin might be a regular user with an admin flag.
+    # A more robust check would be to ensure the admin user from .env isn't deleted if it has a DB entry.
+    
+    # Example: if current_admin.get("user_id_from_db_if_admin_is_a_user") == user_id:
+    #    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Admin cannot delete themselves.")
+
+    deleted = await delete_user_by_id(user_id)
+    if not deleted:
+        logger.warning(f"Failed to delete user with ID {user_id}. User not found or delete operation failed.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"User with ID {user_id} not found or could not be deleted.")
+    
+    logger.info(f"User with ID {user_id} deleted successfully by admin '{current_admin.get('sub')}'.")
+    return None # Returns 204 No Content on success
 
 # Add more authentication routes here (e.g., register, logout, password reset)

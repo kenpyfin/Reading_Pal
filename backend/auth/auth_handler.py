@@ -61,3 +61,43 @@ class AuthHandler:
             return None
 
 auth_handler_instance = AuthHandler()
+
+# --- FastAPI Dependency for checking admin ---
+from fastapi import Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token") # Assuming a general token URL, adjust if needed
+
+async def get_current_admin_user(token: str = Depends(oauth2_scheme)) -> Dict[str, Any]:
+    """
+    Dependency to get the current user from the token and verify if they are an admin.
+    """
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    unauthorized_admin_exception = HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="User is not authorized to perform this action (not an admin)",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+    payload = auth_handler_instance.decode_token(token)
+    if payload is None:
+        logger.warning("get_current_admin_user: Token decoding failed or token is invalid/expired.")
+        raise credentials_exception
+    
+    user_id: Optional[str] = payload.get("sub") # or "user_id" depending on what you store
+    is_admin: Optional[bool] = payload.get("is_admin")
+
+    if user_id is None:
+        logger.warning("get_current_admin_user: User ID (sub) not found in token payload.")
+        raise credentials_exception
+    
+    if not is_admin:
+        logger.warning(f"get_current_admin_user: User '{user_id}' attempted an admin action without admin privileges.")
+        raise unauthorized_admin_exception
+    
+    logger.info(f"Admin user '{user_id}' authorized for admin action.")
+    return payload # Return the whole payload for potential use in the route
