@@ -4,12 +4,14 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from dotenv import load_dotenv
 from bson import ObjectId # Ensure ObjectId is imported
 from bson.errors import InvalidId # Import InvalidId for specific error handling
-from typing import Optional, List, Dict, Any # Import types
+from typing import Optional, List, Dict, Any, TYPE_CHECKING # Import types, Import TYPE_CHECKING
 from datetime import datetime # Import datetime
 
 # Import UserCreate for type hinting
 from backend.models.user import UserCreate
-# from backend.models.reading_guide import ReadingGuidePageInDB # Moved to function scope to avoid circular import
+
+if TYPE_CHECKING:
+    from backend.models.reading_guide import ReadingGuidePageInDB
 
 load_dotenv()
 logger = logging.getLogger(__name__)
