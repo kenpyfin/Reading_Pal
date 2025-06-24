@@ -59,7 +59,7 @@ function App() {
   return (
     <div className="App">
       <Router>
-        {authToken && <NavBar onLogout={handleLogout} />} {/* Show NavBar only if authenticated */}
+        {authToken && <NavBar onLogout={handleLogout} isAdmin={isAdmin} />} {/* Show NavBar only if authenticated, pass isAdmin */}
         <Routes>
           {!authToken ? (
             <>
