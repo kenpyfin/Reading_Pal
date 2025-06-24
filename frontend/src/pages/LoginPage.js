@@ -24,6 +24,9 @@ function LoginPage() {
           />
           Sign in with Google
         </button>
+        <p style={{ textAlign: 'center', marginTop: '20px', fontSize: '14px' }}>
+          <a href="/admin/login">Admin Login</a>
+        </p>
       </div>
     </div>
   );

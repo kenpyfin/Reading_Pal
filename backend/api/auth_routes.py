@@ -4,7 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from authlib.integrations.starlette_client import OAuth # Will be needed for OAuth
 from authlib.integrations.base_client import OAuthError # Import OAuthError
-from starlette.responses import RedirectResponse # Will be needed for OAuth
+from starlette.responses import RedirectResponse, JSONResponse # Will be needed for OAuth & JSONResponse
+from pydantic import BaseModel # Import BaseModel for request body
 
 from backend.auth.auth_handler import auth_handler_instance, ACCESS_TOKEN_EXPIRE_MINUTES # For JWT creation/validation
 from backend.db.mongodb import get_user_by_google_id, create_or_update_user_from_google # Example db functions
@@ -56,8 +57,40 @@ class ConfigWrapper:
 #     logger.info(f"Login attempt for {form_data.username} - placeholder")
 #     raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Login endpoint not implemented")
 
+# --- Admin Login ---
+class AdminLoginRequest(BaseModel):
+    username: str
+    password: str
 
-# Google OAuth login
+@router.post("/admin/login", summary="Admin login with username and password")
+async def admin_login(form_data: AdminLoginRequest):
+    admin_username_env = os.getenv("ADMIN_USERNAME")
+    admin_password_env = os.getenv("ADMIN_PASSWORD")
+
+    if not admin_username_env or not admin_password_env:
+        logger.error("Admin credentials (ADMIN_USERNAME, ADMIN_PASSWORD) not set in .env file.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Admin authentication is not configured on the server.",
+        )
+
+    if form_data.username == admin_username_env and form_data.password == admin_password_env:
+        # Credentials are correct, create an admin token
+        # The 'sub' can be the admin username or a generic admin identifier
+        # Add an 'is_admin': True claim to distinguish this token
+        token_data = {"sub": form_data.username, "is_admin": True}
+        access_token = auth_handler_instance.create_access_token(data=token_data)
+        logger.info(f"Admin user '{form_data.username}' logged in successfully.")
+        return {"access_token": access_token, "token_type": "bearer"}
+    else:
+        logger.warning(f"Failed admin login attempt for username: {form_data.username}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect admin username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+# --- Google OAuth login ---
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI") # This should match the one in your Google Cloud Console

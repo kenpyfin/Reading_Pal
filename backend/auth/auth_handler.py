@@ -16,8 +16,8 @@ JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 60 * 24 * 7)) # 7 days
 
 if SECRET_KEY == "a_very_secret_key_that_should_be_changed_in_production":
-    print("WARNING: auth_handler.py: SECRET_KEY is using its default insecure value. "
-          "Please generate a strong, unique key and set it in your .env file for production environments.")
+    logger.warning("auth_handler.py: SECRET_KEY is using its default insecure value. "
+                   "Please generate a strong, unique key and set it in your .env file for production environments.")
 
 
 class AuthHandler:
