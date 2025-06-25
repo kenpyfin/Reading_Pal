@@ -71,11 +71,16 @@ function UserManagementPage() {
     fetchStats();
   }, [fetchUsers, fetchStats]);
 
-  const handleDeleteUser = async (userId, userEmail) => {
-    if (!window.confirm(`Are you sure you want to delete the user "${userEmail || userId}"? This action cannot be undone.`)) {
+  const handleDeleteUser = async (googleIdToDelete, userEmail) => { // Parameter renamed for clarity
+    if (!googleIdToDelete) {
+      alert("Error: User Google ID is missing. Cannot proceed with deletion.");
+      console.error("handleDeleteUser was called with an undefined or invalid Google ID:", googleIdToDelete);
       return;
     }
-    setDeletingId(userId);
+    if (!window.confirm(`Are you sure you want to delete the user "${userEmail || googleIdToDelete}"? This action cannot be undone.`)) {
+      return;
+    }
+    setDeletingId(googleIdToDelete); // Track deletion by google_id
     setError(null);
     const token = localStorage.getItem('authToken');
     if (!token) {
