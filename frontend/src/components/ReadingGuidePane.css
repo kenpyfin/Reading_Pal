@@ -112,3 +112,68 @@
     font-size: 1em; /* Slightly larger button text on mobile for touch */
   }
 }
+
+/* Styles for Document Structure Section */
+.document-structure-section {
+  margin-bottom: 15px;
+  padding: 10px 15px; /* Match other sections padding */
+  border-bottom: 1px solid #e0e0e0; /* Match other separators */
+  flex-shrink: 0; /* Prevent shrinking */
+}
+
+.document-structure-section h4 {
+  margin-top: 0;
+  margin-bottom: 8px;
+  font-size: 1em; /* Consistent with other subheadings */
+  color: #333;
+}
+
+.document-structure-list {
+  list-style-type: none;
+  padding-left: 0;
+  margin: 0;
+  max-height: 200px; /* Adjust as needed, or make it dynamic */
+  overflow-y: auto;
+  font-size: 0.9em;
+}
+
+.structure-item {
+  padding: 5px 8px; /* Slightly more padding for touch/click */
+  cursor: pointer;
+  border-radius: 3px;
+  transition: background-color 0.2s ease-in-out, color 0.2s ease-in-out;
+  white-space: nowrap; /* Prevent text wrapping for single line items */
+  overflow: hidden;
+  text-overflow: ellipsis; /* Add ellipsis for very long headings */
+}
+
+.structure-item:hover,
+.structure-item:focus {
+  background-color: #e9ecef; /* Lighter hover for better text visibility */
+  color: #0056b3; /* Highlight color on hover/focus */
+  outline: none;
+}
+
+/* Styling for different heading levels */
+.structure-item.level-1 {
+  font-weight: 600; /* Slightly bolder for top level */
+  /* padding-left is handled by inline style in JS */
+}
+
+.structure-item.level-2 {
+  /* font-weight: 500; */
+  /* padding-left is handled by inline style in JS */
+}
+
+.structure-item.level-3 {
+  color: #495057; /* Slightly muted color for deeper levels */
+  /* padding-left is handled by inline style in JS */
+}
+
+/* Add more levels if necessary */
+.structure-item.level-4,
+.structure-item.level-5,
+.structure-item.level-6 {
+  color: #6c757d;
+  font-size: 0.95em; /* Smaller font for very deep levels */
+}
