@@ -119,22 +119,61 @@
   padding: 10px 15px; /* Match other sections padding */
   border-bottom: 1px solid #e0e0e0; /* Match other separators */
   flex-shrink: 0; /* Prevent shrinking */
+  display: flex; /* Added for flex layout */
+  flex-direction: column; /* Stack header and list vertically */
+  min-height: 0; /* Important for flex children with overflow */
+}
+
+.document-structure-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px; /* Keep existing margin-bottom for h4 */
 }
 
 .document-structure-section h4 {
   margin-top: 0;
-  margin-bottom: 8px;
+  margin-bottom: 0; /* Adjusted as margin-bottom is on header now */
   font-size: 1em; /* Consistent with other subheadings */
   color: #333;
+}
+
+.structure-controls {
+  display: flex;
+  align-items: center;
+}
+
+.structure-resize-button {
+  background-color: #e9ecef;
+  border: 1px solid #ced4da;
+  border-radius: .2rem;
+  padding: 1px 6px; /* Smaller padding */
+  margin-left: 5px;
+  cursor: pointer;
+  font-size: 1em; /* Match h4 font size or adjust as needed */
+  line-height: 1.2;
+  color: #495057;
+}
+
+.structure-resize-button:hover {
+  background-color: #dee2e6;
+  border-color: #adb5bd;
+}
+
+.structure-resize-button:active {
+  background-color: #ced4da;
 }
 
 .document-structure-list {
   list-style-type: none;
   padding-left: 0;
   margin: 0;
-  max-height: 200px; /* Adjust as needed, or make it dynamic */
+  /* max-height: 200px; REMOVED - Height is now dynamic via inline style */
   overflow-y: auto;
   font-size: 0.9em;
+  border: 1px solid #e0e0e0; /* Optional: add a border to the list itself */
+  border-radius: 3px; /* Optional: rounded corners */
+  /* transition: height 0.2s ease-in-out; */ /* Optional: for smooth resize animation */
 }
 
 .structure-item {
