@@ -331,34 +331,30 @@ async def get_all_users() -> List[Dict[str, Any]]:
         logger.error(f"Error fetching all users: {e}", exc_info=True)
         return []
 
-async def delete_user_by_id(user_id: str) -> bool:
-    """Deletes a user from the database by their MongoDB ObjectId string."""
+async def delete_user_by_google_id(google_id_to_delete: str) -> bool:
+    """Deletes a user from the database by their google_id string."""
     database = get_database()
     if database is None:
-        logger.error("Database not initialized for delete_user_by_id.")
+        logger.error("Database not initialized for delete_user_by_google_id.")
+        return False
+    if not google_id_to_delete: # Ensure google_id is not empty or None
+        logger.warning("Attempted to delete user with empty or null google_id.")
         return False
     try:
-        if not ObjectId.is_valid(user_id):
-            logger.warning(f"Invalid user ID format for deletion: {user_id}")
-            return False
-        obj_id = ObjectId(user_id)
-        
+        # google_id is a string, no ObjectId conversion needed.
         # Optional: Check if the user being deleted is the admin user from .env
         # This might be complex if admin is not stored as a regular user.
-        # For now, we allow deletion of any user by ID if the requester is admin.
+        # For now, we allow deletion of any user by google_id if the requester is admin.
 
-        result = await database.users.delete_one({"_id": obj_id})
+        result = await database.users.delete_one({"google_id": google_id_to_delete})
         if result.deleted_count > 0:
-            logger.info(f"User with ID {user_id} deleted successfully.")
+            logger.info(f"User with google_id {google_id_to_delete} deleted successfully.")
             return True
         else:
-            logger.warning(f"User with ID {user_id} not found for deletion.")
+            logger.warning(f"User with google_id {google_id_to_delete} not found for deletion.")
             return False
-    except InvalidId:
-        logger.error(f"Invalid user ID format (InvalidId exception): {user_id}")
-        return False
     except Exception as e:
-        logger.error(f"Error deleting user {user_id}: {e}", exc_info=True)
+        logger.error(f"Error deleting user with google_id {google_id_to_delete}: {e}", exc_info=True)
         return False
 
 async def get_total_books_count() -> int:

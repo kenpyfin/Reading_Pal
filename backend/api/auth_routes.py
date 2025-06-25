@@ -11,7 +11,7 @@ from typing import List, Dict, Any # Import List for response model
 from backend.auth.auth_handler import auth_handler_instance, ACCESS_TOKEN_EXPIRE_MINUTES, get_current_admin_user # For JWT creation/validation and admin check
 from backend.db.mongodb import (
     get_user_by_google_id, create_or_update_user_from_google,
-    get_all_users, delete_user_by_id,
+    get_all_users, delete_user_by_google_id, # Changed from delete_user_by_id
     get_total_books_count, get_total_notes_count,
     get_book_count_for_user, get_note_count_for_user # Import per-user count functions
 )
@@ -266,28 +266,27 @@ async def list_users_admin(current_admin: Dict[str, Any] = Depends(get_current_a
     return users_with_counts
 
 
-@router.delete("/admin/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete a user (Admin only)")
-async def delete_user_admin(user_id: str, current_admin: Dict[str, Any] = Depends(get_current_admin_user)):
+@router.delete("/admin/users/{google_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete a user by Google ID (Admin only)")
+async def delete_user_admin(google_id: str, current_admin: Dict[str, Any] = Depends(get_current_admin_user)):
     """
-    Deletes a user by their ID. Requires admin privileges.
+    Deletes a user by their Google ID. Requires admin privileges.
     """
-    logger.info(f"Admin user '{current_admin.get('sub')}' attempting to delete user with ID: {user_id}.")
+    logger.info(f"Admin user '{current_admin.get('sub')}' attempting to delete user with Google ID: {google_id}.")
     
-    # Prevent admin from deleting themselves if their ID matches the one being deleted
-    # This assumes the admin's JWT 'sub' or a 'user_id' claim matches the user_id in the DB.
-    # If admin logs in with username/password and isn't a regular user, this check might not apply directly.
-    # For now, we'll assume admin might be a regular user with an admin flag.
-    # A more robust check would be to ensure the admin user from .env isn't deleted if it has a DB entry.
-    
-    # Example: if current_admin.get("user_id_from_db_if_admin_is_a_user") == user_id:
-    #    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Admin cannot delete themselves.")
+    # Optional: Add a check to prevent the admin from deleting a user account
+    # associated with their own admin login if the admin user is also a regular Google user.
+    # This would require comparing `google_id` with a claim in `current_admin` if it exists.
+    # For example, if admin's own google_id is stored in their JWT:
+    # if current_admin.get("google_id_claim") == google_id:
+    #     logger.warning(f"Admin user '{current_admin.get('sub')}' attempted to delete their own Google-linked account.")
+    #     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Admin cannot delete their own Google-linked account via this endpoint.")
 
-    deleted = await delete_user_by_id(user_id)
+    deleted = await delete_user_by_google_id(google_id)
     if not deleted:
-        logger.warning(f"Failed to delete user with ID {user_id}. User not found or delete operation failed.")
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"User with ID {user_id} not found or could not be deleted.")
+        logger.warning(f"Failed to delete user with Google ID {google_id}. User not found or delete operation failed.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"User with Google ID {google_id} not found or could not be deleted.")
     
-    logger.info(f"User with ID {user_id} deleted successfully by admin '{current_admin.get('sub')}'.")
+    logger.info(f"User with Google ID {google_id} deleted successfully by admin '{current_admin.get('sub')}'.")
     return None # Returns 204 No Content on success
 
 # Add more authentication routes here (e.g., register, logout, password reset)

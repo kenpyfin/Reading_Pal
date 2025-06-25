@@ -85,7 +85,7 @@ function UserManagementPage() {
     }
 
     try {
-      const response = await fetch(`/api/auth/admin/users/${userId}`, {
+      const response = await fetch(`/api/auth/admin/users/${googleIdToDelete}`, { // Use googleIdToDelete in URL
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -95,22 +95,22 @@ function UserManagementPage() {
         // For 204 No Content, response.json() will fail. Check status first.
         if (response.status === 204) {
           // Success
-          setUsers(prevUsers => prevUsers.filter(user => user.id !== userId));
-          alert(`User "${userEmail || userId}" deleted successfully.`);
+          setUsers(prevUsers => prevUsers.filter(user => user.google_id !== googleIdToDelete)); // Filter by google_id
+          alert(`User "${userEmail || googleIdToDelete}" deleted successfully.`);
         } else {
           const errorData = await response.json();
           throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
         }
       } else {
          // This case handles 204 No Content correctly as well if response.ok is true for it
-        setUsers(prevUsers => prevUsers.filter(user => user.id !== userId));
-        alert(`User "${userEmail || userId}" deleted successfully.`);
+        setUsers(prevUsers => prevUsers.filter(user => user.google_id !== googleIdToDelete)); // Filter by google_id
+        alert(`User "${userEmail || googleIdToDelete}" deleted successfully.`);
       }
     } catch (err) {
       setError(err.message || "Failed to delete user.");
       alert(`Error deleting user: ${err.message}`);
     } finally {
-      setDeletingId(null);
+      setDeletingId(null); // Clear deletingId (which was google_id)
     }
   };
 
@@ -172,11 +172,11 @@ function UserManagementPage() {
                 <td>{new Date(user.created_at).toLocaleString()}</td>
                 <td>
                   <button
-                    onClick={() => handleDeleteUser(user.id, user.email)}
-                    disabled={deletingId === user.id}
+                    onClick={() => handleDeleteUser(user.google_id, user.email)} // Pass user.google_id
+                    disabled={deletingId === user.google_id || !user.google_id} // Disable if deleting or no google_id
                     className="delete-button"
                   >
-                    {deletingId === user.id ? 'Deleting...' : 'Delete'}
+                    {deletingId === user.google_id ? 'Deleting...' : 'Delete'}
                   </button>
                 </td>
               </tr>
