@@ -63,3 +63,14 @@
   padding: 2px; /* Optional: if logo needs a bit of spacing from its background */
   border-radius: 50%; /* Optional: if you want a circular background for the logo */
 }
+
+.login-error-message {
+  background-color: #f8d7da; /* Light red background */
+  color: #721c24; /* Dark red text */
+  padding: 10px 15px;
+  border: 1px solid #f5c6cb; /* Reddish border */
+  border-radius: 4px;
+  margin-bottom: 20px; /* Space below the message */
+  font-size: 14px;
+  text-align: center;
+}
