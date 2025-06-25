@@ -1757,6 +1757,7 @@ function BookView() {
           ref={readingGuidePaneAreaRef} // Add ref
           style={{
             flexBasis: readingGuidePaneFlexBasis,
+            flexShrink: 0, // Prevent this panel from shrinking when window resizes
             height: '100%',
             display: 'flex',
             flexDirection: 'column',
