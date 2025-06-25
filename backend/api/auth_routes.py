@@ -10,9 +10,10 @@ from typing import List, Dict, Any # Import List for response model
 
 from backend.auth.auth_handler import auth_handler_instance, ACCESS_TOKEN_EXPIRE_MINUTES, get_current_admin_user # For JWT creation/validation and admin check
 from backend.db.mongodb import (
-    get_user_by_google_id, create_or_update_user_from_google, 
+    get_user_by_google_id, create_or_update_user_from_google,
     get_all_users, delete_user_by_id,
-    get_total_books_count, get_total_notes_count # Import new count functions
+    get_total_books_count, get_total_notes_count,
+    get_book_count_for_user, get_note_count_for_user # Import per-user count functions
 )
 from backend.models.user import UserCreate, User # Pydantic models
 # from backend.core.config import settings # If you re-introduce settings
@@ -249,11 +250,20 @@ async def list_users_admin(current_admin: Dict[str, Any] = Depends(get_current_a
     Retrieves a list of all users. Requires admin privileges.
     """
     logger.info(f"Admin user '{current_admin.get('sub')}' requesting to list all users.")
-    users_data = await get_all_users()
-    # Convert MongoDB documents to Pydantic User models
-    # This ensures that only fields defined in User model are returned
-    # and _id is correctly aliased to id and serialized.
-    return [User.model_validate(user) for user in users_data]
+    users_db_data = await get_all_users()
+    
+    users_with_counts = []
+    for user_doc in users_db_data:
+        user_id_str = str(user_doc["_id"]) # User's MongoDB ObjectId as string
+        
+        book_count = await get_book_count_for_user(user_id_str)
+        note_count = await get_note_count_for_user(user_id_str)
+        
+        # Add counts to the user document before validation
+        user_doc_with_counts = {**user_doc, "book_count": book_count, "note_count": note_count}
+        users_with_counts.append(User.model_validate(user_doc_with_counts))
+        
+    return users_with_counts
 
 
 @router.delete("/admin/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete a user (Admin only)")

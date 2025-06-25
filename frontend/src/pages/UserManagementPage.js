@@ -153,6 +153,8 @@ function UserManagementPage() {
               <th>Full Name</th>
               <th>Google ID</th>
               <th>Active</th>
+              <th>Book Count</th>
+              <th>Note Count</th>
               <th>Created At</th>
               <th>Actions</th>
             </tr>
@@ -165,6 +167,8 @@ function UserManagementPage() {
                 <td>{user.full_name || 'N/A'}</td>
                 <td>{user.google_id || 'N/A'}</td>
                 <td>{user.is_active ? 'Yes' : 'No'}</td>
+                <td>{user.book_count !== undefined ? user.book_count : 'N/A'}</td>
+                <td>{user.note_count !== undefined ? user.note_count : 'N/A'}</td>
                 <td>{new Date(user.created_at).toLocaleString()}</td>
                 <td>
                   <button

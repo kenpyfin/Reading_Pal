@@ -389,6 +389,38 @@ async def get_total_notes_count() -> int:
         logger.error(f"Error counting notes: {e}", exc_info=True)
         return 0
 
+async def get_book_count_for_user(user_id: str) -> int:
+    """Counts books for a specific user_id."""
+    database = get_database()
+    if database is None:
+        logger.error(f"Database not initialized for get_book_count_for_user (user_id: {user_id}).")
+        return 0
+    try:
+        # Ensure user_id is a string, as it's stored that way in the books collection.
+        # The user_id in the books collection corresponds to the string representation 
+        # of the User's _id (ObjectId).
+        count = await database.books.count_documents({"user_id": str(user_id)})
+        logger.debug(f"Book count for user {user_id}: {count}")
+        return count
+    except Exception as e:
+        logger.error(f"Error counting books for user {user_id}: {e}", exc_info=True)
+        return 0
+
+async def get_note_count_for_user(user_id: str) -> int:
+    """Counts notes for a specific user_id."""
+    database = get_database()
+    if database is None:
+        logger.error(f"Database not initialized for get_note_count_for_user (user_id: {user_id}).")
+        return 0
+    try:
+        # Ensure user_id is a string. Notes store user_id as string.
+        count = await database.notes.count_documents({"user_id": str(user_id)})
+        logger.debug(f"Note count for user {user_id}: {count}")
+        return count
+    except Exception as e:
+        logger.error(f"Error counting notes for user {user_id}: {e}", exc_info=True)
+        return 0
+
 # --- Keep Note Database Operations ---
 # ... (rest of the note functions remain unchanged)
 async def save_note(note_data: dict):
