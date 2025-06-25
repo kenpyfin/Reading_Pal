@@ -9,7 +9,11 @@ from pydantic import BaseModel # Import BaseModel for request body
 from typing import List, Dict, Any # Import List for response model
 
 from backend.auth.auth_handler import auth_handler_instance, ACCESS_TOKEN_EXPIRE_MINUTES, get_current_admin_user # For JWT creation/validation and admin check
-from backend.db.mongodb import get_user_by_google_id, create_or_update_user_from_google, get_all_users, delete_user_by_id # DB functions
+from backend.db.mongodb import (
+    get_user_by_google_id, create_or_update_user_from_google, 
+    get_all_users, delete_user_by_id,
+    get_total_books_count, get_total_notes_count # Import new count functions
+)
 from backend.models.user import UserCreate, User # Pydantic models
 # from backend.core.config import settings # If you re-introduce settings
 
@@ -211,6 +215,33 @@ async def auth_via_google(request: Request):
 
 
 # --- Admin User Management Endpoints ---
+
+class AdminStats(BaseModel):
+    total_users: int
+    total_books: int
+    total_notes: int
+
+@router.get("/admin/stats", response_model=AdminStats, summary="Get application statistics (Admin only)")
+async def get_admin_stats(current_admin: Dict[str, Any] = Depends(get_current_admin_user)):
+    """
+    Retrieves overall statistics like total users, books, and notes.
+    Requires admin privileges.
+    """
+    logger.info(f"Admin user '{current_admin.get('sub')}' requesting application stats.")
+    
+    # Fetching all users to get the count.
+    # If performance becomes an issue for many users, add a dedicated count function for users.
+    users_data = await get_all_users() 
+    total_users = len(users_data)
+    
+    total_books = await get_total_books_count()
+    total_notes = await get_total_notes_count()
+    
+    return AdminStats(
+        total_users=total_users,
+        total_books=total_books,
+        total_notes=total_notes
+    )
 
 @router.get("/admin/users", response_model=List[User], summary="List all users (Admin only)")
 async def list_users_admin(current_admin: Dict[str, Any] = Depends(get_current_admin_user)):

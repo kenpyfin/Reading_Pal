@@ -361,6 +361,34 @@ async def delete_user_by_id(user_id: str) -> bool:
         logger.error(f"Error deleting user {user_id}: {e}", exc_info=True)
         return False
 
+async def get_total_books_count() -> int:
+    """Counts all documents in the books collection."""
+    database = get_database()
+    if database is None:
+        logger.error("Database not initialized for get_total_books_count.")
+        return 0
+    try:
+        count = await database.books.count_documents({})
+        logger.info(f"Total books count: {count}")
+        return count
+    except Exception as e:
+        logger.error(f"Error counting books: {e}", exc_info=True)
+        return 0
+
+async def get_total_notes_count() -> int:
+    """Counts all documents in the notes collection."""
+    database = get_database()
+    if database is None:
+        logger.error("Database not initialized for get_total_notes_count.")
+        return 0
+    try:
+        count = await database.notes.count_documents({})
+        logger.info(f"Total notes count: {count}")
+        return count
+    except Exception as e:
+        logger.error(f"Error counting notes: {e}", exc_info=True)
+        return 0
+
 # --- Keep Note Database Operations ---
 # ... (rest of the note functions remain unchanged)
 async def save_note(note_data: dict):

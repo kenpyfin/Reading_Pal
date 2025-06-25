@@ -3,17 +3,19 @@ import './UserManagementPage.css'; // We'll create this CSS file
 
 function UserManagementPage() {
   const [users, setUsers] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [stats, setStats] = useState({ total_users: 0, total_books: 0, total_notes: 0 });
+  const [loadingUsers, setLoadingUsers] = useState(true);
+  const [loadingStats, setLoadingStats] = useState(true);
   const [error, setError] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
 
   const fetchUsers = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+    setLoadingUsers(true);
+    // setError(null); // Keep error state for overall page, or separate for users/stats
     const token = localStorage.getItem('authToken');
     if (!token) {
       setError("Authentication token not found. Please log in.");
-      setLoading(false);
+      setLoadingUsers(false);
       return;
     }
 
@@ -30,15 +32,44 @@ function UserManagementPage() {
       const data = await response.json();
       setUsers(data);
     } catch (err) {
-      setError(err.message || "Failed to fetch users.");
+      setError(prevError => prevError ? `${prevError}\nFailed to fetch users: ${err.message}` : `Failed to fetch users: ${err.message}`);
     } finally {
-      setLoading(false);
+      setLoadingUsers(false);
     }
   }, []);
 
+  const fetchStats = useCallback(async () => {
+    setLoadingStats(true);
+    const token = localStorage.getItem('authToken');
+    if (!token) {
+      // Error already handled by fetchUsers or will be shown globally
+      setLoadingStats(false);
+      return;
+    }
+    try {
+      const response = await fetch('/api/auth/admin/stats', {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
+      }
+      const data = await response.json();
+      setStats(data);
+    } catch (err) {
+      setError(prevError => prevError ? `${prevError}\nFailed to fetch stats: ${err.message}` : `Failed to fetch stats: ${err.message}`);
+    } finally {
+      setLoadingStats(false);
+    }
+  }, []);
+
+
   useEffect(() => {
     fetchUsers();
-  }, [fetchUsers]);
+    fetchStats();
+  }, [fetchUsers, fetchStats]);
 
   const handleDeleteUser = async (userId, userEmail) => {
     if (!window.confirm(`Are you sure you want to delete the user "${userEmail || userId}"? This action cannot be undone.`)) {
@@ -83,18 +114,35 @@ function UserManagementPage() {
     }
   };
 
-  if (loading && users.length === 0) { // Show loading only on initial load
-    return <div className="user-management-container"><p>Loading users...</p></div>;
-  }
-
-  if (error) {
+  if (error) { // Display general error first
     return <div className="user-management-container"><p className="error-message">Error: {error}</p></div>;
+  }
+  
+  if ((loadingUsers && users.length === 0) || loadingStats) {
+    return <div className="user-management-container"><p>Loading dashboard data...</p></div>;
   }
 
   return (
     <div className="user-management-container">
-      <h1>User Management</h1>
-      {users.length === 0 && !loading ? (
+      <h1>Admin Dashboard</h1>
+
+      <div className="stats-container">
+        <div className="stat-card">
+          <h2>Total Users</h2>
+          <p>{stats.total_users}</p>
+        </div>
+        <div className="stat-card">
+          <h2>Total Books</h2>
+          <p>{stats.total_books}</p>
+        </div>
+        <div className="stat-card">
+          <h2>Total Notes</h2>
+          <p>{stats.total_notes}</p>
+        </div>
+      </div>
+
+      <h2>User Management</h2>
+      {users.length === 0 && !loadingUsers ? (
         <p>No users found.</p>
       ) : (
         <table className="users-table">

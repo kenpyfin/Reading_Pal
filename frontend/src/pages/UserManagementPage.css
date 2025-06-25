@@ -76,3 +76,44 @@
     font-size: 1.2em;
     color: #555;
 }
+
+/* Stats Container Styling */
+.stats-container {
+  display: flex;
+  justify-content: space-around;
+  margin-bottom: 40px;
+  gap: 20px; /* Adds space between cards */
+  flex-wrap: wrap; /* Allows cards to wrap on smaller screens */
+}
+
+.stat-card {
+  background-color: #fff;
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  text-align: center;
+  flex-basis: 200px; /* Starting basis for card width */
+  flex-grow: 1; /* Allows cards to grow and fill space */
+  min-width: 180px; /* Minimum width before wrapping */
+}
+
+.stat-card h2 {
+  margin-top: 0;
+  margin-bottom: 10px;
+  font-size: 1.2em;
+  color: #555;
+}
+
+.stat-card p {
+  font-size: 2em;
+  font-weight: bold;
+  color: #007bff; /* Blue color for numbers */
+  margin: 0;
+}
+
+.user-management-container h2 { /* Style for "User Management" heading */
+  text-align: center;
+  margin-top: 40px; /* Add some space above the table heading */
+  margin-bottom: 20px;
+  color: #333;
+}
