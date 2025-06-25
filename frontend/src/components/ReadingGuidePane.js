@@ -11,6 +11,8 @@ const ReadingGuidePane = ({
   isVisible,
   hasGuideForCurrentPage, // New prop: boolean to indicate if a guide exists for the current page
   isGenerating, // New prop: boolean to indicate if generation is in progress (for button text/state)
+  documentStructure, // New prop: array of {text, level, offset}
+  onStructureItemClick, // New prop: function to handle structure item click
 }) => {
   if (!isVisible) {
     return null;
@@ -33,6 +35,30 @@ const ReadingGuidePane = ({
           </button>
         )}
       </div>
+
+      {/* Document Structure Section */}
+      {documentStructure && documentStructure.length > 0 && (
+        <div className="document-structure-section">
+          <h4>Document Structure</h4>
+          <ul className="document-structure-list">
+            {documentStructure.map((item, index) => (
+              <li
+                key={index}
+                className={`structure-item level-${item.level}`}
+                style={{ paddingLeft: `${(item.level - 1) * 15}px` }} // Indent based on level
+                onClick={() => onStructureItemClick && onStructureItemClick(item.offset)}
+                role="button"
+                tabIndex={0} // Make it focusable
+                onKeyPress={(e) => { if (e.key === 'Enter' || e.key === ' ') onStructureItemClick && onStructureItemClick(item.offset);}} // Keyboard accessible
+                title={`Go to: ${item.text}`} // Add title for better UX
+              >
+                {item.text}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <div className="reading-guide-actions">
         <button
           onClick={handleGenerateClick}

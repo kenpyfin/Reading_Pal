@@ -223,6 +223,34 @@ function calculatePageBoundaries(markdown, targetCharsPerPage) {
   return boundaries;
 }
 
+// --- NEW Helper function to extract document structure (headings) ---
+function extractDocumentStructure(markdownContent) {
+  if (!markdownContent || typeof markdownContent !== 'string') {
+    logger.warn("[extractDocumentStructure] Markdown content is invalid or empty.");
+    return [];
+  }
+  const structure = [];
+  const lines = markdownContent.split('\n');
+  let currentOffset = 0;
+
+  for (const line of lines) {
+    const match = line.match(/^(#+)\s+(.*)/); // Matches lines starting with #, ##, ### etc.
+    if (match) {
+      const level = match[1].length; // Number of '#' characters
+      const text = match[2].trim();   // Text of the heading
+      structure.push({
+        text: text,
+        level: level,
+        offset: currentOffset, // Offset of the start of this line
+      });
+    }
+    currentOffset += line.length + 1; // Add line length + 1 for the newline character
+  }
+  logger.info(`[extractDocumentStructure] Extracted ${structure.length} headings.`);
+  return structure;
+}
+// --- END NEW Helper function ---
+
 function BookView() {
   const { bookId } = useParams();
   const [bookData, setBookData] = useState(null);
@@ -294,6 +322,10 @@ function BookView() {
   const [hasGuideForCurrentPage, setHasGuideForCurrentPage] = useState(false);
   const [isGeneratingGuide, setIsGeneratingGuide] = useState(false);
   // --- END NEW State for Page-Specific Reading Guide ---
+
+  // --- NEW State for Document Structure ---
+  const [documentStructure, setDocumentStructure] = useState([]);
+  // --- END NEW State for Document Structure ---
 
   // State and Refs for Reading Guide Pane Resizing
   const [readingGuidePaneFlexBasis, setReadingGuidePaneFlexBasis] = useState('25%'); // Initial width
@@ -483,6 +515,7 @@ function BookView() {
       setHasGuideForCurrentPage(false);
       setShowReadingGuidePane(false); // Close guide pane when book changes
     }
+    setDocumentStructure([]); // Clear structure on bookId change
   }, [bookId]);
 
 
@@ -573,6 +606,17 @@ function BookView() {
       setIsGeneratingGuide(false);
     }
   };
+
+  // --- NEW: Handler for clicking a document structure item ---
+  const handleStructureItemClick = (offset) => {
+    logger.debug(`[BookView - handleStructureItemClick] Clicked structure item with offset: ${offset}`);
+    setScrollToGlobalOffset(offset);
+    // Optional: Close the reading guide pane if it's in overlay mode on mobile after click
+    if (isMobileView && showReadingGuidePane) {
+      // setShowReadingGuidePane(false); // Consider if this is desired UX
+    }
+  };
+  // --- END NEW Handler ---
 
   // Effect to fetch page guide when currentPage or bookId changes, if pane is visible
   useEffect(() => {
@@ -1773,6 +1817,8 @@ function BookView() {
             isVisible={showReadingGuidePane}
             hasGuideForCurrentPage={hasGuideForCurrentPage}
             isGenerating={isGeneratingGuide}
+            documentStructure={documentStructure} // Pass structure
+            onStructureItemClick={handleStructureItemClick} // Pass click handler
             // No onClose for desktop version
           />
         </div>
@@ -1799,6 +1845,8 @@ function BookView() {
             isVisible={showReadingGuidePane}
             hasGuideForCurrentPage={hasGuideForCurrentPage}
             isGenerating={isGeneratingGuide}
+            documentStructure={documentStructure} // Pass structure
+            onStructureItemClick={handleStructureItemClick} // Pass click handler
           />
         </div>
       )}
