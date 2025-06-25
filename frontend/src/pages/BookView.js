@@ -393,11 +393,20 @@ function BookView() {
           // setCurrentPage(1); // Ensure currentPage is reset to 1 if no saved position
           // No need to explicitly set to 1 here if fetchBook resets it later or if default is 1
         }
+        // --- NEW: Extract document structure after full content is loaded ---
+        if (fullMarkdownContent.current) {
+          const structure = extractDocumentStructure(fullMarkdownContent.current);
+          setDocumentStructure(structure);
+        } else {
+          setDocumentStructure([]);
+        }
+        // --- END NEW ---
 
       } else {
         fullMarkdownContent.current = '';
         setPageBoundaries([]);
         setTotalPages(1);
+        setDocumentStructure([]); // Clear structure if no content
         // setCurrentPage(1);
       }
     } catch (err) {
