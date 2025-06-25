@@ -1,7 +1,18 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import './LoginPage.css'; // We'll create this CSS file next
 
 function LoginPage() {
+  const [errorMessage, setErrorMessage] = useState('');
+  const location = useLocation();
+
+  useEffect(() => {
+    const queryParams = new URLSearchParams(location.search);
+    if (queryParams.get('error') === 'inactive_user') {
+      setErrorMessage('Your account is inactive. Please contact an administrator.');
+    }
+  }, [location]);
+
   const handleLogin = () => {
     // Redirect to the backend Google login endpoint
     // Ensure this matches the BACKEND_URL if your frontend and backend are on different ports/domains during development
@@ -16,6 +27,7 @@ function LoginPage() {
       <div className="login-box">
         <h1>Welcome to Reading Pal</h1>
         <p>Please sign in to continue.</p>
+        {errorMessage && <p className="login-error-message">{errorMessage}</p>}
         <button onClick={handleLogin} className="google-login-button">
           <img 
             src="https://developers.google.com/identity/images/g-logo.png" 

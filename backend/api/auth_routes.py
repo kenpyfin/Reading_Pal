@@ -11,9 +11,9 @@ from typing import List, Dict, Any # Import List for response model
 from backend.auth.auth_handler import auth_handler_instance, ACCESS_TOKEN_EXPIRE_MINUTES, get_current_admin_user # For JWT creation/validation and admin check
 from backend.db.mongodb import (
     get_user_by_google_id, create_or_update_user_from_google,
-    get_all_users, delete_user_by_google_id, # Changed from delete_user_by_id
+    get_all_users, delete_user_by_google_id, update_user_active_status, # Added update_user_active_status
     get_total_books_count, get_total_notes_count,
-    get_book_count_for_user, get_note_count_for_user # Import per-user count functions
+    get_book_count_for_user, get_note_count_for_user, get_user_by_id # Import get_user_by_id
 )
 from backend.models.user import UserCreate, User # Pydantic models
 # from backend.core.config import settings # If you re-introduce settings
@@ -183,16 +183,32 @@ async def auth_via_google(request: Request):
     
     # create_or_update_user_from_google will find by google_id, or by email (and link google_id),
     # or create a new user. It also updates details if the user is found.
-    user_id = await create_or_update_user_from_google(user_data_from_google)
+    # This function returns the MongoDB _id string of the user.
+    db_user_id_str = await create_or_update_user_from_google(user_data_from_google)
     
-    if not user_id:
+    if not db_user_id_str:
         logger.error(f"Failed to create or update user in database. DB function returned no user_id. Data attempted: {user_data_from_google.model_dump_json(indent=2)}")
         raise HTTPException(status_code=500, detail="Could not create or update user.")
     
-    logger.info(f"User processed successfully (found/created/updated). DB User ID: {user_id}. Proceeding to login.")
+    # After user is created/updated, fetch their full document to check is_active status
+    user_document = await get_user_by_id(db_user_id_str) # Fetch by MongoDB _id string
+    if not user_document:
+        logger.error(f"Failed to retrieve user document for ID {db_user_id_str} after create/update.")
+        raise HTTPException(status_code=500, detail="User processed but could not be retrieved for status check.")
+
+    # The 'is_active' field should exist due to UserCreate model and DB logic. Default to True if somehow missing.
+    if not user_document.get("is_active", True): 
+        logger.warning(f"Login attempt by inactive user: {user_info.email} (Google ID: {user_info.get('sub')}).")
+        frontend_url_for_error = os.getenv("FRONTEND_URL", "http://localhost:3100")
+        # Redirect to login page with an error query parameter
+        error_redirect_url = f"{frontend_url_for_error}/login?error=inactive_user"
+        return RedirectResponse(url=error_redirect_url)
+        
+    logger.info(f"User {user_info.email} (DB ID: {db_user_id_str}) is active. Proceeding to login.")
 
     # Create application token
-    app_token_data = {"sub": user_info.email, "user_id": str(user_id), "name": user_info.get("name")}
+    # Ensure the user_id in the token is the MongoDB _id string
+    app_token_data = {"sub": user_info.email, "user_id": db_user_id_str, "name": user_info.get("name")}
     app_token = auth_handler_instance.create_access_token(data=app_token_data)
     
     # Redirect to frontend with the token
@@ -216,6 +232,9 @@ async def auth_via_google(request: Request):
 
 
 # --- Admin User Management Endpoints ---
+
+class UserStatusUpdatePayload(BaseModel):
+    is_active: bool
 
 class AdminStats(BaseModel):
     total_users: int
@@ -264,6 +283,47 @@ async def list_users_admin(current_admin: Dict[str, Any] = Depends(get_current_a
         users_with_counts.append(User.model_validate(user_doc_with_counts))
         
     return users_with_counts
+
+
+@router.put("/admin/users/{google_id}/status", response_model=User, summary="Update user active status (Admin only)")
+async def update_user_status_admin(google_id: str, payload: UserStatusUpdatePayload, current_admin: Dict[str, Any] = Depends(get_current_admin_user)):
+    """
+    Updates the 'is_active' status of a user by their Google ID.
+    Requires admin privileges.
+    """
+    logger.info(f"Admin user '{current_admin.get('sub')}' attempting to set active status for user with Google ID {google_id} to {payload.is_active}.")
+
+    # Optional: Prevent admin from deactivating their own account if it's a Google-linked admin
+    # This check assumes the admin's JWT 'sub' or a 'user_id' claim matches the user_id in the DB.
+    # If admin logs in with username/password and isn't a regular user, this check might not apply directly.
+    # For now, we'll assume admin might be a regular user with an admin flag.
+    # A more robust check would be to ensure the admin user from .env isn't deleted if it has a DB entry.
+    admin_google_id_claim = current_admin.get("user_id") # Assuming user_id claim in admin token holds their google_id if admin is a google user
+    if admin_google_id_claim == google_id and not payload.is_active:
+         logger.warning(f"Admin user '{current_admin.get('sub')}' attempted to deactivate their own Google-linked account.")
+         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Admin cannot deactivate their own account.")
+
+    updated_successfully = await update_user_active_status(google_id, payload.is_active)
+    if not updated_successfully:
+        # This could mean user not found or DB error
+        logger.warning(f"Failed to update active status for user with Google ID {google_id}.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"User with Google ID {google_id} not found or status could not be updated.")
+
+    # Fetch the updated user to return, including their new status and counts
+    updated_user_doc = await get_user_by_google_id(google_id)
+    if not updated_user_doc:
+        logger.error(f"Failed to retrieve user {google_id} after status update, though update reported success.")
+        # This case should be rare if update_user_active_status returned True and matched_count was > 0
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="User status updated, but failed to retrieve updated user details.")
+
+    user_id_str = str(updated_user_doc["_id"])
+    book_count = await get_book_count_for_user(user_id_str)
+    note_count = await get_note_count_for_user(user_id_str)
+    
+    user_doc_with_counts = {**updated_user_doc, "book_count": book_count, "note_count": note_count}
+    
+    logger.info(f"Active status for user with Google ID {google_id} updated to {payload.is_active} by admin '{current_admin.get('sub')}'.")
+    return User.model_validate(user_doc_with_counts)
 
 
 @router.delete("/admin/users/{google_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete a user by Google ID (Admin only)")

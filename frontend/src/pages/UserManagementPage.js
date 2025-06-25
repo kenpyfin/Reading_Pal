@@ -7,7 +7,8 @@ function UserManagementPage() {
   const [loadingUsers, setLoadingUsers] = useState(true);
   const [loadingStats, setLoadingStats] = useState(true);
   const [error, setError] = useState(null);
-  const [deletingId, setDeletingId] = useState(null);
+  const [deletingId, setDeletingId] = useState(null); // Tracks google_id for deletion
+  const [togglingStatusId, setTogglingStatusId] = useState(null); // Tracks google_id for status toggle
 
   const fetchUsers = useCallback(async () => {
     setLoadingUsers(true);
@@ -119,6 +120,57 @@ function UserManagementPage() {
     }
   };
 
+  const handleToggleUserStatus = async (googleIdToToggle, currentStatus) => {
+    if (!googleIdToToggle) {
+      alert("Error: User Google ID is missing. Cannot proceed with status toggle.");
+      console.error("handleToggleUserStatus was called with an undefined or invalid Google ID:", googleIdToToggle);
+      return;
+    }
+    const newStatus = !currentStatus;
+    const action = newStatus ? "activate" : "deactivate";
+    if (!window.confirm(`Are you sure you want to ${action} this user?`)) {
+      return;
+    }
+
+    setTogglingStatusId(googleIdToToggle);
+    setError(null); // Clear previous errors
+    const token = localStorage.getItem('authToken');
+    if (!token) {
+      setError("Authentication token not found. Please log in.");
+      setTogglingStatusId(null);
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/auth/admin/users/${googleIdToToggle}/status`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ is_active: newStatus }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
+      }
+      
+      const updatedUser = await response.json();
+      // Update the user in the local state
+      setUsers(prevUsers => prevUsers.map(user => 
+        user.google_id === googleIdToToggle ? { ...user, ...updatedUser } : user
+      ));
+      alert(`User successfully ${action}d.`);
+
+    } catch (err) {
+      setError(err.message || `Failed to ${action} user.`);
+      alert(`Error ${action}ing user: ${err.message}`);
+    } finally {
+      setTogglingStatusId(null);
+    }
+  };
+
   if (error) { // Display general error first
     return <div className="user-management-container"><p className="error-message">Error: {error}</p></div>;
   }
@@ -177,11 +229,18 @@ function UserManagementPage() {
                 <td>{new Date(user.created_at).toLocaleString()}</td>
                 <td>
                   <button
-                    onClick={() => handleDeleteUser(user.google_id, user.email)} // Pass user.google_id
-                    disabled={deletingId === user.google_id || !user.google_id} // Disable if deleting or no google_id
+                    onClick={() => handleDeleteUser(user.google_id, user.email)}
+                    disabled={deletingId === user.google_id || togglingStatusId === user.google_id || !user.google_id}
                     className="delete-button"
                   >
                     {deletingId === user.google_id ? 'Deleting...' : 'Delete'}
+                  </button>
+                  <button
+                    onClick={() => handleToggleUserStatus(user.google_id, user.is_active)}
+                    disabled={deletingId === user.google_id || togglingStatusId === user.google_id || !user.google_id}
+                    className={user.is_active ? "deactivate-button" : "activate-button"}
+                  >
+                    {togglingStatusId === user.google_id ? 'Updating...' : (user.is_active ? 'Deactivate' : 'Activate')}
                   </button>
                 </td>
               </tr>

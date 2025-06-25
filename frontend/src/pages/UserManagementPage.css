@@ -117,3 +117,37 @@
   margin-bottom: 20px;
   color: #333;
 }
+
+.activate-button, .deactivate-button {
+  color: white;
+  border: none;
+  padding: 8px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background-color 0.2s ease-in-out;
+  margin-left: 5px; /* Add some space next to the delete button */
+}
+
+.activate-button {
+  background-color: #28a745; /* Green */
+}
+
+.activate-button:hover {
+  background-color: #218838; /* Darker green */
+}
+
+.deactivate-button {
+  background-color: #ffc107; /* Yellow/Orange */
+  color: #212529; /* Dark text for better contrast on yellow */
+}
+
+.deactivate-button:hover {
+  background-color: #e0a800; /* Darker yellow/orange */
+}
+
+.activate-button:disabled, .deactivate-button:disabled {
+  background-color: #6c757d;
+  cursor: not-allowed;
+  color: white;
+}

@@ -357,6 +357,30 @@ async def delete_user_by_google_id(google_id_to_delete: str) -> bool:
         logger.error(f"Error deleting user with google_id {google_id_to_delete}: {e}", exc_info=True)
         return False
 
+async def update_user_active_status(google_id: str, is_active: bool) -> bool:
+    """Updates the is_active status of a user by their google_id."""
+    database = get_database()
+    if database is None:
+        logger.error(f"Database not initialized for update_user_active_status (google_id: {google_id}).")
+        return False
+    if not google_id:
+        logger.warning("Attempted to update active status for user with empty or null google_id.")
+        return False
+    try:
+        result = await database.users.update_one(
+            {"google_id": google_id},
+            {"$set": {"is_active": is_active, "updated_at": datetime.utcnow()}}
+        )
+        if result.matched_count == 0:
+            logger.warning(f"User with google_id {google_id} not found for updating active status.")
+            return False
+        logger.info(f"User with google_id {google_id} active status set to {is_active}. Matched: {result.matched_count}, Modified: {result.modified_count}")
+        # Return True if a document was matched (even if is_active status didn't change, modified_count could be 0 but matched_count would be 1)
+        return True 
+    except Exception as e:
+        logger.error(f"Error updating active status for user with google_id {google_id}: {e}", exc_info=True)
+        return False
+
 async def get_total_books_count() -> int:
     """Counts all documents in the books collection."""
     database = get_database()
