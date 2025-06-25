@@ -32,8 +32,15 @@ function App() {
   useEffect(() => {
     const token = localStorage.getItem('authToken');
     if (token) {
-      setAuthToken(token);
+      setAuthToken(token); // Set the token state
+      const decoded = decodeJwt(token); // Decode it
+      if (decoded && decoded.is_admin) { // Check for admin claim
+        setIsAdmin(true);
+      } else {
+        setIsAdmin(false);
+      }
     }
+    // If no token, isAdmin remains false (its initial state), which is correct.
   }, []);
 
   const handleSetAuthToken = (token) => {
