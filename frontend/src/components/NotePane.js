@@ -9,6 +9,8 @@ const NotePane = ({ // Removed ref from props
   selectedBookText,
   selectedScrollPercentage,
   selectedGlobalCharOffset, // Make sure this prop is received
+  currentPage, // ADDED: Current page number from BookView
+  currentPageContent, // ADDED: Raw markdown content of the current page from BookView
   onNoteClick,
   onNewNoteSaved, // ACCEPT THE NEW PROP
   isMobileContext, // New prop for mobile overlay context
@@ -16,6 +18,7 @@ const NotePane = ({ // Removed ref from props
 }) => {
   const [notes, setNotes] = useState([]); // This state is local to NotePane for display
   const [newNoteContent, setNewNoteContent] = useState('');
+  const [isPageNoteMode, setIsPageNoteMode] = useState(false); // State for page-specific note mode
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -77,14 +80,25 @@ const NotePane = ({ // Removed ref from props
   const handleSaveNote = async () => {
     if (!newNoteContent.trim()) return;
 
-    const noteData = {
+    let noteData = {
       book_id: bookId,
       content: newNoteContent.trim(),
-      source_text: selectedBookText || undefined, // This is the selected plain text
-      scroll_percentage: selectedScrollPercentage !== null && selectedScrollPercentage !== undefined ? parseFloat(selectedScrollPercentage.toFixed(4)) : undefined,
-      global_character_offset: selectedGlobalCharOffset, // This comes from BookView
     };
-    console.log("[NotePane - handleSaveNote] Sending noteData to backend:", noteData);
+
+    if (isPageNoteMode) {
+      noteData.page_number = currentPage;
+      // For page notes, selection-specific fields are typically not set
+      noteData.source_text = `Context: Page ${currentPage}`; // Or undefined, depending on desired behavior
+      noteData.scroll_percentage = undefined;
+      noteData.global_character_offset = undefined;
+    } else {
+      noteData.source_text = selectedBookText || undefined;
+      noteData.scroll_percentage = selectedScrollPercentage !== null && selectedScrollPercentage !== undefined ? parseFloat(selectedScrollPercentage.toFixed(4)) : undefined;
+      noteData.global_character_offset = selectedGlobalCharOffset;
+      // page_number can be undefined if not a page note
+    }
+
+    logger.debug("[NotePane - handleSaveNote] Sending noteData to backend:", noteData); // Use logger
 
 
     try {
@@ -200,7 +214,7 @@ const NotePane = ({ // Removed ref from props
         body: JSON.stringify({
           book_id: bookId,
           question: llmQuestion.trim(),
-          context: selectedBookText || null, 
+          context: isPageNoteMode ? (currentPageContent || null) : (selectedBookText || null),
         }),
       });
 
@@ -255,19 +269,39 @@ const NotePane = ({ // Removed ref from props
       )}
       {!isMobileContext && <h2>Notes &amp; LLM Insights</h2>}
 
-      {/* ADDED: Dedicated area for displaying selected text */}
-      {selectedBookText && (
-        <div className="selected-text-display">
-          <h4>Selected Text from Book:</h4>
-          <blockquote>
-            {selectedBookText}
-          </blockquote>
-          {(selectedScrollPercentage !== null || selectedGlobalCharOffset !== null) && (
-            <p className="location-info">
-              This text is linked to the current location in the book.
-            </p>
-          )}
+      {/* ADDED: Dedicated area for displaying selected text or page context */}
+      <div className="note-context-selection">
+        <label htmlFor="page-note-mode-toggle">
+          <input
+            type="checkbox"
+            id="page-note-mode-toggle"
+            checked={isPageNoteMode}
+            onChange={(e) => setIsPageNoteMode(e.target.checked)}
+          />
+          Note for current page (Page {currentPage || 'N/A'})
+        </label>
+      </div>
+
+      {isPageNoteMode ? (
+        <div className="selected-text-display page-context-display">
+          <h4>Context:</h4>
+          <p>Current Page: {currentPage || 'N/A'}</p>
+          {/* Optionally, you could show a snippet of currentPageContent here, but the request was to show page number */}
         </div>
+      ) : (
+        selectedBookText && (
+          <div className="selected-text-display">
+            <h4>Selected Text from Book:</h4>
+            <blockquote>
+              {selectedBookText}
+            </blockquote>
+            {(selectedScrollPercentage !== null || selectedGlobalCharOffset !== null) && (
+              <p className="location-info">
+                This text is linked to the current location in the book.
+              </p>
+            )}
+          </div>
+        )
       )}
 
       {/* LLM Reading Assistance Section - MOVED HERE */}
@@ -324,7 +358,12 @@ const NotePane = ({ // Removed ref from props
           >
             <div className="note-actions"> {/* Wrapper for note content and delete button */}
                 <div className="note-content-clickable" onClick={() => handleNoteClickInternal(note)}>
-                    {note.source_text && (
+                    {note.page_number && !note.source_text && ( // Display if it's a page note without specific source text
+                        <p className="note-page-context-indicator">
+                            <em>Context: Page {note.page_number}</em>
+                        </p>
+                    )}
+                    {note.source_text && (!note.page_number || (note.page_number && note.source_text !== `Context: Page ${note.page_number}`)) && ( // Display if source_text exists and is not the generic page context
                         <blockquote className="note-source-text">
                             <em>Source: "{note.source_text}"</em>
                         </blockquote>
