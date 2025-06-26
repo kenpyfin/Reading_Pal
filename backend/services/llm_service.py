@@ -305,6 +305,71 @@ class LLMService:
             logger.error(f"Error calling {self.service_name} LLM 'summarize' method: {e}")
             return f"Error generating summary from LLM: {e}"
 
+    async def rewrite_content(self, text: str) -> str:
+        """
+        Rewrites the given text for better formatting and clarity using an LLM.
+        Preserves content and image links.
+        """
+        if not text:
+            return "No text provided to rewrite."
+
+        system_prompt = """You are an expert in Markdown. Your task is to reformat and rewrite the given Markdown text to improve its readability, consistency, and structure, making it clearer and more engaging for a reader.
+Strictly adhere to the following:
+1.  Preserve ALL original information and content. You can rephrase sentences and restructure paragraphs for clarity, but do not add new information or remove existing facts.
+2.  Pay close attention to image links like `![](path/to/image.png)` or `![alt text](path/to/image.png)` and ensure they are preserved EXACTLY as they appear in the input.
+3.  Ensure standard Markdown syntax is used. Correct any non-standard or malformed Markdown.
+4.  Maintain the original heading levels and the overall document structure.
+5.  Do NOT add any conversational text, apologies, or explanations. Output ONLY the rewritten Markdown text.
+6.  If the input is already well-formatted and clear, you can make minimal changes or return it as is.
+
+Rewrite the following markdown:
+"""
+        full_prompt = f"{system_prompt}\n\n{text}"
+        logger.info(f"Sending 'rewrite' prompt to LLM ({self.service_name}/{self.model_name}). Text length: {len(text)}")
+
+        try:
+            if self.service_name == "anthropic" and self.anthropic_client:
+                message = await self.anthropic_client.messages.create(
+                    model=self.model_name,
+                    max_tokens=8192, # Allow more tokens for rewriting full documents
+                    system="You are an expert Markdown editor.",
+                    messages=[{"role": "user", "content": full_prompt}]
+                )
+                response_text = message.content[0].text if message.content else ""
+                return self._remove_think_tags(response_text)
+
+            elif self.service_name == "ollama" and self.ollama_client:
+                response = await self.ollama_client.chat(
+                    model=self.model_name,
+                    messages=[{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': text}]
+                )
+                response_text = response['message']['content'] if response and 'message' in response else ""
+                return self._remove_think_tags(response_text)
+
+            elif self.service_name == "gemini" and self.gemini_model:
+                response = await self.gemini_model.generate_content_async(full_prompt)
+                response_text = response.text if response and response.text else ""
+                return self._remove_think_tags(response_text)
+
+            elif self.service_name == "deepseek" and self.deepseek_config:
+                headers = {"Authorization": f"Bearer {self.deepseek_config['api_key']}", "Content-Type": "application/json"}
+                payload = {"model": self.model_name, "messages": [{"role": "user", "content": full_prompt}], "max_tokens": 8192}
+                from fastapi.concurrency import run_in_threadpool
+                response = await run_in_threadpool(requests.post, self.deepseek_config['base_url'], headers=headers, json=payload, timeout=180)
+                response.raise_for_status()
+                response_data = response.json()
+                response_text = response_data['choices'][0]['message']['content'] if response_data and 'choices' in response_data and len(response_data['choices']) > 0 else ""
+                return self._remove_think_tags(response_text)
+
+            else:
+                error_msg = f"LLM service '{self.service_name}' is configured but client is not initialized or implemented for rewrite."
+                logger.error(error_msg)
+                return f"Error: {error_msg}"
+
+        except Exception as e:
+            logger.error(f"Error calling {self.service_name} LLM 'rewrite_content' method: {e}", exc_info=True)
+            return f"Error rewriting content from LLM: {e}"
+
 
 # Instantiate the service as a singleton
 llm_service = LLMService(
@@ -340,5 +405,13 @@ async def summarize_text(text: str) -> str:
     """
     logger.info(f"Calling LLM service 'summarize' via wrapper with text length: {len(text)}...")
     return await llm_service.summarize(text)
+
+async def rewrite_book_content(text: str) -> str:
+    """
+    Sends text to the configured LLM for rewriting.
+    Calls the async LLMService.rewrite_content method.
+    """
+    logger.info(f"Calling LLM service 'rewrite_content' via wrapper with text length: {len(text)}...")
+    return await llm_service.rewrite_content(text)
 
 # TODO: Add other LLM interaction functions as needed (e.g., extract_keywords)

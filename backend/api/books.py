@@ -787,10 +787,68 @@ async def delete_book_route(book_id: str, current_user_id: str = Depends(get_cur
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-# OLD Full Book Reading Guide - REMOVE OR COMMENT OUT
-# @router.get("/{book_id}/reading-guide", response_model=ReadingGuideResponse)
-# async def get_reading_guide(book_id: str, current_user_id: str = Depends(get_current_user_id)):
-    # ... (entire old implementation) ...
+@router.post("/{book_id}/rewrite", response_model=Book)
+async def rewrite_book_content(book_id: str, current_user_id: str = Depends(get_current_user_id)):
+    """
+    Rewrites the book's markdown content using an LLM for clarity and formatting.
+    This action overwrites the existing markdown file.
+    """
+    logger.info(f"User {current_user_id} requested to rewrite content for book {book_id}")
+
+    # 1. Get book from DB and validate
+    book_data_doc = await get_book(book_id, current_user_id)
+    if not book_data_doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found or not owned by user")
+    
+    book = Book.model_validate(book_data_doc)
+
+    if book.status != 'completed' or not book.markdown_filename:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Book content is not available for rewriting.")
+
+    if not CONTAINER_MARKDOWN_PATH:
+        logger.error("CONTAINER_MARKDOWN_PATH is not set. Cannot read or write markdown file.")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Server storage is not configured.")
+
+    # 2. Read current markdown file
+    markdown_file_path = os.path.join(CONTAINER_MARKDOWN_PATH, book.markdown_filename)
+    logger.info(f"Reading content from {markdown_file_path} for rewriting.")
+    
+    try:
+        def read_file_sync(path):
+            with open(path, 'r', encoding='utf-8') as f:
+                return f.read()
+        current_content = await run_in_threadpool(read_file_sync, markdown_file_path)
+    except FileNotFoundError:
+        logger.error(f"Markdown file not found at {markdown_file_path} for book {book_id}")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Markdown file not found.")
+
+    # 3. Call LLM service to rewrite
+    logger.info(f"Sending content of book {book_id} to LLM service for rewriting.")
+    rewritten_content = await llm_service.rewrite_content(current_content)
+    if not rewritten_content or rewritten_content.startswith("Error:"):
+        logger.error(f"LLM service failed to rewrite content for book {book_id}. Response: {rewritten_content}")
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"LLM service failed to rewrite content. {rewritten_content}")
+    logger.info(f"Received rewritten content for book {book_id}.")
+
+    # 4. Overwrite the markdown file with new content
+    try:
+        def write_file_sync(path, content):
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write(content)
+        await run_in_threadpool(write_file_sync, markdown_file_path, rewritten_content)
+        logger.info(f"Successfully overwrote markdown file at {markdown_file_path} with rewritten content.")
+    except Exception as e:
+        logger.error(f"Failed to write rewritten content to {markdown_file_path}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to save rewritten content.")
+
+    # 5. Update timestamp and return book object with new content
+    now = datetime.utcnow()
+    await update_book(book_id, current_user_id, {"updated_at": now})
+    
+    book.updated_at = now
+    book.markdown_content = rewritten_content
+
+    return book
 
 
 @router.post("/{book_id}/pages/{page_number}/reading-guide", response_model=ReadingGuidePageInDB, response_model_by_alias=False)

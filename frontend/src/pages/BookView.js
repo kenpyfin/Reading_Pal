@@ -261,7 +261,7 @@ function BookView() {
   const bookPaneContainerRef = useRef(null);
   const notePaneContainerRef = useRef(null);
   const isProgrammaticScroll = useRef(false);
-  const fullMarkdownContent = useRef(''); // To store the full markdown
+  const [fullMarkdownContent, setFullMarkdownContent] = useState(''); // To store the full markdown as state
 
   const [selectedBookText, setSelectedBookText] = useState(null);
   const [selectedScrollPercentage, setSelectedScrollPercentage] = useState(null);
@@ -334,6 +334,11 @@ function BookView() {
   // dragStartX is already defined and can be reused if we ensure no overlap in active resizing
   // isResizing is also already defined, might need a separate one or careful management
 
+  // --- NEW State for Content Rewriting ---
+  const [isRewriting, setIsRewriting] = useState(false);
+  const [rewriteError, setRewriteError] = useState(null);
+  // --- END NEW State for Content Rewriting ---
+
   const fetchBook = async () => {
     setLoading(true);
     setError(null);
@@ -365,9 +370,9 @@ function BookView() {
       const data = await response.json();
       setBookData(data);
       if (data && data.markdown_content) {
-        fullMarkdownContent.current = data.markdown_content;
+        setFullMarkdownContent(data.markdown_content);
         // Calculate page boundaries
-        const calculatedBoundaries = calculatePageBoundaries(fullMarkdownContent.current, APPROX_CHARS_PER_PAGE);
+        const calculatedBoundaries = calculatePageBoundaries(data.markdown_content, APPROX_CHARS_PER_PAGE);
         setPageBoundaries(calculatedBoundaries);
         setTotalPages(Math.max(1, calculatedBoundaries.length)); // Ensure totalPages is at least 1
         
@@ -394,8 +399,8 @@ function BookView() {
           // No need to explicitly set to 1 here if fetchBook resets it later or if default is 1
         }
         // --- NEW: Extract document structure after full content is loaded ---
-        if (fullMarkdownContent.current) {
-          const structure = extractDocumentStructure(fullMarkdownContent.current);
+        if (data.markdown_content) {
+          const structure = extractDocumentStructure(data.markdown_content);
           setDocumentStructure(structure);
         } else {
           setDocumentStructure([]);
@@ -403,7 +408,7 @@ function BookView() {
         // --- END NEW ---
 
       } else {
-        fullMarkdownContent.current = '';
+        setFullMarkdownContent('');
         setPageBoundaries([]);
         setTotalPages(1);
         setDocumentStructure([]); // Clear structure if no content
@@ -413,7 +418,7 @@ function BookView() {
       logger.error('Failed to fetch book:', err);
       setError(`Failed to load book: ${err.message || 'Unknown error'}`);
       setBookData(null);
-      fullMarkdownContent.current = '';
+      setFullMarkdownContent('');
     } finally {
       setLoading(false);
     }
@@ -809,17 +814,33 @@ function BookView() {
     fetchNotes();
   }, [bookId]);
 
-  // Effect for handling pagination logic AND highlighting when bookData, currentPage, or notes change
+  // Effect for handling pagination logic AND highlighting when content, currentPage, or notes change
   useEffect(() => {
-    logger.debug("[BookView - Page Content Effect] Running. Current Page:", currentPage, "Notes count:", notes.length, "PendingScrollOffsetInPage:", pendingScrollOffsetInPage, "PendingScrollToPercentage:", pendingScrollToPercentage, "PageBoundaries Length:", pageBoundaries.length);
-    if (fullMarkdownContent.current && pageBoundaries.length > 0) { // Check pageBoundaries
-      const numPages = totalPages; // Use totalPages from state (derived from pageBoundaries)
+    logger.debug("[BookView - Page Content Effect] Running. Current Page:", currentPage, "Notes count:", notes.length, "PendingScrollOffsetInPage:", pendingScrollOffsetInPage, "PendingScrollToPercentage:", pendingScrollToPercentage);
+    
+    // Recalculate page boundaries whenever the full content changes
+    if (fullMarkdownContent) {
+      const newBoundaries = calculatePageBoundaries(fullMarkdownContent, APPROX_CHARS_PER_PAGE);
+      setPageBoundaries(newBoundaries);
+      setTotalPages(Math.max(1, newBoundaries.length));
+      
+      // Also recalculate document structure
+      const structure = extractDocumentStructure(fullMarkdownContent);
+      setDocumentStructure(structure);
+    } else {
+      setPageBoundaries([]);
+      setTotalPages(1);
+      setDocumentStructure([]);
+    }
 
+    if (fullMarkdownContent && pageBoundaries.length > 0) {
+      const numPages = pageBoundaries.length;
       const validCurrentPage = Math.max(1, Math.min(currentPage, numPages || 1));
+      
       if (currentPage !== validCurrentPage) {
         logger.warn(`[BookView - Page Content Effect] currentPage ${currentPage} was invalid for numPages ${numPages}. Setting to ${validCurrentPage}`);
-        setCurrentPage(validCurrentPage); 
-        return; 
+        setCurrentPage(validCurrentPage);
+        return;
       }
       
       const pageIndex = validCurrentPage - 1;
@@ -831,28 +852,23 @@ function BookView() {
       }
       const { start: pageStartGlobalOffset, end: pageEndGlobalOffset } = pageBoundaries[pageIndex];
       
-      const plainPageText = fullMarkdownContent.current.substring(pageStartGlobalOffset, pageEndGlobalOffset);
-      setCurrentPageContent(plainPageText); 
+      const plainPageText = fullMarkdownContent.substring(pageStartGlobalOffset, pageEndGlobalOffset);
+      setCurrentPageContent(plainPageText);
       logger.debug(`[BookView - Page Content Effect] Page ${validCurrentPage}: Global Offset [${pageStartGlobalOffset}-${pageEndGlobalOffset}]. Plain text (len: ${plainPageText.length}): "${plainPageText.substring(0, 100)}..."`);
 
-      // REMOVE NOTE HIGHLIGHTING LOGIC:
-      // The entire block that filters `relevantNotes` and builds `newHighlightedString`
-      // by adding <span class="highlighted-note-text">...</span> is removed.
-      // Instead, just set highlightedPageContent to plainPageText.
       setHighlightedPageContent(plainPageText);
       logger.debug(`[BookView - Page Content Effect] Set page content without note highlighting.`);
       
-      // Conditional scroll to top:
       if (bookPaneContainerRef.current) {
         if (pendingScrollOffsetInPage === null && pendingScrollToPercentage === null) {
-            if (!isProgrammaticScroll.current) { 
+            if (!isProgrammaticScroll.current) {
                 logger.debug("[BookView - Page Content Effect] Conditions met for scroll-to-top. Scrolling to top.");
-                isProgrammaticScroll.current = true; 
+                isProgrammaticScroll.current = true;
                 bookPaneContainerRef.current.scrollTop = 0;
-                setTimeout(() => { 
-                    isProgrammaticScroll.current = false; 
+                setTimeout(() => {
+                    isProgrammaticScroll.current = false;
                     logger.debug("[BookView - Page Content Effect] Reset isProgrammaticScroll from scroll-to-top action.");
-                }, 100); 
+                }, 100);
             } else {
                 logger.debug("[BookView - Page Content Effect] Scroll-to-top conditions met, BUT isProgrammaticScroll.current is true. Skipping.");
             }
@@ -861,24 +877,20 @@ function BookView() {
         }
       }
 
-    } else if (fullMarkdownContent.current && pageBoundaries.length === 0) {
+    } else if (fullMarkdownContent && pageBoundaries.length === 0) {
         logger.warn("[BookView - Page Content Effect] fullMarkdownContent exists but pageBoundaries is empty. This might be initial load. Displaying placeholder or first chunk.");
-        // Fallback: display first chunk if boundaries aren't ready (should be brief)
-        const tempEndOffset = Math.min(APPROX_CHARS_PER_PAGE, fullMarkdownContent.current.length);
-        const tempPageText = fullMarkdownContent.current.substring(0, tempEndOffset);
+        const tempEndOffset = Math.min(APPROX_CHARS_PER_PAGE, fullMarkdownContent.length);
+        const tempPageText = fullMarkdownContent.substring(0, tempEndOffset);
         setCurrentPageContent(tempPageText);
         setHighlightedPageContent(tempPageText);
-        if (totalPages !== 1) setTotalPages(1); // Temporary total pages
-        if (currentPage !== 1) setCurrentPage(1); // Temporary current page
-    } else { // No fullMarkdownContent.current or other invalid state
+        if (totalPages !== 1) setTotalPages(1);
+        if (currentPage !== 1) setCurrentPage(1);
+    } else {
       logger.debug("[BookView - Page Content Effect] No fullMarkdownContent or pageBoundaries not ready. Clearing page content.");
       setCurrentPageContent('');
       setHighlightedPageContent('');
-      // setTotalPages(1); // Keep totalPages as is, or reset if book becomes invalid
-      // setCurrentPage(1); 
     }
-  // Add pendingScrollToPercentage to the dependency array
-  }, [bookData, currentPage, notes, pendingScrollOffsetInPage, pendingScrollToPercentage, pageBoundaries, totalPages]); // Added pageBoundaries and totalPages
+  }, [fullMarkdownContent, currentPage, notes, pendingScrollOffsetInPage, pendingScrollToPercentage]);
 
 
   // Effect to apply initial scroll once content is ready
@@ -1137,9 +1149,9 @@ function BookView() {
 
   // Effect for scrolling to a note when scrollToGlobalOffset changes
   useEffect(() => {
-    if (scrollToGlobalOffset === null || !fullMarkdownContent.current || pageBoundaries.length === 0) { // Check pageBoundaries
+    if (scrollToGlobalOffset === null || !fullMarkdownContent || pageBoundaries.length === 0) { // Check pageBoundaries
       if (scrollToGlobalOffset !== null) {
-        logger.debug(`[ScrollToNoteEffect] Aborting: scrollToGlobalOffset=${scrollToGlobalOffset}, fullMarkdownContent.current=${!!fullMarkdownContent.current}, pageBoundaries.length=${pageBoundaries.length}`);
+        logger.debug(`[ScrollToNoteEffect] Aborting: scrollToGlobalOffset=${scrollToGlobalOffset}, fullMarkdownContent=${!!fullMarkdownContent}, pageBoundaries.length=${pageBoundaries.length}`);
       }
       return;
     }
@@ -1771,9 +1783,59 @@ function BookView() {
     }
   };
   
-  // const handleReadingGuideItemClick = (pageNumber) => { // OLD - Full book guide item click
-  // ...
-  // };
+  // --- NEW: Handler for rewriting content ---
+  const handleRewriteContent = async () => {
+    if (!window.confirm("Are you sure you want to rewrite this book's content? This will permanently replace the current text with an AI-generated version and cannot be undone.")) {
+        return;
+    }
+
+    setIsRewriting(true);
+    setRewriteError(null);
+
+    try {
+        const token = localStorage.getItem('authToken');
+        if (!token) {
+            throw new Error("Authentication token not found. Please log in.");
+        }
+
+        const response = await fetch(`/api/books/${bookId}/rewrite`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+            },
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
+        }
+
+        const updatedBook = await response.json();
+        
+        if (updatedBook && updatedBook.markdown_content) {
+            logger.info("[BookView - handleRewriteContent] Successfully received rewritten content.");
+            // Update the full markdown content state, which will trigger re-pagination
+            setFullMarkdownContent(updatedBook.markdown_content);
+            // Go back to page 1 after rewrite, as content length and structure may have changed significantly
+            setCurrentPage(1);
+            setPageInput('1');
+            // Clear any pending scrolls
+            setPendingScrollOffsetInPage(null);
+            setPendingScrollToPercentage(null);
+            setScrollToGlobalOffset(null);
+        } else {
+            throw new Error("Rewrite operation did not return new content.");
+        }
+
+    } catch (err) {
+        logger.error("Failed to rewrite content:", err);
+        setRewriteError(err.message);
+        // Optionally display this error to the user via an alert or a message on the page
+        alert(`Error rewriting content: ${err.message}`);
+    } finally {
+        setIsRewriting(false);
+    }
+  };
 
 
   if (loading) return <div style={{ padding: '20px' }}>Loading book...</div>;
@@ -1806,7 +1868,7 @@ function BookView() {
       </div>
     );
   }
-  if (bookData.status === 'completed' && !fullMarkdownContent.current) {
+  if (bookData.status === 'completed' && !fullMarkdownContent) {
     return (
       <div style={{ padding: '20px', color: 'orange', textAlign: 'center' }}>
         <h2>{bookData.title || bookData.original_filename}</h2>
@@ -1970,6 +2032,9 @@ function BookView() {
                     </div>
                   )}
                 </div>
+                <button onClick={handleRewriteContent} className="control-button" title="Rewrite content with AI. This cannot be undone." disabled={isRewriting} style={{ marginLeft: '8px' }}>
+                  {isRewriting ? 'Rewriting...' : 'Rewrite Content'}
+                </button>
               </div>
               
               {/* Center: Pagination Controls */}
