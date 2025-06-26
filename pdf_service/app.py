@@ -522,7 +522,7 @@ async def perform_pdf_processing(job_id: str, temp_pdf_path: str, sanitized_titl
             reformatted_md_text = reformat_markdown_with_ollama(md_text_for_reformatting)
         else:
             logger.warning(f"Job {job_id}: Neither Gemini nor Ollama reformatting services are configured. Using raw markdown.")
-            reformatted_md_text = md_text
+            reformatted_md_text = md_text_for_reformatting
         
         logger.info(f"Job {job_id}: Markdown reformatting process chosen. Result length: {len(reformatted_md_text)} chars.")
 
