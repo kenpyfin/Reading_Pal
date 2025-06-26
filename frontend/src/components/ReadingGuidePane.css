@@ -172,6 +172,8 @@
   margin: 0;
   /* max-height: 200px; REMOVED - Height is now dynamic via inline style */
   overflow-y: auto;
+  flex-grow: 1; /* Allow list to take available space in its flex parent */
+  min-height: 0; /* Important for flex item that can shrink/grow and has overflow */
   font-size: 0.9em;
   border: 1px solid #e0e0e0; /* Optional: add a border to the list itself */
   border-radius: 3px; /* Optional: rounded corners */
