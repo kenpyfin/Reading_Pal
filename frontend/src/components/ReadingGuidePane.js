@@ -38,7 +38,10 @@ const ReadingGuidePane = ({
 
       {/* Document Structure Section */}
       {documentStructure && documentStructure.length > 0 && (
-        <div className="document-structure-section">
+        <div 
+          className="document-structure-section"
+          style={{ height: `${structureSectionHeight}px` }} // Apply height, overflowY: 'auto' is not present
+        >
           <h4>Document Structure</h4>
           <ul className="document-structure-list">
             {documentStructure.map((item, index) => (
