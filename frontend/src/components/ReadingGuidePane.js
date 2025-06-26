@@ -1,6 +1,9 @@
-import React from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import './ReadingGuidePane.css';
 import logger from '../utils/logger';
+
+const MIN_STRUCTURE_HEIGHT = 50; // Minimum height for the structure section in pixels
+const DEFAULT_STRUCTURE_HEIGHT = 150; // Default height
 
 const ReadingGuidePane = ({
   guideContent, // This will now be a string (the guide for the current page) or null
@@ -14,6 +17,67 @@ const ReadingGuidePane = ({
   documentStructure, // New prop: array of {text, level, offset}
   onStructureItemClick, // New prop: function to handle structure item click
 }) => {
+  const [structureSectionHeight, setStructureSectionHeight] = useState(DEFAULT_STRUCTURE_HEIGHT);
+  const readingGuidePaneRef = useRef(null);
+  const isResizingStructureRef = useRef(false);
+  const dragStartYRef = useRef(0);
+  const initialStructureHeightRef = useRef(0);
+
+  const handleMouseDownOnStructureResizer = useCallback((e) => {
+    e.preventDefault();
+    isResizingStructureRef.current = true;
+    dragStartYRef.current = e.clientY;
+    initialStructureHeightRef.current = structureSectionHeight;
+    document.body.classList.add('resizing-no-select-vertical'); // Optional: for cursor styling
+
+    const handleMouseMove = (event) => {
+      if (!isResizingStructureRef.current || !readingGuidePaneRef.current) return;
+      const deltaY = event.clientY - dragStartYRef.current;
+      let newHeight = initialStructureHeightRef.current + deltaY;
+
+      const paneTotalHeight = readingGuidePaneRef.current.offsetHeight;
+      const maxStructureHeight = paneTotalHeight * 0.5; // 50% of total pane height
+
+      const effectiveMaxHeight = Math.max(MIN_STRUCTURE_HEIGHT, maxStructureHeight);
+
+      newHeight = Math.max(MIN_STRUCTURE_HEIGHT, Math.min(newHeight, effectiveMaxHeight));
+      setStructureSectionHeight(newHeight);
+    };
+
+    const handleMouseUp = () => {
+      isResizingStructureRef.current = false;
+      document.body.classList.remove('resizing-no-select-vertical');
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  }, [structureSectionHeight]);
+
+  useEffect(() => {
+    const currentPaneRef = readingGuidePaneRef.current;
+    if (!currentPaneRef) return;
+
+    const observer = new ResizeObserver(entries => {
+      for (let entry of entries) {
+        const paneTotalHeight = entry.contentRect.height;
+        const maxStructureHeight = paneTotalHeight * 0.5;
+        if (structureSectionHeight > maxStructureHeight) {
+          setStructureSectionHeight(Math.max(MIN_STRUCTURE_HEIGHT, maxStructureHeight));
+        }
+      }
+    });
+
+    observer.observe(currentPaneRef);
+    return () => {
+      if (currentPaneRef) { // Check if ref still exists on cleanup
+        observer.unobserve(currentPaneRef);
+      }
+    };
+  }, [structureSectionHeight]);
+
+
   if (!isVisible) {
     return null;
   }
@@ -26,7 +90,7 @@ const ReadingGuidePane = ({
   };
 
   return (
-    <div className={`reading-guide-pane ${isVisible ? 'visible' : ''}`}>
+    <div className={`reading-guide-pane ${isVisible ? 'visible' : ''}`} ref={readingGuidePaneRef}>
       <div className="reading-guide-header">
         <h3>Reading Guide (Current Page)</h3>
         {onClose && (
@@ -60,6 +124,14 @@ const ReadingGuidePane = ({
             ))}
           </ul>
         </div>
+      )}
+      
+      {documentStructure && documentStructure.length > 0 && (
+        <div 
+          className="structure-resizer-handle"
+          onMouseDown={handleMouseDownOnStructureResizer}
+          title="Resize document structure area"
+        ></div>
       )}
 
       <div className="reading-guide-actions">
