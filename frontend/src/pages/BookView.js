@@ -2024,6 +2024,8 @@ function BookView() {
                   selectedBookText={selectedBookText}
                   selectedScrollPercentage={selectedScrollPercentage}
                   selectedGlobalCharOffset={selectedGlobalCharOffset}
+                  currentPage={currentPage} 
+                  currentPageContent={currentPageContent} 
                   onNoteClick={handleNoteClick}
                   onNewNoteSaved={handleNewNoteSaved}
                   // No mobile-specific props needed for desktop version
@@ -2044,6 +2046,8 @@ function BookView() {
                   selectedBookText={selectedBookText}
                   selectedScrollPercentage={selectedScrollPercentage}
                   selectedGlobalCharOffset={selectedGlobalCharOffset}
+                  currentPage={currentPage} 
+                  currentPageContent={currentPageContent} 
                   onNoteClick={handleNoteClick}
                   onNewNoteSaved={handleNewNoteSaved}
                   isMobileContext={true} // Indicate mobile overlay context
