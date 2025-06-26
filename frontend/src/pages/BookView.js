@@ -1086,9 +1086,34 @@ function BookView() {
     }
   };
 
-  const handleNoteClick = (globalCharOffsetOfNote) => {
-    if (globalCharOffsetOfNote !== null && globalCharOffsetOfNote !== undefined) {
-      setScrollToGlobalOffset(globalCharOffsetOfNote);
+  const handleNoteClick = (navigationTarget) => {
+    if (typeof navigationTarget === 'number') {
+      // It's a global character offset
+      if (navigationTarget !== null && navigationTarget !== undefined) {
+        setScrollToGlobalOffset(navigationTarget);
+      }
+    } else if (typeof navigationTarget === 'object' && navigationTarget !== null && navigationTarget.pageNumber !== undefined) {
+      // It's a page navigation request
+      const targetPage = navigationTarget.pageNumber;
+      if (targetPage >= 1 && targetPage <= totalPages) {
+        logger.info(`[BookView - handleNoteClick] Navigating to page ${targetPage} from note click.`);
+        isProgrammaticScroll.current = true; // Prevent scroll sync issues
+        setCurrentPage(targetPage);
+        // The useEffect for currentPage changes will handle scrolling to top of the new page
+        // and resetting isProgrammaticScroll.current.
+        // Explicit scroll to top here might be redundant if page content effect handles it,
+        // but can be added for immediate feedback if needed:
+        if (bookPaneContainerRef.current) {
+          bookPaneContainerRef.current.scrollTop = 0;
+        }
+        // Reset isProgrammaticScroll after a delay, similar to other programmatic scrolls
+        setTimeout(() => {
+          isProgrammaticScroll.current = false;
+          logger.debug("[BookView - handleNoteClick page nav] Reset isProgrammaticScroll.");
+        }, 150);
+      } else {
+        logger.warn(`[BookView - handleNoteClick] Invalid page number ${targetPage} from note click.`);
+      }
     }
   };
   

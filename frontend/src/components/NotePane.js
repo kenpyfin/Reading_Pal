@@ -187,11 +187,15 @@ const NotePane = ({ // Removed ref from props
   };
 
   const handleNoteClickInternal = (note) => {
-      // ADD THIS LOG
-      logger.debug("[NotePane - handleNoteClickInternal] Clicked note object:", JSON.stringify(note, null, 2)); // Use logger
-      // Use global_character_offset for jumping if available
-      if (note.global_character_offset !== null && note.global_character_offset !== undefined && onNoteClick) {
-          onNoteClick(note.global_character_offset); // Pass global_character_offset
+      logger.debug("[NotePane - handleNoteClickInternal] Clicked note object:", JSON.stringify(note, null, 2));
+      if (onNoteClick) {
+        // Prioritize global_character_offset for precise text linking
+        if (note.global_character_offset !== null && note.global_character_offset !== undefined) {
+          onNoteClick(note.global_character_offset);
+        } else if (note.page_number !== null && note.page_number !== undefined) {
+          // If no specific offset, but page_number exists, navigate to the page
+          onNoteClick({ pageNumber: note.page_number });
+        }
       }
   };
 
