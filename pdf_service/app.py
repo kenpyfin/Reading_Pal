@@ -53,11 +53,14 @@ BACKEND_CALLBACK_URL = os.getenv("BACKEND_CALLBACK_URL")
 # Get Gemini API Key
 GEMINI_API_KEY_REFORMAT = os.getenv("GEMINI_API_KEY") # Use the general GEMINI_API_KEY for reformatting
 
+# Get Gemini Reformat Model Name (used if Gemini API key is present)
+GEMINI_REFORMAT_MODEL_NAME = os.getenv("GEMINI_REFORMAT_MODEL", "gemini-1.5-flash-latest")
+
 # Configure Gemini API if key is present
 if GEMINI_API_KEY_REFORMAT:
     try:
         genai.configure(api_key=GEMINI_API_KEY_REFORMAT)
-        logger.info("Google Gemini API configured successfully (using GEMINI_API_KEY for reformatting).")
+        logger.info(f"Google Gemini API configured successfully (using GEMINI_API_KEY for reformatting). Will use model: {GEMINI_REFORMAT_MODEL_NAME} for reformatting if chosen.")
     except Exception as e:
         logger.warning(f"Failed to configure Google Gemini API (using GEMINI_API_KEY for reformatting): {e}. Gemini reformatting will not be available.")
         GEMINI_API_KEY_REFORMAT = None # Ensure it's None if configuration fails
@@ -298,10 +301,10 @@ def reformat_markdown_with_gemini(md_text: str) -> str:
         # Initialize the Gemini model
         # You can choose different models like 'gemini-1.5-flash-latest' for speed/cost
         # or 'gemini-1.0-pro' / 'gemini-1.5-pro-latest' for potentially higher quality.
-        model = genai.GenerativeModel('gemini-1.5-flash-latest')
-        logger.info("Google Gemini model initialized for reformatting.")
+        model = genai.GenerativeModel(GEMINI_REFORMAT_MODEL_NAME)
+        logger.info(f"Google Gemini model '{GEMINI_REFORMAT_MODEL_NAME}' initialized for reformatting.")
     except Exception as e:
-        logger.error(f"Failed to initialize Google Gemini model: {e}. Skipping markdown reformatting.")
+        logger.error(f"Failed to initialize Google Gemini model '{GEMINI_REFORMAT_MODEL_NAME}': {e}. Skipping markdown reformatting.")
         return md_text
 
     # Approximate tokens per character (this is a rough estimate for Gemini)
