@@ -51,18 +51,18 @@ OLLAMA_REFORMAT_MODEL = os.getenv('OLLAMA_REFORMAT_MODEL') # Use the general LLM
 BACKEND_CALLBACK_URL = os.getenv("BACKEND_CALLBACK_URL")
 
 # Get Gemini API Key
-GEMINI_API_KEY_REFORMAT = os.getenv("GEMINI_API_KEY_REFORMAT") # ADD THIS LINE to load Gemini key
+GEMINI_API_KEY_REFORMAT = os.getenv("GEMINI_API_KEY") # Use the general GEMINI_API_KEY for reformatting
 
 # Configure Gemini API if key is present
 if GEMINI_API_KEY_REFORMAT:
     try:
         genai.configure(api_key=GEMINI_API_KEY_REFORMAT)
-        logger.info("Google Gemini API configured successfully.")
+        logger.info("Google Gemini API configured successfully (using GEMINI_API_KEY for reformatting).")
     except Exception as e:
-        logger.warning(f"Failed to configure Google Gemini API: {e}. Gemini reformatting will not be available.")
+        logger.warning(f"Failed to configure Google Gemini API (using GEMINI_API_KEY for reformatting): {e}. Gemini reformatting will not be available.")
         GEMINI_API_KEY_REFORMAT = None # Ensure it's None if configuration fails
 else:
-    logger.info("GEMINI_API_KEY_REFORMAT not found. Google Gemini reformatting will not be available.")
+    logger.info("GEMINI_API_KEY not found (used for reformatting). Google Gemini reformatting will not be available.")
 
 
 # --- Helper function to sanitize filename ---
@@ -291,7 +291,7 @@ def reformat_markdown_with_gemini(md_text: str) -> str:
     Reformats markdown text using the Google Gemini API.
     """
     if not GEMINI_API_KEY_REFORMAT:
-        logger.warning("GEMINI_API_KEY_REFORMAT not set or configuration failed. Skipping Gemini markdown reformatting.")
+        logger.warning("GEMINI_API_KEY not set (used for reformatting) or configuration failed. Skipping Gemini markdown reformatting.")
         return md_text
 
     try:
