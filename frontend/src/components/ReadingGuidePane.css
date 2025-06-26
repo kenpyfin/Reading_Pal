@@ -1,12 +1,12 @@
 /* frontend/src/components/ReadingGuidePane.css */
 .reading-guide-pane {
   display: flex;
-  flex-direction: column;
+  flex-direction: column; /* Key change for vertical layout */
   height: 100%;
   background-color: #f8f9fa; /* Light background */
   border-right: 1px solid #e0e0e0; /* Separator from book pane */
   box-sizing: border-box;
-  overflow: hidden; /* Prevent parent from scrolling, content will scroll */
+  overflow: hidden; /* Prevent parent from scrolling, children will scroll */
 }
 
 .reading-guide-pane.visible {
@@ -115,13 +115,15 @@
 
 /* Styles for Document Structure Section */
 .document-structure-section {
-  margin-bottom: 15px;
+  /* margin-bottom: 15px; REMOVED - Resizer will provide separation */
   padding: 10px 15px; /* Match other sections padding */
-  border-bottom: 1px solid #e0e0e0; /* Match other separators */
+  /* border-bottom: 1px solid #e0e0e0; REMOVED - Resizer will have its own border */
   flex-shrink: 0; /* Prevent shrinking */
   display: flex; /* Added for flex layout */
   flex-direction: column; /* Stack header and list vertically */
   min-height: 0; /* Important for flex children with overflow */
+  /* height is set by inline style from JS */
+  position: relative; /* For potential absolute positioning of internal elements if needed */
 }
 
 .document-structure-header {
@@ -175,6 +177,33 @@
   border-radius: 3px; /* Optional: rounded corners */
   /* transition: height 0.2s ease-in-out; */ /* Optional: for smooth resize animation */
 }
+
+/* Styles for the horizontal resizer handle for the document structure section */
+.structure-resizer-handle {
+  height: 8px; /* Height of the draggable area */
+  background-color: #e0e0e0; /* A slightly darker or distinct color for the handle */
+  cursor: ns-resize; /* North-South resize cursor for vertical resizing */
+  flex-shrink: 0; /* Prevent the handle from shrinking */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-top: 1px solid #c0c0c0;
+  border-bottom: 1px solid #c0c0c0;
+}
+
+.structure-resizer-handle:hover {
+  background-color: #d0d0d0; /* Darken on hover */
+}
+
+/* Optional: add a small visual indicator to the handle */
+.structure-resizer-handle::before {
+  content: '•••'; /* Three dots or similar character */
+  font-size: 8px;
+  line-height: 8px;
+  color: #666;
+  letter-spacing: 2px;
+}
+
 
 .structure-item {
   padding: 5px 8px; /* Slightly more padding for touch/click */
