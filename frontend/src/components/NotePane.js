@@ -83,19 +83,19 @@ const NotePane = ({ // Removed ref from props
     let noteData = {
       book_id: bookId,
       content: newNoteContent.trim(),
+      page_number: currentPage, // Always include the current page number
     };
 
     if (isPageNoteMode) {
-      noteData.page_number = currentPage;
-      // For page notes, selection-specific fields are typically not set
-      noteData.source_text = `Context: Page ${currentPage}`; // Or undefined, depending on desired behavior
+      // For page-specific notes, we don't link to a specific text selection
+      noteData.source_text = `Context: Page ${currentPage}`;
       noteData.scroll_percentage = undefined;
       noteData.global_character_offset = undefined;
     } else {
+      // For selection-based notes, include the selection details
       noteData.source_text = selectedBookText || undefined;
       noteData.scroll_percentage = selectedScrollPercentage !== null && selectedScrollPercentage !== undefined ? parseFloat(selectedScrollPercentage.toFixed(4)) : undefined;
       noteData.global_character_offset = selectedGlobalCharOffset;
-      // page_number can be undefined if not a page note
     }
 
     logger.debug("[NotePane - handleSaveNote] Sending noteData to backend:", noteData); // Use logger
@@ -362,12 +362,12 @@ const NotePane = ({ // Removed ref from props
           >
             <div className="note-actions"> {/* Wrapper for note content and delete button */}
                 <div className="note-content-clickable" onClick={() => handleNoteClickInternal(note)}>
-                    {note.page_number && !note.source_text && ( // Display if it's a page note without specific source text
+                    {note.page_number && (
                         <p className="note-page-context-indicator">
-                            <em>Context: Page {note.page_number}</em>
+                            <em>From Page: {note.page_number}</em>
                         </p>
                     )}
-                    {note.source_text && (!note.page_number || (note.page_number && note.source_text !== `Context: Page ${note.page_number}`)) && ( // Display if source_text exists and is not the generic page context
+                    {note.source_text && note.source_text !== `Context: Page ${note.page_number}` && (
                         <blockquote className="note-source-text">
                             <em>Source: "{note.source_text}"</em>
                         </blockquote>
