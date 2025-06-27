@@ -537,21 +537,63 @@ class PDFServiceCallbackData(BaseModel):
 # This is crucial for consistency.
 APPROX_CHARS_PER_PAGE_FOR_GUIDE = 15000 # Based on BookView.js current value
 
-def _get_page_content_from_markdown(markdown_content: str, page_number: int, chars_per_page: int) -> Optional[str]:
+def _calculate_page_boundaries(markdown: str, target_chars_per_page: int) -> List[Dict[str, int]]:
     """
-    Extracts content for a specific page from the full markdown.
-    Page numbers are 1-indexed.
+    Calculates page boundaries respecting word breaks, mirroring frontend logic.
     """
-    if page_number <= 0:
-        return None
+    if not markdown:
+        logger.warning("[_calculate_page_boundaries] Markdown content is invalid or empty.")
+        return []
     
-    start_char = (page_number - 1) * chars_per_page
-    end_char = start_char + chars_per_page
+    boundaries = []
+    current_offset = 0
+    total_length = len(markdown)
+    min_page_chars = target_chars_per_page * 0.5
 
-    if start_char >= len(markdown_content):
-        return None # Page number is out of bounds
+    while current_offset < total_length:
+        page_start = current_offset
+        potential_end = min(page_start + target_chars_per_page, total_length)
+        actual_end = potential_end
 
-    return markdown_content[start_char:end_char]
+        if potential_end < total_length:
+            boundary_found = False
+            # Search backwards from potential_end for a natural break (space)
+            for i in range(potential_end, int(page_start), -1):
+                if markdown[i-1].isspace():
+                    actual_end = i
+                    boundary_found = True
+                    break
+            
+            if not boundary_found:
+                # No space found searching backwards. Try to find the *next* space *after* potential_end
+                next_space_search_limit = min(potential_end + int(target_chars_per_page * 0.25), total_length)
+                found_next_space = False
+                for i in range(potential_end, next_space_search_limit):
+                    if markdown[i].isspace():
+                        actual_end = i + 1
+                        found_next_space = True
+                        break
+                if not found_next_space:
+                    actual_end = potential_end
+
+            if (actual_end - page_start) < min_page_chars and (total_length - page_start) > target_chars_per_page:
+                actual_end = potential_end
+
+        if actual_end <= page_start and page_start < total_length:
+            logger.warning(f"[_calculate_page_boundaries] actual_end ({actual_end}) did not advance from page_start ({page_start}). Forcing advance.")
+            actual_end = min(page_start + target_chars_per_page, total_length)
+
+        actual_end = min(actual_end, total_length)
+        
+        boundaries.append({"start": page_start, "end": actual_end})
+        current_offset = actual_end
+
+        if len(boundaries) > 10000:
+            logger.error("[_calculate_page_boundaries] Exceeded 10000 page boundaries, breaking loop.")
+            break
+            
+    logger.info(f"[_calculate_page_boundaries] Calculated {len(boundaries)} pages.")
+    return boundaries
 
 
 @router.post("/callback", status_code=status.HTTP_200_OK)
@@ -787,13 +829,13 @@ async def delete_book_route(book_id: str, current_user_id: str = Depends(get_cur
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.post("/{book_id}/rewrite", response_model=Book)
-async def rewrite_book_content(book_id: str, current_user_id: str = Depends(get_current_user_id)):
+@router.post("/{book_id}/rewrite-page/{page_number}", response_model=Book)
+async def rewrite_page_content(book_id: str, page_number: int, current_user_id: str = Depends(get_current_user_id)):
     """
-    Rewrites the book's markdown content using an LLM for clarity and formatting.
-    This action overwrites the existing markdown file.
+    Rewrites a single page of the book's markdown content using an LLM.
+    This action overwrites the existing markdown file with the updated full content.
     """
-    logger.info(f"User {current_user_id} requested to rewrite content for book {book_id}")
+    logger.info(f"User {current_user_id} requested to rewrite page {page_number} for book {book_id}")
 
     # 1. Get book from DB and validate
     book_data_doc = await get_book(book_id, current_user_id)
@@ -811,42 +853,56 @@ async def rewrite_book_content(book_id: str, current_user_id: str = Depends(get_
 
     # 2. Read current markdown file
     markdown_file_path = os.path.join(CONTAINER_MARKDOWN_PATH, book.markdown_filename)
-    logger.info(f"Reading content from {markdown_file_path} for rewriting.")
+    logger.info(f"Reading content from {markdown_file_path} for page-rewrite.")
     
     try:
         def read_file_sync(path):
             with open(path, 'r', encoding='utf-8') as f:
                 return f.read()
-        current_content = await run_in_threadpool(read_file_sync, markdown_file_path)
+        full_content = await run_in_threadpool(read_file_sync, markdown_file_path)
     except FileNotFoundError:
         logger.error(f"Markdown file not found at {markdown_file_path} for book {book_id}")
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Markdown file not found.")
 
-    # 3. Call LLM service to rewrite
-    logger.info(f"Sending content of book {book_id} to LLM service for rewriting.")
-    rewritten_content = await llm_service.rewrite_content(current_content)
-    if not rewritten_content or rewritten_content.startswith("Error:"):
-        logger.error(f"LLM service failed to rewrite content for book {book_id}. Response: {rewritten_content}")
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"LLM service failed to rewrite content. {rewritten_content}")
-    logger.info(f"Received rewritten content for book {book_id}.")
+    # 3. Calculate page boundaries to find the correct page content
+    boundaries = _calculate_page_boundaries(full_content, APPROX_CHARS_PER_PAGE_FOR_GUIDE)
+    if not (1 <= page_number <= len(boundaries)):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid page number. Must be between 1 and {len(boundaries)}.")
 
-    # 4. Overwrite the markdown file with new content
+    page_index = page_number - 1
+    page_boundary = boundaries[page_index]
+    start_offset, end_offset = page_boundary['start'], page_boundary['end']
+    
+    page_content_to_rewrite = full_content[start_offset:end_offset]
+
+    # 4. Call LLM service to rewrite the page content
+    logger.info(f"Sending page {page_number} content (len: {len(page_content_to_rewrite)}) of book {book_id} to LLM service for rewriting.")
+    rewritten_page_content = await llm_service.rewrite_content(page_content_to_rewrite)
+    if not rewritten_page_content or rewritten_page_content.startswith("Error:"):
+        logger.error(f"LLM service failed to rewrite page content for book {book_id}. Response: {rewritten_page_content}")
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"LLM service failed to rewrite content. {rewritten_page_content}")
+    logger.info(f"Received rewritten page content for book {book_id}. New length: {len(rewritten_page_content)}")
+
+    # 5. Splice the rewritten content back into the full markdown
+    new_full_content = full_content[:start_offset] + rewritten_page_content + full_content[end_offset:]
+
+    # 6. Overwrite the markdown file with the new full content
     try:
         def write_file_sync(path, content):
             with open(path, 'w', encoding='utf-8') as f:
                 f.write(content)
-        await run_in_threadpool(write_file_sync, markdown_file_path, rewritten_content)
-        logger.info(f"Successfully overwrote markdown file at {markdown_file_path} with rewritten content.")
+        await run_in_threadpool(write_file_sync, markdown_file_path, new_full_content)
+        logger.info(f"Successfully overwrote markdown file at {markdown_file_path} with page-rewritten content.")
     except Exception as e:
         logger.error(f"Failed to write rewritten content to {markdown_file_path}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to save rewritten content.")
 
-    # 5. Update timestamp and return book object with new content
+    # 7. Update timestamp and return book object with new full content
     now = datetime.utcnow()
     await update_book(book_id, current_user_id, {"updated_at": now})
     
     book.updated_at = now
-    book.markdown_content = rewritten_content
+    book.markdown_content = new_full_content
 
     return book
 
@@ -892,11 +948,13 @@ async def generate_page_reading_guide(
         if not full_markdown_content:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Markdown content not found or empty.")
 
-        page_content_text = _get_page_content_from_markdown(
-            full_markdown_content, page_number, APPROX_CHARS_PER_PAGE_FOR_GUIDE
-        )
-        # Allow LLM to process potentially empty/short content.
-        # If page_content_text is None or empty, the prompt will reflect that.
+        # Use the new, consistent page boundary calculation
+        boundaries = _calculate_page_boundaries(full_markdown_content, APPROX_CHARS_PER_PAGE_FOR_GUIDE)
+        if not (1 <= page_number <= len(boundaries)):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid page number. Must be between 1 and {len(boundaries)}.")
+
+        page_boundary = boundaries[page_number - 1]
+        page_content_text = full_markdown_content[page_boundary['start']:page_boundary['end']]
 
     except Exception as e:
         logger.error(f"Error reading or processing markdown for guide: {e}", exc_info=True)

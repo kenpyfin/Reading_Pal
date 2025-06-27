@@ -1783,9 +1783,9 @@ function BookView() {
     }
   };
   
-  // --- NEW: Handler for rewriting content ---
-  const handleRewriteContent = async () => {
-    if (!window.confirm("Are you sure you want to rewrite this book's content? This will permanently replace the current text with an AI-generated version and cannot be undone.")) {
+  // --- UPDATED: Handler for rewriting a single page ---
+  const handleRewritePage = async () => {
+    if (!window.confirm(`Are you sure you want to rewrite page ${currentPage}? This will permanently replace the current page's text with an AI-generated version and cannot be undone.`)) {
         return;
     }
 
@@ -1798,7 +1798,7 @@ function BookView() {
             throw new Error("Authentication token not found. Please log in.");
         }
 
-        const response = await fetch(`/api/books/${bookId}/rewrite`, {
+        const response = await fetch(`/api/books/${bookId}/rewrite-page/${currentPage}`, {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${token}`,
@@ -1813,25 +1813,22 @@ function BookView() {
         const updatedBook = await response.json();
         
         if (updatedBook && updatedBook.markdown_content) {
-            logger.info("[BookView - handleRewriteContent] Successfully received rewritten content.");
-            // Update the full markdown content state, which will trigger re-pagination
+            logger.info("[BookView - handleRewritePage] Successfully received rewritten content.");
+            // Update the full markdown content state. This will trigger the useEffect
+            // that recalculates page boundaries and updates the current page's content.
             setFullMarkdownContent(updatedBook.markdown_content);
-            // Go back to page 1 after rewrite, as content length and structure may have changed significantly
-            setCurrentPage(1);
-            setPageInput('1');
-            // Clear any pending scrolls
-            setPendingScrollOffsetInPage(null);
-            setPendingScrollToPercentage(null);
-            setScrollToGlobalOffset(null);
+            
+            // The current page number should remain the same, but its content and
+            // the boundaries of subsequent pages will be updated automatically by the effect.
+            // No need to reset to page 1 unless that's desired behavior.
         } else {
             throw new Error("Rewrite operation did not return new content.");
         }
 
     } catch (err) {
-        logger.error("Failed to rewrite content:", err);
+        logger.error("Failed to rewrite page:", err);
         setRewriteError(err.message);
-        // Optionally display this error to the user via an alert or a message on the page
-        alert(`Error rewriting content: ${err.message}`);
+        alert(`Error rewriting page: ${err.message}`);
     } finally {
         setIsRewriting(false);
     }
@@ -2032,8 +2029,8 @@ function BookView() {
                     </div>
                   )}
                 </div>
-                <button onClick={handleRewriteContent} className="control-button" title="Rewrite content with AI. This cannot be undone." disabled={isRewriting} style={{ marginLeft: '8px' }}>
-                  {isRewriting ? 'Rewriting...' : 'Rewrite Content'}
+                <button onClick={handleRewritePage} className="control-button" title="Rewrite current page with AI. This cannot be undone." disabled={isRewriting} style={{ marginLeft: '8px' }}>
+                  {isRewriting ? 'Rewriting...' : 'Rewrite Page'}
                 </button>
               </div>
               
