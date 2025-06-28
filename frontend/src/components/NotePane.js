@@ -294,7 +294,15 @@ const NotePane = ({ // Removed ref from props
         </div>
       ) : (
         selectedBookText && (
-          <div className="selected-text-display">
+          <div
+            className="selected-text-display clickable-selection"
+            onClick={() => {
+              if (onNoteClick && selectedGlobalCharOffset !== null) {
+                onNoteClick(selectedGlobalCharOffset);
+              }
+            }}
+            title="Click to jump to this location in the book"
+          >
             <h4>Selected Text from Book:</h4>
             <blockquote>
               {selectedBookText}
