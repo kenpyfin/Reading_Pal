@@ -1,4 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import rehypeRaw from 'rehype-raw';
 import './ReadingGuidePane.css';
 import logger from '../utils/logger';
 
@@ -154,9 +157,12 @@ const ReadingGuidePane = ({
           <p>Guide for this page is empty or not yet loaded. Try regenerating.</p>
         )}
         {!isLoading && !error && guideContent && (
-          // Display the guide content as pre-formatted text or render markdown if it's complex
-          <div className="guide-text-content" style={{ whiteSpace: 'pre-wrap' }}>
-            {guideContent}
+          <div className="guide-text-content">
+            <ReactMarkdown
+              children={guideContent}
+              remarkPlugins={[remarkGfm]}
+              rehypePlugins={[rehypeRaw]}
+            />
           </div>
         )}
       </div>
