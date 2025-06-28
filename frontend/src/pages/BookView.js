@@ -352,6 +352,7 @@ function BookView() {
   const [isRewriting, setIsRewriting] = useState(false);
   const [rewriteError, setRewriteError] = useState(null);
   // --- END NEW State for Content Rewriting ---
+  const isInitialMount = useRef(true);
 
   const fetchBook = async () => {
     setLoading(true);
@@ -1595,24 +1596,25 @@ function BookView() {
   useEffect(() => {
     const bookElement = bookPaneContainerRef.current;
 
-    // Function to handle user-initiated scroll
     const handleScroll = () => {
       if (bookElement && !isProgrammaticScroll.current && bookId) {
-        // This saves both page and scroll position after a delay
         debouncedSaveReadingPosition(bookId, currentPage, bookElement.scrollTop);
       }
     };
 
-    // When currentPage changes, we want to save the new page number immediately.
-    // We also reset the scrollTop for that page to 0 in localStorage, because
-    // the view scrolls to the top. The next user scroll will update it.
-    if (bookId && currentPage) {
-        const position = { page: currentPage, scrollTop: 0 };
-        localStorage.setItem(`readingPalLastPosition_${bookId}`, JSON.stringify(position));
-        logger.debug(`[BookView - PageChange] Saved page ${currentPage} with scrollTop 0 for book ${bookId}`);
+    // On initial mount, we don't want to overwrite the saved scroll position.
+    // On subsequent runs of this effect (due to currentPage changing), it's a page turn,
+    // so we save the new page with scrollTop 0.
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+    } else {
+      if (bookId && currentPage) {
+          const position = { page: currentPage, scrollTop: 0 };
+          localStorage.setItem(`readingPalLastPosition_${bookId}`, JSON.stringify(position));
+          logger.debug(`[BookView - PageChange] Saved page ${currentPage} with scrollTop 0 for book ${bookId}`);
+      }
     }
 
-    // Add scroll listener
     if (bookElement) {
       bookElement.addEventListener('scroll', handleScroll);
     }
