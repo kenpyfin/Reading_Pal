@@ -26,6 +26,8 @@ logger.info(f"DEBUG: LLM_MODEL from os.getenv: '{os.getenv('LLM_MODEL')}'")
 LLM_SERVICE = os.getenv("LLM_SERVICE", "ollama")
 LLM_MODEL = os.getenv("LLM_MODEL", "deepseek-r1:14b")
 ollama_env_base_url = os.getenv("OLLAMA_BASE_URL")
+LLM_REFORMAT_SERVICE = os.getenv("LLM_REFORMAT_SERVICE", "ollama")
+LLM_REFORMAT_MODEL = os.getenv("LLM_REFORMAT_MODEL", "deepseek-r1:14b")
 
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
@@ -84,6 +86,7 @@ elif LLM_SERVICE == "gemini":
             try:
                 # Use the configured model name
                 gemini_model = genai.GenerativeModel(model_name=LLM_MODEL)
+                gemini_reformat_model = genai.GenerativeModel(model_name=LLM_REFORMAT_MODEL)
                 # A simple test call might be needed to confirm connectivity/model existence
                 # For now, rely on error handling during actual calls.
                 logger.info(f"Gemini client initialized with model: {LLM_MODEL}.")
@@ -110,6 +113,8 @@ class LLMService:
         self.ollama_client = ollama
         self.service_name = LLM_SERVICE
         self.model_name = LLM_MODEL
+        self.reformat_service_name = LLM_REFORMAT_SERVICE
+        self.reformat_model_name = LLM_REFORMAT_MODEL
 
     def _remove_think_tags(self, text: str) -> str:
         """Removes content within <think>...</think> tags."""
@@ -328,32 +333,32 @@ Rewrite the following markdown:
         logger.info(f"Sending 'rewrite' prompt to LLM ({self.service_name}/{self.model_name}). Text length: {len(text)}")
 
         try:
-            if self.service_name == "anthropic" and self.anthropic_client:
+            if self.reformat_service_name == "anthropic" and self.anthropic_client:
                 message = await self.anthropic_client.messages.create(
-                    model=self.model_name,
-                    max_tokens=8192, # Allow more tokens for rewriting full documents
+                    model=self.reformat_model_name,
+                    max_tokens=60000, # Allow more tokens for rewriting full documents
                     system="You are an expert Markdown editor.",
                     messages=[{"role": "user", "content": full_prompt}]
                 )
                 response_text = message.content[0].text if message.content else ""
                 return self._remove_think_tags(response_text)
 
-            elif self.service_name == "ollama" and self.ollama_client:
+            elif self.reformat_service_name == "ollama" and self.ollama_client:
                 response = await self.ollama_client.chat(
-                    model=self.model_name,
+                    model=self.reformat_model_name,
                     messages=[{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': text}]
                 )
                 response_text = response['message']['content'] if response and 'message' in response else ""
                 return self._remove_think_tags(response_text)
 
-            elif self.service_name == "gemini" and self.gemini_model:
+            elif self.reformat_service_name == "gemini" and self.gemini_model:
                 response = await self.gemini_model.generate_content_async(full_prompt)
                 response_text = response.text if response and response.text else ""
                 return self._remove_think_tags(response_text)
 
-            elif self.service_name == "deepseek" and self.deepseek_config:
+            elif self.reformat_service_name == "deepseek" and self.deepseek_config:
                 headers = {"Authorization": f"Bearer {self.deepseek_config['api_key']}", "Content-Type": "application/json"}
-                payload = {"model": self.model_name, "messages": [{"role": "user", "content": full_prompt}], "max_tokens": 8192}
+                payload = {"model": self.reformat_model_name, "messages": [{"role": "user", "content": full_prompt}], "max_tokens": 8192}
                 from fastapi.concurrency import run_in_threadpool
                 response = await run_in_threadpool(requests.post, self.deepseek_config['base_url'], headers=headers, json=payload, timeout=180)
                 response.raise_for_status()

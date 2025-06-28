@@ -327,10 +327,11 @@ Strictly adhere to the following:
 1.  Preserve ALL original content, including text, headings, lists, code blocks, tables, and image links (e.g., ![](image.png)). Do NOT alter or remove any content.
 2.  Ensure standard Markdown syntax is used. Correct any non-standard or malformed Markdown.
 3.  Improve formatting for lists, code blocks, and blockquotes for clarity.
-4.  Maintain the original heading levels.
-5.  Do NOT add any conversational text, apologies, or explanations. Output ONLY the reformatted Markdown text. **Specifically, do NOT wrap the entire output in a Markdown code block (e.g., using ```markdown ... ``` or ``` ... ```).**
-6.  If the input is already well-formatted, return it as is.
-7.  Pay close attention to image links like `![](path/to/image.png)` or `![alt text](path/to/image.png)` and ensure they are preserved exactly as they appear in the input.
+4.  Maintain the original heading levels, but contextually aware of the hierarchy of the headings.
+5.  Be aware of formula, table, and other speicial chararcter. Please retain the completeness of a table or a formula. 
+6.  Do NOT add any conversational text, apologies, or explanations. Output ONLY the reformatted Markdown text. **Specifically, do NOT wrap the entire output in a Markdown code block (e.g., using ```markdown ... ``` or ``` ... ```).**
+7.  If the input is already well-formatted, return it as is.
+8.  Pay close attention to image links like `![](path/to/image.png)` or `![alt text](path/to/image.png)` and ensure they are preserved exactly as they appear in the input.
 Reformat this markdown:
 """
 
