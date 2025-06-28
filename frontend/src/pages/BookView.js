@@ -267,7 +267,21 @@ function BookView() {
   const [selectedScrollPercentage, setSelectedScrollPercentage] = useState(null);
   const [selectedGlobalCharOffset, setSelectedGlobalCharOffset] = useState(null);
 
-  const [currentPage, setCurrentPage] = useState(1);
+  const [currentPage, setCurrentPage] = useState(() => {
+    const savedPositionRaw = localStorage.getItem(`readingPalLastPosition_${bookId}`);
+    if (savedPositionRaw) {
+      try {
+        const savedPosition = JSON.parse(savedPositionRaw);
+        if (savedPosition && typeof savedPosition.page === 'number') {
+          logger.info(`[BookView - useState init] Initializing currentPage from localStorage: ${savedPosition.page}`);
+          return savedPosition.page;
+        }
+      } catch (e) {
+        logger.error("[BookView - useState init] Error parsing saved position, defaulting to 1.", e);
+      }
+    }
+    return 1;
+  });
   const [totalPages, setTotalPages] = useState(1);
   const [currentPageContent, setCurrentPageContent] = useState(''); // Original content for logic
   const [highlightedPageContent, setHighlightedPageContent] = useState(''); // Content with highlights for rendering
@@ -374,30 +388,30 @@ function BookView() {
         // Calculate page boundaries
         const calculatedBoundaries = calculatePageBoundaries(data.markdown_content, APPROX_CHARS_PER_PAGE);
         setPageBoundaries(calculatedBoundaries);
-        setTotalPages(Math.max(1, calculatedBoundaries.length)); // Ensure totalPages is at least 1
+        const numPages = Math.max(1, calculatedBoundaries.length);
+        setTotalPages(numPages);
         
-        // Try to restore last reading position for this book
+        // Validate the current page (which was initialized from localStorage)
+        if (currentPage > numPages) {
+          logger.warn(`[BookView - fetchBook] Restored page ${currentPage} is out of bounds for this book (${numPages} pages). Resetting to page 1.`);
+          setCurrentPage(1);
+        }
+
+        // Restore scroll position for the current page
         const savedPositionRaw = localStorage.getItem(`readingPalLastPosition_${bookId}`);
         if (savedPositionRaw) {
           try {
             const savedPosition = JSON.parse(savedPositionRaw);
-            if (savedPosition && typeof savedPosition.page === 'number' && typeof savedPosition.scrollTop === 'number') {
-              const restoredPage = Math.max(1, Math.min(savedPosition.page, calculatedBoundaries.length || 1));
-              logger.info(`[BookView - fetchBook] Restoring saved position for book ${bookId}: Page ${restoredPage}, ScrollTop ${savedPosition.scrollTop}`);
-              setCurrentPage(restoredPage); // Set current page first
-              setInitialScrollTop(savedPosition.scrollTop); // Set initial scroll top to be applied later
-            } else {
-              logger.warn(`[BookView - fetchBook] Invalid saved position data for book ${bookId}:`, savedPosition);
-              setCurrentPage(1); // Default to page 1 if saved data is invalid
+            // Only apply scroll if the saved page is the one we are actually on.
+            if (savedPosition && savedPosition.page === currentPage && typeof savedPosition.scrollTop === 'number') {
+              logger.info(`[BookView - fetchBook] Restoring scroll position for page ${currentPage}: ScrollTop ${savedPosition.scrollTop}`);
+              setInitialScrollTop(savedPosition.scrollTop);
             }
           } catch (parseError) {
-            logger.error(`[BookView - fetchBook] Error parsing saved position for book ${bookId}:`, parseError);
-            setCurrentPage(1); // Default to page 1 on parse error
+            logger.error(`[BookView - fetchBook] Error parsing saved position for scroll restore:`, parseError);
           }
-        } else {
-          // setCurrentPage(1); // Ensure currentPage is reset to 1 if no saved position
-          // No need to explicitly set to 1 here if fetchBook resets it later or if default is 1
         }
+        
         // --- NEW: Extract document structure after full content is loaded ---
         if (data.markdown_content) {
           const structure = extractDocumentStructure(data.markdown_content);
@@ -412,7 +426,6 @@ function BookView() {
         setPageBoundaries([]);
         setTotalPages(1);
         setDocumentStructure([]); // Clear structure if no content
-        // setCurrentPage(1);
       }
     } catch (err) {
       logger.error('Failed to fetch book:', err);
@@ -520,10 +533,8 @@ function BookView() {
       setInitialScrollTop(null); 
       fetchBook(); // fetchBook now handles restoring page and setting initialScrollTop
       fetchBookmarks();
-      // setCurrentPage(1); // fetchBook handles setting currentPage, potentially from localStorage
+      // setCurrentPage(1); // This is now handled by the useState initializer
       // setPageInput('1'); // pageInput updates based on currentPage effect
-      // readingGuideFetched.current = false; // Old logic for full guide
-      // setReadingGuideContent([]); // Old logic for full guide
       setCurrentPageGuide(null); // Clear page-specific guide for new book
       setGuideError(null);
       setHasGuideForCurrentPage(false);
