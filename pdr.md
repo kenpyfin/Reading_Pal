@@ -25,13 +25,14 @@ The Reading Pal application aims to provide users with an efficient and engaging
 - LLM-Powered Reading Assistance:
   - Integrated with LLM services to provide real-time insights, summaries, and interpretations of the book content.
   - Users can ask questions or request specific analyses of the text using natural language prompts.
+  - **Users can request a rewrite of the current page's content for improved clarity and formatting. The backend processes this request, updates the book's source file, and refreshes the user's view.**
   - **The backend provides context to the LLM by reading relevant sections from the Markdown file (using the stored filename and a configured base path).**
 - Dual-Pane UI:
   - Book Component: Displays the processed PDF content (Markdown read from file, and Images served statically) in a clean, readable format with options for zooming, searching, and navigating through pages.
   - Note Component: A synchronized pane where users can:
     - Take notes directly while reading.
     - **Notes can optionally be linked to selected text from the book pane, saving the source text along with the note.**
-    - **Notes can optionally be linked to a specific location in the book pane (e.g., via scroll position), saving this location data.**
+    - **Notes are saved with the page number they were created on and can be linked to a specific location in the book pane (e.g., via scroll position), saving this location data.**
     - Interact with LLM services to generate insights or ask questions about specific passages.
     - Organize and categorize notes for easy reference later.
 - Note Synchronization:
@@ -40,18 +41,22 @@ The Reading Pal application aims to provide users with an efficient and engaging
   - Notes can be saved, edited, and organized within the app.
 - Insight Extraction and Recall:
   - LLM services will generate summaries, key takeaways, and actionable insights from the book content.
+  - **The Reading Guide content is rendered as formatted Markdown.**
   - Users can review these insights to quickly grasp the main ideas of the book or revisit specific points during future reads.
+- **Session Persistence:**
+  - **The application remembers the user's last reading location (page number and scroll position) within a book. When the user reopens the book, they are returned to where they left off.**
 
 
 # Implementation Requirements
 - Use Python for backend and React for frontend.
 - Use MongoDB to store notes and book metadata, including the **filename** of the processed Markdown file for each book. The Markdown content itself contains web-relative paths to images.
+- **The `notes` collection in MongoDB stores a `page_number` field with each note.**
 - **Do not store the full Markdown content string in the database; store only its filename.**
 - Only use env files for global variable or configuration settings. Do not use a config file layer.
 - The `pdf_service` folder contains a PDF processing service. The backend sends the PDF to this service. The PDF service processes it asynchronously and sends a callback to the backend with the `job_id`, `status`, and the path to the resulting Markdown file.
 - **The backend must implement logic to read the Markdown content from the file system using the stored filename and a configured base path (via volume mounts).**
-- **The backend includes authenticated API endpoints for listing books, retrieving individual book details, uploading PDFs (`POST /api/books/upload`), renaming (`PUT /api/books/{book_id}/rename`), and deleting (`DELETE /api/books/{book_id}`) books. These operations include managing associated files (Markdown, images) on the file system where applicable.**
+- **The backend includes authenticated API endpoints for listing books, retrieving individual book details, uploading PDFs (`POST /api/books/upload`), renaming (`PUT /api/books/{book_id}/rename`), deleting (`DELETE /api/books/{book_id}`), and rewriting page content (`POST /api/books/{book_id}/rewrite-page/{page_number}`) books. These operations include managing associated files (Markdown, images) on the file system where applicable.**
 - **The application relies on a static file server (e.g., Nginx) to serve images from the designated storage path, using relative paths embedded in the Markdown content.**
 - **The Docker Compose setup uses `host` network mode, meaning services communicate via `localhost` or the host's IP and exposed ports, not internal Docker service names.**
 - **The frontend (BookList page) provides UI controls (e.g., buttons appearing on hover) for renaming and deleting books, with appropriate user confirmations. These UI controls trigger the respective authenticated API calls.**
-
+- **The frontend (BookView page) saves the user's current page and scroll position to `localStorage` to persist the reading location across sessions.**

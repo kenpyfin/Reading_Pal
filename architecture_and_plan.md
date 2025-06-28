@@ -39,6 +39,7 @@ graph LR
     *   Allows users to input notes and LLM prompts.
     *   Communicates with the Backend via REST APIs.
     *   Provides UI controls on the BookList page for renaming and deleting books (appearing on hover, with user confirmations).
+    *   **Saves the user's current page number and scroll position to the browser's `localStorage` to restore the reading session on refresh.**
     *   **Relies on Nginx (running in the same container) to serve static files and proxy API requests.**
 *   **Backend (Python):**
     *   Acts as the central hub.
@@ -56,7 +57,8 @@ graph LR
         *   Rename books (updating metadata and renaming the corresponding markdown file).
         *   Delete books (removing metadata and the markdown file. Deleting individual image files is complex as their names are not explicitly tracked from the PDF service callback).
         *   Send prompts to LLM Services for reading assistance.
-    *   Communicates with LLM Services (configured via `.env`) for reading assistance tasks (summaries, Q&A).
+        *   **Rewrite a specific page of a book (`POST /api/books/{book_id}/rewrite-page/{page_number}`). This involves reading the file, identifying page boundaries, sending the page content to an LLM, splicing the result back, and overwriting the file.**
+    *   Communicates with LLM Services (configured via `.env`) for reading assistance tasks (summaries, Q&A, rewriting).
     *   Retrieves LLM responses and potentially stores them or sends them to the Frontend.
 *   **PDF Service (Python - FastAPI):**
     *   A standalone FastAPI service.
@@ -71,7 +73,7 @@ graph LR
     *   **Sends a callback to the `BACKEND_CALLBACK_URL` with `job_id`, `status`, the server-side path to the saved Markdown file (if successful), and error details (if any). It does not send a separate list of image filenames in this callback.**
     *   Requires access to specific, configured absolute file storage paths (`PDF_STORAGE_PATH`, `MARKDOWN_PATH`, `IMAGES_PATH`).
 *   **LLM Services:**
-    *   **Reading Assistance LLMs:** External APIs (Anthropic, DeepSeek, Gemini) or local services (Ollama) as configured in `.env` (`LLM_SERVICE`, `LLM_MODEL`). Used by the **Backend** for user-initiated tasks like summarization and Q&A.
+    *   **Reading Assistance LLMs:** External APIs (Anthropic, DeepSeek, Gemini) or local services (Ollama) as configured in `.env` (`LLM_SERVICE`, `LLM_MODEL`). Used by the **Backend** for user-initiated tasks like summarization, Q&A, and **page content rewriting**.
     *   **Markdown Reformatting LLM:** Anthropic Claude or Ollama, configured via `.env` (`ANTHROPIC_API_KEY` or `OLLAMA_API_BASE`/`OLLAMA_REFORMAT_MODEL`). Used *internally* by the **PDF Service** during the processing pipeline.
     *   Receive prompts and relevant context (book passages, **read from the markdown file by the Backend**) from the component interacting with them.
     *   Return generated text.
@@ -79,7 +81,7 @@ graph LR
     *   Stores structured and unstructured data.
     *   Primary data entities:
         *   Books (metadata: title, original filename, processed status, **job_id**, **sanitized_title**, **the filename of the processed Markdown file**, **created_at**, **updated_at**, **processing_error**). Image paths are embedded within the markdown file. Note: `_id` is the MongoDB primary key, aliased to `id` in the backend model.
-        *   Notes (content, timestamp, reference to book section/page, link to LLM interaction if applicable, **scroll_percentage**).
+        *   Notes (content, timestamp, reference to book section/page, link to LLM interaction if applicable, **scroll_percentage**, **page_number**).
         *   Users (if authentication is added).
 
 **4. Data Flow Examples**
@@ -95,17 +97,18 @@ graph LR
     8.  Frontend fetches book content from Backend API (`GET /book/{book_id}`).
     9.  **Backend retrieves the markdown filename from MongoDB, reads the markdown content string from the file system. This markdown string already contains web-relative image paths (e.g., `/images/image.png`). Backend returns the markdown content string.**
     10. **Frontend displays the Markdown content. The browser renders images by making requests to these `/images/...` paths, which are served by a static file server (e.g., Nginx).**
-*   **LLM Interaction (e.g., Summarize Passage):**
-    1.  User selects text in the book pane and clicks "Summarize" in the Frontend.
-    2.  Frontend sends the selected text and book context (book ID, section) to Backend API (`POST /llm/summarize`).
+*   **LLM Interaction (e.g., Rewrite Page):**
+    1.  User clicks "Rewrite Page" in the Frontend.
+    2.  Frontend sends the book ID and current page number to the Backend API (`POST /api/books/{book_id}/rewrite-page/{page_number}`).
     3.  **Backend retrieves the markdown filename from the book's metadata in MongoDB.**
-    4.  **Backend reads the full markdown content or relevant sections from the markdown file using the stored filename and a configured base path (via volume mounts).**
-    5.  Backend calls the appropriate **Reading Assistance** LLM Service API with the prompt and context (derived from the markdown content).
-    6.  LLM Service processes the request and returns a summary.
-    7.  Backend receives the summary.
-    8.  Backend can optionally save the interaction/summary as a special type of note in MongoDB.
-    9.  Backend sends the summary back to the Frontend.
-    10. Frontend displays the summary (e.g., in the notes pane).
+    4.  **Backend reads the full markdown content from the markdown file.**
+    5.  **Backend calculates page boundaries to extract the content for the specific page number.**
+    6.  Backend calls the **Reading Assistance** LLM Service API with a prompt to rewrite the page's content.
+    7.  LLM Service returns the rewritten page content.
+    8.  Backend splices the rewritten content back into the full markdown string.
+    9.  Backend overwrites the original markdown file with the new, updated content.
+    10. Backend returns the full, updated markdown content in the API response.
+    11. Frontend updates its state with the new content, triggering a re-render and re-pagination.
 
 **5. Technology Stack**
 
@@ -127,7 +130,7 @@ graph LR
 *   **File Management for Book Operations:** Renaming a book involves renaming its markdown file. Deleting a book involves deleting its markdown file. Deleting associated image files is challenging because their individual names are not explicitly tracked by the backend (as they are not part of the PDF service callback) and are typically stored in a shared directory. Robust deletion of images would require changes to how image metadata is passed or how images are stored (e.g., in book-specific subdirectories).
 *   **Dual LLM Usage:** Be mindful of the two distinct uses of LLMs: one within the PDF Service for internal reformatting, and one orchestrated by the Backend for user-facing reading assistance. They may use different providers/models. The Markdown reformatting LLM configuration is now flexible (Anthropic or Ollama).
 *   **PDF Service Communication:** The Backend calls the PDF Service's `/process-pdf` endpoint (sending file data via multipart form data) and receives an immediate `job_id`. The PDF Service later sends an asynchronous callback to the `BACKEND_CALLBACK_URL`.
-*   **Synchronization:** Implementing smooth and accurate synchronized scrolling between potentially different content types (Markdown vs. editable notes) is crucial. The implementation now includes saving **scroll_percentage** with notes and clicking notes to jump to location.
+*   **Synchronization and Session Persistence:** Implementing smooth and accurate synchronized scrolling between potentially different content types (Markdown vs. editable notes) is crucial. The implementation now includes saving **scroll_percentage** with notes and clicking notes to jump to location. **To persist the user's reading location, the frontend saves the current page number and scroll position to the browser's `localStorage`, restoring it when the book view is reloaded.**
 *   **Scalability:** Consider potential bottlenecks, especially in PDF processing and LLM interactions. The separate PDF service helps distribute load. Reading markdown files from disk on demand might introduce I/O bottlenecks if not handled efficiently, especially for large files or high concurrency.
 *   **Error Handling:** Robust error handling is needed for file uploads, PDF processing failures, LLM API errors, database issues, and **file system access errors (e.g., when reading, renaming, or deleting files).**
 
