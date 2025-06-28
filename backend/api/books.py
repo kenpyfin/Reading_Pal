@@ -535,7 +535,7 @@ class PDFServiceCallbackData(BaseModel):
 
 # Define APPROX_CHARS_PER_PAGE, must match frontend's BookView.js
 # This is crucial for consistency.
-APPROX_CHARS_PER_PAGE_FOR_GUIDE = 15000 # Based on BookView.js current value
+APPROX_CHARS_PER_PAGE_FOR_GUIDE = 25000 # Based on BookView.js current value
 
 def _calculate_page_boundaries(markdown: str, target_chars_per_page: int) -> List[Dict[str, int]]:
     """
