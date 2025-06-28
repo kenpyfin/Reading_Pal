@@ -7,7 +7,7 @@ import { debounce } from 'lodash';
 import './BookView.css';
 import logger from '../utils/logger'; // Ensure logger is imported
 
-const APPROX_CHARS_PER_PAGE = 15000; // Approximate target characters per page
+const APPROX_CHARS_PER_PAGE = 25000; // Approximate target characters per page
 
 // Function to escape regex special characters
 function escapeRegExp(string) {
