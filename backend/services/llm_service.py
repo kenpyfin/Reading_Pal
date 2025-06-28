@@ -25,6 +25,8 @@ logger.info(f"DEBUG: LLM_MODEL from os.getenv: '{os.getenv('LLM_MODEL')}'")
 
 LLM_SERVICE = os.getenv("LLM_SERVICE", "ollama")
 LLM_MODEL = os.getenv("LLM_MODEL", "deepseek-r1:14b")
+REFORMAT_SERVICE = os.getenv("LLM_SERVICE", "ollama")
+REFORMAT_LLM = os.getenv("LLM_MODEL", "deepseek-r1:14b")
 ollama_env_base_url = os.getenv("OLLAMA_BASE_URL")
 
 
@@ -110,6 +112,8 @@ class LLMService:
         self.ollama_client = ollama
         self.service_name = LLM_SERVICE
         self.model_name = LLM_MODEL
+        self.reformat_service = REFORMAT_SERVICE
+        self.reformat_model = REFORMAT_LLM
 
     def _remove_think_tags(self, text: str) -> str:
         """Removes content within <think>...</think> tags."""
@@ -231,8 +235,8 @@ class LLMService:
         try:
             if self.service_name == "anthropic" and self.anthropic_client:
                  message = await self.anthropic_client.messages.create(
-                    model=self.model_name, # Use the configured model
-                    max_tokens=4096, # Adjust as needed
+                    model=self.reformat_model, # Use the configured model
+                    max_tokens=25000, # Adjust as needed
                     system="You are a helpful assistant that summarizes text.",
                     messages=[
                         {"role": "user", "content": prompt}
@@ -328,17 +332,17 @@ Rewrite the following markdown:
         logger.info(f"Sending 'rewrite' prompt to LLM ({self.service_name}/{self.model_name}). Text length: {len(text)}")
 
         try:
-            if self.service_name == "anthropic" and self.anthropic_client:
+            if self.reformat_service == "anthropic" and self.anthropic_client:
                 message = await self.anthropic_client.messages.create(
                     model=self.model_name,
-                    max_tokens=8192, # Allow more tokens for rewriting full documents
+                    max_tokens=80000, # Allow more tokens for rewriting full documents
                     system="You are an expert Markdown editor.",
                     messages=[{"role": "user", "content": full_prompt}]
                 )
                 response_text = message.content[0].text if message.content else ""
                 return self._remove_think_tags(response_text)
 
-            elif self.service_name == "ollama" and self.ollama_client:
+            elif self.reformat_service == "ollama" and self.ollama_client:
                 response = await self.ollama_client.chat(
                     model=self.model_name,
                     messages=[{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': text}]
@@ -346,12 +350,12 @@ Rewrite the following markdown:
                 response_text = response['message']['content'] if response and 'message' in response else ""
                 return self._remove_think_tags(response_text)
 
-            elif self.service_name == "gemini" and self.gemini_model:
+            elif self.reformat_service == "gemini" and self.gemini_model:
                 response = await self.gemini_model.generate_content_async(full_prompt)
                 response_text = response.text if response and response.text else ""
                 return self._remove_think_tags(response_text)
 
-            elif self.service_name == "deepseek" and self.deepseek_config:
+            elif self.reformat_service == "deepseek" and self.deepseek_config:
                 headers = {"Authorization": f"Bearer {self.deepseek_config['api_key']}", "Content-Type": "application/json"}
                 payload = {"model": self.model_name, "messages": [{"role": "user", "content": full_prompt}], "max_tokens": 8192}
                 from fastapi.concurrency import run_in_threadpool
