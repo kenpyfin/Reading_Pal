@@ -1568,7 +1568,7 @@ function BookView() {
     }
   }, [syncScroll]);
 
-  // Debounced function to save reading position
+  // Debounced function to save reading position (primarily for scroll)
   const debouncedSaveReadingPosition = useCallback(
     debounce((bookIdToSave, pageToSave, scrollTopToSave) => {
       if (bookIdToSave && typeof pageToSave === 'number' && typeof scrollTopToSave === 'number') {
@@ -1577,42 +1577,42 @@ function BookView() {
         logger.debug(`[BookView - SavePosition] Saved position for book ${bookIdToSave}: Page ${pageToSave}, ScrollTop ${scrollTopToSave}`);
       }
     }, 1000), // Debounce for 1 second
-    [] // No dependencies, relies on arguments
+    []
   );
 
-  // Effect to save reading position on currentPage change or scroll
+  // Effect to save reading position on scroll and page change
   useEffect(() => {
     const bookElement = bookPaneContainerRef.current;
 
+    // Function to handle user-initiated scroll
     const handleScroll = () => {
       if (bookElement && !isProgrammaticScroll.current && bookId) {
-        // Only save if scroll was user-initiated and bookId is valid
+        // This saves both page and scroll position after a delay
         debouncedSaveReadingPosition(bookId, currentPage, bookElement.scrollTop);
       }
     };
 
-    if (bookElement) {
-      bookElement.addEventListener('scroll', handleScroll);
+    // When currentPage changes, we want to save the new page number immediately.
+    // We also reset the scrollTop for that page to 0 in localStorage, because
+    // the view scrolls to the top. The next user scroll will update it.
+    if (bookId && currentPage) {
+        const position = { page: currentPage, scrollTop: 0 };
+        localStorage.setItem(`readingPalLastPosition_${bookId}`, JSON.stringify(position));
+        logger.debug(`[BookView - PageChange] Saved page ${currentPage} with scrollTop 0 for book ${bookId}`);
     }
 
-    // Save when currentPage changes too (e.g., via pagination buttons)
-    if (bookId && bookElement) {
-       // We might want to save immediately on page change rather than just on next scroll
-       // However, scrollTop might not be stable yet.
-       // The scroll event listener should cover changes after page load.
-       // If user clicks "Next Page", then scrolls, it will be saved.
-       // If they click "Next Page" and immediately refresh, the scrollTop might be 0 for the new page.
-       // Let's also call save on currentPage change, assuming scrollTop is somewhat stable or 0.
-       debouncedSaveReadingPosition(bookId, currentPage, bookElement.scrollTop);
+    // Add scroll listener
+    if (bookElement) {
+      bookElement.addEventListener('scroll', handleScroll);
     }
 
     return () => {
       if (bookElement) {
         bookElement.removeEventListener('scroll', handleScroll);
       }
-      debouncedSaveReadingPosition.cancel(); // Cancel any pending saves on unmount/cleanup
+      debouncedSaveReadingPosition.cancel();
     };
-  }, [bookId, currentPage, debouncedSaveReadingPosition]); // Listen to bookId and currentPage
+  }, [bookId, currentPage, debouncedSaveReadingPosition]);
 
 
   const handleBookmarkSelect = (event) => {
