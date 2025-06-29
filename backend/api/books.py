@@ -40,6 +40,14 @@ from backend.db.mongodb import (
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# Feature Flag for Page Rewriting
+FEATURE_FLAG_ENABLE_REWRITE = os.getenv("FEATURE_FLAG_ENABLE_REWRITE", "false").lower() == "true"
+if FEATURE_FLAG_ENABLE_REWRITE:
+    logger.info("Feature Flag: Page rewriting is ENABLED.")
+else:
+    logger.info("Feature Flag: Page rewriting is DISABLED.")
+
+
 # Dependency to get current user_id from token
 async def get_current_user_id(request: Request) -> str:
     # Log all incoming headers for deep debugging
@@ -835,6 +843,9 @@ async def rewrite_page_content(book_id: str, page_number: int, current_user_id: 
     Rewrites a single page of the book's markdown content using an LLM.
     This action overwrites the existing markdown file with the updated full content.
     """
+    if not FEATURE_FLAG_ENABLE_REWRITE:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Feature not available")
+        
     logger.info(f"User {current_user_id} requested to rewrite page {page_number} for book {book_id}")
 
     # 1. Get book from DB and validate
