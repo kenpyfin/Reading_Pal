@@ -965,21 +965,17 @@ async def generate_page_reading_guide(
 
     llm_prompt = (
         f"You are an expert reading assistant. Generate a concise reading guide for page {page_number} "
-        f"of the book titled '{book.title}'. The text from this page is provided below. "
+        f"of the book titled '{book.title}'. "
         "Focus on identifying key themes, main ideas, important characters or events if any, "
         "and suggest 1-2 thought-provoking questions related to this specific page's content. "
         "If the content is very short, a header, or seems like an image caption, note that. "
         "If the content is blank or unavailable, state that the page appears to be empty or mainly visual. "
-        "Format the guide clearly. Keep the guide concise, suitable for a small panel in a reading application.\n\n"
-        "Page Content:\n\"\"\"\n"
-        f"{page_content_text if page_content_text and page_content_text.strip() else 'Content for this page is empty or unavailable.'}\n"
-        "\"\"\"\n\n"
-        "Reading Guide:"
+        "Format the guide clearly. Keep the guide concise, suitable for a small panel in a reading application."
     )
     
     try:
         logger.info(f"Sending prompt to LLM for book {book.id}, page {page_number}. Prompt length (approx): {len(llm_prompt)}")
-        guide_text = await llm_service.ask(prompt=llm_prompt, context=None) # Use imported llm_service instance
+        guide_text = await llm_service.ask(prompt=llm_prompt, context=page_content_text) # Use imported llm_service instance
         if not guide_text or not guide_text.strip():
             guide_text = "The LLM did not provide a guide for this page. It might be empty or contain non-textual content."
             logger.warning(f"LLM returned empty guide for book {book.id}, page {page_number}")
