@@ -837,6 +837,14 @@ async def delete_book_route(book_id: str, current_user_id: str = Depends(get_cur
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@router.get("/features", response_model=Dict[str, bool])
+async def get_features():
+    """
+    Returns the status of various feature flags.
+    """
+    return {"rewrite_enabled": FEATURE_FLAG_ENABLE_REWRITE}
+
+
 @router.post("/{book_id}/rewrite-page/{page_number}", response_model=Book)
 async def rewrite_page_content(book_id: str, page_number: int, current_user_id: str = Depends(get_current_user_id)):
     """
