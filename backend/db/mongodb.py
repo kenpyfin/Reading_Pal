@@ -163,6 +163,34 @@ async def update_book(book_id: str, user_id: str, update_data: dict) -> bool:
         return False
 
 
+async def update_book_by_system(book_id: str, update_data: dict) -> bool:
+    """Updates a book document by its _id string, without a user check. For system processes."""
+    database = get_database()
+    if database is None:
+        logger.error(f"Database not initialized for system update on book {book_id}.")
+        return False
+    try:
+        obj_id = ObjectId(book_id)
+        update_data["updated_at"] = datetime.utcnow()
+
+        result = await database.books.update_one(
+            {"_id": obj_id},
+            {"$set": update_data}
+        )
+        if result.matched_count > 0:
+            logger.info(f"System updated book {book_id}. Matched: {result.matched_count}, Modified: {result.modified_count}")
+            return True
+        else:
+            logger.warning(f"No book found with ID {book_id} for system update.")
+            return False
+    except InvalidId:
+        logger.warning(f"Invalid book ID format for system update: {book_id}")
+        return False
+    except Exception as e:
+        logger.error(f"Error during system update for book {book_id}: {e}", exc_info=True)
+        return False
+
+
 async def delete_book_record(book_id: str, user_id: str) -> bool:
     """
     Deletes a book record from the database by its ID, ensuring it belongs to the user.
