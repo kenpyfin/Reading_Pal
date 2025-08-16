@@ -868,8 +868,75 @@ function BookView() {
       setCurrentPageContent(plainPageText);
       logger.debug(`[BookView - Page Content Effect] Page ${validCurrentPage}: Global Offset [${pageStartGlobalOffset}-${pageEndGlobalOffset}]. Plain text (len: ${plainPageText.length}): "${plainPageText.substring(0, 100)}..."`);
 
-      setHighlightedPageContent(plainPageText);
-      logger.debug(`[BookView - Page Content Effect] Set page content without note highlighting.`);
+      // --- NEW: Highlight text with notes ---
+      // Filter and sort notes relevant to the current page.
+      const notesOnPage = notes
+        .filter(note =>
+          note.global_character_offset !== null &&
+          note.global_character_offset >= pageStartGlobalOffset &&
+          note.global_character_offset < pageEndGlobalOffset &&
+          note.source_text && note.source_text.length > 0
+        )
+        .sort((a, b) => a.global_character_offset - b.global_character_offset);
+
+      if (notesOnPage.length > 0) {
+        logger.debug(`[BookView - Page Content Effect] Found ${notesOnPage.length} notes on page ${validCurrentPage}.`);
+
+        // Merge overlapping or adjacent highlight ranges to avoid nested <mark> tags.
+        const ranges = [];
+        if (notesOnPage.length > 0) {
+          // Initialize with the first note's range.
+          let currentRange = {
+            start: notesOnPage[0].global_character_offset - pageStartGlobalOffset,
+            end: (notesOnPage[0].global_character_offset - pageStartGlobalOffset) + (notesOnPage[0].source_text?.length || 0)
+          };
+
+          for (let i = 1; i < notesOnPage.length; i++) {
+            const nextStart = notesOnPage[i].global_character_offset - pageStartGlobalOffset;
+            const nextEnd = nextStart + (notesOnPage[i].source_text?.length || 0);
+
+            // If the next note's range overlaps with the current merged range, extend the current range.
+            if (nextStart <= currentRange.end) {
+              currentRange.end = Math.max(currentRange.end, nextEnd);
+            } else {
+              // Otherwise, the current range is complete. Push it and start a new one.
+              ranges.push(currentRange);
+              currentRange = { start: nextStart, end: nextEnd };
+            }
+          }
+          ranges.push(currentRange); // Add the last merged range.
+        }
+        
+        logger.debug(`[BookView - Page Content Effect] Merged into ${ranges.length} highlight ranges.`);
+
+        let highlightedText = '';
+        let lastIndex = 0;
+
+        for (const range of ranges) {
+          // Append the plain text segment before the current highlight.
+          if (range.start > lastIndex) {
+            highlightedText += plainPageText.substring(lastIndex, range.start);
+          }
+          // Append the highlighted text segment.
+          const textToHighlight = plainPageText.substring(range.start, Math.min(range.end, plainPageText.length)); // Ensure end is not out of bounds
+          if (textToHighlight) { // Only add mark if there's text
+            highlightedText += `<mark class="note-highlight">${textToHighlight}</mark>`;
+          }
+          lastIndex = Math.min(range.end, plainPageText.length);
+        }
+
+        // Append any remaining plain text after the last highlight.
+        if (lastIndex < plainPageText.length) {
+          highlightedText += plainPageText.substring(lastIndex);
+        }
+
+        setHighlightedPageContent(highlightedText);
+        logger.debug(`[BookView - Page Content Effect] Set page content with note highlighting.`);
+
+      } else {
+        setHighlightedPageContent(plainPageText);
+        logger.debug(`[BookView - Page Content Effect] Set page content without note highlighting (no notes on page).`);
+      }
       
       if (bookPaneContainerRef.current) {
         if (pendingScrollOffsetInPage === null && pendingScrollToPercentage === null) {
