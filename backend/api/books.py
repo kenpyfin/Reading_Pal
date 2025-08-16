@@ -889,19 +889,30 @@ async def reformat_page_content(book_id: str, page_number: int, payload: Reforma
 
     content_to_reformat = ""
     is_selection_reformat = False
+    # Store the length of the text that will be replaced.
+    original_selection_len_for_splicing = 0
 
     if payload and payload.selected_text and payload.global_char_offset is not None:
         is_selection_reformat = True
         offset = payload.global_char_offset
-        text_len = len(payload.selected_text)
+        # The length of the text from the frontend reflects the user's selection length.
+        text_len_from_frontend = len(payload.selected_text)
         
-        # Verification step
-        if not (0 <= offset < len(full_content) and full_content[offset:offset+text_len] == payload.selected_text):
-            logger.warning(f"Reformat selection mismatch for book {book_id}. Offset: {offset}, Text: '{payload.selected_text[:50]}...'. Content at offset: '{full_content[offset:offset+50]}...'.")
-            # We can either raise an error or try to find the text. For now, let's raise an error.
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Selected text does not match content at the provided offset.")
+        # Basic validation for the offset.
+        if not (0 <= offset < len(full_content)):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid character offset provided.")
         
-        content_to_reformat = payload.selected_text
+        # Define the slice of original content to be replaced, using frontend's length as a guide.
+        end_offset_of_original = min(offset + text_len_from_frontend, len(full_content))
+        content_to_reformat = full_content[offset:end_offset_of_original]
+        original_selection_len_for_splicing = len(content_to_reformat) # This is the length we'll replace.
+        
+        # Log a warning if there's a mismatch, but don't error out.
+        if content_to_reformat != payload.selected_text:
+            logger.warning(f"Reformat selection mismatch for book {book_id}. Frontend text differs from backend content at offset {offset}. Proceeding with backend content for reformatting.")
+            logger.debug(f"Frontend text (len {len(payload.selected_text)}): '{payload.selected_text[:100]}...'")
+            logger.debug(f"Backend content (len {original_selection_len_for_splicing}): '{content_to_reformat[:100]}...'")
+        
         logger.info(f"Reformatting a selection of text (len: {len(content_to_reformat)}) for book {book_id}.")
     else:
         # 3. Calculate page boundaries to find the correct page content (whole page reformat)
@@ -926,7 +937,8 @@ async def reformat_page_content(book_id: str, page_number: int, payload: Reforma
     # 5. Splice the reformatted content back into the full markdown
     if is_selection_reformat:
         start_offset = payload.global_char_offset
-        end_offset = start_offset + len(payload.selected_text)
+        # Use the length of the text we actually extracted from the original file.
+        end_offset = start_offset + original_selection_len_for_splicing
         new_full_content = full_content[:start_offset] + reformatted_content + full_content[end_offset:]
     else: # Whole page reformat
         page_boundary = _calculate_page_boundaries(full_content, APPROX_CHARS_PER_PAGE_FOR_GUIDE)[page_number - 1]
