@@ -348,10 +348,10 @@ function BookView() {
   // dragStartX is already defined and can be reused if we ensure no overlap in active resizing
   // isResizing is also already defined, might need a separate one or careful management
 
-  // --- NEW State for Content Rewriting ---
-  const [isRewriting, setIsRewriting] = useState(false);
-  const [rewriteError, setRewriteError] = useState(null);
-  // --- END NEW State for Content Rewriting ---
+  // --- NEW State for Content Reformatting ---
+  const [isReformatting, setIsReformatting] = useState(false);
+  const [reformatError, setReformatError] = useState(null);
+  // --- END NEW State for Content Reformatting ---
   const isInitialMount = useRef(true);
 
   const fetchBook = async () => {
@@ -1796,14 +1796,17 @@ function BookView() {
     }
   };
   
-  // --- UPDATED: Handler for rewriting a single page ---
-  const handleRewritePage = async () => {
-    if (!window.confirm(`Are you sure you want to rewrite page ${currentPage}? This will permanently replace the current page's text with an AI-generated version and cannot be undone.`)) {
+  // --- UPDATED: Handler for reformatting content ---
+  const handleReformatPage = async () => {
+    const reformatTarget = selectedBookText ? "the selected text" : `page ${currentPage}`;
+    const confirmMessage = `Are you sure you want to reformat ${reformatTarget}? This will permanently replace the content with an AI-generated version and cannot be undone.`;
+
+    if (!window.confirm(confirmMessage)) {
         return;
     }
 
-    setIsRewriting(true);
-    setRewriteError(null);
+    setIsReformatting(true);
+    setReformatError(null);
 
     try {
         const token = localStorage.getItem('authToken');
@@ -1811,11 +1814,19 @@ function BookView() {
             throw new Error("Authentication token not found. Please log in.");
         }
 
-        const response = await fetch(`/api/books/${bookId}/rewrite-page/${currentPage}`, {
+        const payload = {};
+        if (selectedBookText && selectedGlobalCharOffset !== null) {
+            payload.selected_text = selectedBookText;
+            payload.global_char_offset = selectedGlobalCharOffset;
+        }
+
+        const response = await fetch(`/api/books/${bookId}/reformat-page/${currentPage}`, {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json',
             },
+            body: JSON.stringify(payload),
         });
 
         if (!response.ok) {
@@ -1826,24 +1837,25 @@ function BookView() {
         const updatedBook = await response.json();
         
         if (updatedBook && updatedBook.markdown_content) {
-            logger.info("[BookView - handleRewritePage] Successfully received rewritten content.");
+            logger.info("[BookView - handleReformatPage] Successfully received reformatted content.");
             // Update the full markdown content state. This will trigger the useEffect
             // that recalculates page boundaries and updates the current page's content.
             setFullMarkdownContent(updatedBook.markdown_content);
             
-            // The current page number should remain the same, but its content and
-            // the boundaries of subsequent pages will be updated automatically by the effect.
-            // No need to reset to page 1 unless that's desired behavior.
+            // Clear selection after reformatting
+            setSelectedBookText(null);
+            setSelectedGlobalCharOffset(null);
+            
         } else {
-            throw new Error("Rewrite operation did not return new content.");
+            throw new Error("Reformat operation did not return new content.");
         }
 
     } catch (err) {
-        logger.error("Failed to rewrite page:", err);
-        setRewriteError(err.message);
-        alert(`Error rewriting page: ${err.message}`);
+        logger.error("Failed to reformat content:", err);
+        setReformatError(err.message);
+        alert(`Error reformatting content: ${err.message}`);
     } finally {
-        setIsRewriting(false);
+        setIsReformatting(false);
     }
   };
 
@@ -2042,8 +2054,8 @@ function BookView() {
                     </div>
                   )}
                 </div>
-                <button onClick={handleRewritePage} className="control-button" title="Rewrite current page with AI. This cannot be undone." disabled={isRewriting} style={{ marginLeft: '8px' }}>
-                  {isRewriting ? 'Rewriting...' : 'Rewrite Page'}
+                <button onClick={handleReformatPage} className="control-button" title={selectedBookText ? "Reformat selected text with AI." : "Reformat current page with AI. This cannot be undone."} disabled={isReformatting} style={{ marginLeft: '8px' }}>
+                  {isReformatting ? 'Reformatting...' : (selectedBookText ? 'Reformat Selection' : 'Reformat Page')}
                 </button>
               </div>
               

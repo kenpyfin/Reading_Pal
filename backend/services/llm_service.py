@@ -305,33 +305,33 @@ class LLMService:
             logger.error(f"Error calling {self.service_name} LLM 'summarize' method: {e}")
             return f"Error generating summary from LLM: {e}"
 
-    async def rewrite_content(self, text: str) -> str:
+    async def reformat_content(self, text: str) -> str:
         """
-        Rewrites the given text for better formatting and clarity using an LLM.
+        Reformats the given text for better formatting and clarity using an LLM.
         Preserves content and image links.
         """
         if not text:
-            return "No text provided to rewrite."
+            return "No text provided to reformat."
 
-        system_prompt = """You are an expert in Markdown. Your task is to reformat and rewrite the given Markdown text to improve its readability, consistency, and structure, making it clearer and more engaging for a reader.
+        system_prompt = """You are an expert in Markdown. Your task is to reformat the given Markdown text to improve its readability, consistency, and structure.
 Strictly adhere to the following:
-1.  Preserve ALL original information and content. You can rephrase sentences and restructure paragraphs for clarity, but do not add new information or remove existing facts.
+1.  Preserve ALL original information and content. Do NOT add new information or remove existing facts. Do not rephrase sentences.
 2.  Pay close attention to image links like `![](path/to/image.png)` or `![alt text](path/to/image.png)` and ensure they are preserved EXACTLY as they appear in the input.
 3.  Ensure standard Markdown syntax is used. Correct any non-standard or malformed Markdown.
 4.  Maintain the original heading levels and the overall document structure.
-5.  Do NOT add any conversational text, apologies, or explanations. Output ONLY the rewritten Markdown text.
-6.  If the input is already well-formatted and clear, you can make minimal changes or return it as is.
+5.  Do NOT add any conversational text, apologies, or explanations. Output ONLY the reformatted Markdown text.
+6.  If the input is already well-formatted, you can make minimal changes or return it as is.
 
-Rewrite the following markdown:
+Reformat the following markdown:
 """
         full_prompt = f"{system_prompt}\n\n{text}"
-        logger.info(f"Sending 'rewrite' prompt to LLM ({self.service_name}/{self.model_name}). Text length: {len(text)}")
+        logger.info(f"Sending 'reformat' prompt to LLM ({self.service_name}/{self.model_name}). Text length: {len(text)}")
 
         try:
             if self.service_name == "anthropic" and self.anthropic_client:
                 message = await self.anthropic_client.messages.create(
                     model=self.model_name,
-                    max_tokens=8192, # Allow more tokens for rewriting full documents
+                    max_tokens=8192, # Allow more tokens for reformatting full documents
                     system="You are an expert Markdown editor.",
                     messages=[{"role": "user", "content": full_prompt}]
                 )
@@ -362,13 +362,13 @@ Rewrite the following markdown:
                 return self._remove_think_tags(response_text)
 
             else:
-                error_msg = f"LLM service '{self.service_name}' is configured but client is not initialized or implemented for rewrite."
+                error_msg = f"LLM service '{self.service_name}' is configured but client is not initialized or implemented for reformat."
                 logger.error(error_msg)
                 return f"Error: {error_msg}"
 
         except Exception as e:
-            logger.error(f"Error calling {self.service_name} LLM 'rewrite_content' method: {e}", exc_info=True)
-            return f"Error rewriting content from LLM: {e}"
+            logger.error(f"Error calling {self.service_name} LLM 'reformat_content' method: {e}", exc_info=True)
+            return f"Error reformatting content from LLM: {e}"
 
 
 # Instantiate the service as a singleton
@@ -406,12 +406,12 @@ async def summarize_text(text: str) -> str:
     logger.info(f"Calling LLM service 'summarize' via wrapper with text length: {len(text)}...")
     return await llm_service.summarize(text)
 
-async def rewrite_book_content(text: str) -> str:
+async def reformat_book_content(text: str) -> str:
     """
-    Sends text to the configured LLM for rewriting.
-    Calls the async LLMService.rewrite_content method.
+    Sends text to the configured LLM for reformatting.
+    Calls the async LLMService.reformat_content method.
     """
-    logger.info(f"Calling LLM service 'rewrite_content' via wrapper with text length: {len(text)}...")
-    return await llm_service.rewrite_content(text)
+    logger.info(f"Calling LLM service 'reformat_content' via wrapper with text length: {len(text)}...")
+    return await llm_service.reformat_content(text)
 
 # TODO: Add other LLM interaction functions as needed (e.g., extract_keywords)

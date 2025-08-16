@@ -845,16 +845,20 @@ async def get_features():
     return {"rewrite_enabled": FEATURE_FLAG_ENABLE_REWRITE}
 
 
-@router.post("/{book_id}/rewrite-page/{page_number}", response_model=Book)
-async def rewrite_page_content(book_id: str, page_number: int, current_user_id: str = Depends(get_current_user_id)):
+class ReformatPayload(BaseModel):
+    selected_text: Optional[str] = None
+    global_char_offset: Optional[int] = None
+
+@router.post("/{book_id}/reformat-page/{page_number}", response_model=Book)
+async def reformat_page_content(book_id: str, page_number: int, payload: ReformatPayload = Body(default=ReformatPayload()), current_user_id: str = Depends(get_current_user_id)):
     """
-    Rewrites a single page of the book's markdown content using an LLM.
+    Reformats either a selection of text or a single page of the book's markdown content using an LLM.
     This action overwrites the existing markdown file with the updated full content.
     """
     if not FEATURE_FLAG_ENABLE_REWRITE:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Feature not available")
         
-    logger.info(f"User {current_user_id} requested to rewrite page {page_number} for book {book_id}")
+    logger.info(f"User {current_user_id} requested to reformat content for book {book_id}, page {page_number}")
 
     # 1. Get book from DB and validate
     book_data_doc = await get_book(book_id, current_user_id)
@@ -864,7 +868,7 @@ async def rewrite_page_content(book_id: str, page_number: int, current_user_id: 
     book = Book.model_validate(book_data_doc)
 
     if book.status != 'completed' or not book.markdown_filename:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Book content is not available for rewriting.")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Book content is not available for reformatting.")
 
     if not CONTAINER_MARKDOWN_PATH:
         logger.error("CONTAINER_MARKDOWN_PATH is not set. Cannot read or write markdown file.")
@@ -872,7 +876,7 @@ async def rewrite_page_content(book_id: str, page_number: int, current_user_id: 
 
     # 2. Read current markdown file
     markdown_file_path = os.path.join(CONTAINER_MARKDOWN_PATH, book.markdown_filename)
-    logger.info(f"Reading content from {markdown_file_path} for page-rewrite.")
+    logger.info(f"Reading content from {markdown_file_path} for page-reformat.")
     
     try:
         def read_file_sync(path):
@@ -883,27 +887,51 @@ async def rewrite_page_content(book_id: str, page_number: int, current_user_id: 
         logger.error(f"Markdown file not found at {markdown_file_path} for book {book_id}")
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Markdown file not found.")
 
-    # 3. Calculate page boundaries to find the correct page content
-    boundaries = _calculate_page_boundaries(full_content, APPROX_CHARS_PER_PAGE_FOR_GUIDE)
-    if not (1 <= page_number <= len(boundaries)):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid page number. Must be between 1 and {len(boundaries)}.")
+    content_to_reformat = ""
+    is_selection_reformat = False
 
-    page_index = page_number - 1
-    page_boundary = boundaries[page_index]
-    start_offset, end_offset = page_boundary['start'], page_boundary['end']
-    
-    page_content_to_rewrite = full_content[start_offset:end_offset]
+    if payload and payload.selected_text and payload.global_char_offset is not None:
+        is_selection_reformat = True
+        offset = payload.global_char_offset
+        text_len = len(payload.selected_text)
+        
+        # Verification step
+        if not (0 <= offset < len(full_content) and full_content[offset:offset+text_len] == payload.selected_text):
+            logger.warning(f"Reformat selection mismatch for book {book_id}. Offset: {offset}, Text: '{payload.selected_text[:50]}...'. Content at offset: '{full_content[offset:offset+50]}...'.")
+            # We can either raise an error or try to find the text. For now, let's raise an error.
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Selected text does not match content at the provided offset.")
+        
+        content_to_reformat = payload.selected_text
+        logger.info(f"Reformatting a selection of text (len: {len(content_to_reformat)}) for book {book_id}.")
+    else:
+        # 3. Calculate page boundaries to find the correct page content (whole page reformat)
+        boundaries = _calculate_page_boundaries(full_content, APPROX_CHARS_PER_PAGE_FOR_GUIDE)
+        if not (1 <= page_number <= len(boundaries)):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid page number. Must be between 1 and {len(boundaries)}.")
 
-    # 4. Call LLM service to rewrite the page content
-    logger.info(f"Sending page {page_number} content (len: {len(page_content_to_rewrite)}) of book {book_id} to LLM service for rewriting.")
-    rewritten_page_content = await llm_service.rewrite_content(page_content_to_rewrite)
-    if not rewritten_page_content or rewritten_page_content.startswith("Error:"):
-        logger.error(f"LLM service failed to rewrite page content for book {book_id}. Response: {rewritten_page_content}")
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"LLM service failed to rewrite content. {rewritten_page_content}")
-    logger.info(f"Received rewritten page content for book {book_id}. New length: {len(rewritten_page_content)}")
+        page_index = page_number - 1
+        page_boundary = boundaries[page_index]
+        start_offset, end_offset = page_boundary['start'], page_boundary['end']
+        
+        content_to_reformat = full_content[start_offset:end_offset]
+        logger.info(f"Reformatting whole page {page_number} content (len: {len(content_to_reformat)}) for book {book_id}.")
 
-    # 5. Splice the rewritten content back into the full markdown
-    new_full_content = full_content[:start_offset] + rewritten_page_content + full_content[end_offset:]
+    # 4. Call LLM service to reformat the content
+    reformatted_content = await llm_service.reformat_content(content_to_reformat)
+    if not reformatted_content or reformatted_content.startswith("Error:"):
+        logger.error(f"LLM service failed to reformat content for book {book_id}. Response: {reformatted_content}")
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"LLM service failed to reformat content. {reformatted_content}")
+    logger.info(f"Received reformatted content for book {book_id}. New length: {len(reformatted_content)}")
+
+    # 5. Splice the reformatted content back into the full markdown
+    if is_selection_reformat:
+        start_offset = payload.global_char_offset
+        end_offset = start_offset + len(payload.selected_text)
+        new_full_content = full_content[:start_offset] + reformatted_content + full_content[end_offset:]
+    else: # Whole page reformat
+        page_boundary = _calculate_page_boundaries(full_content, APPROX_CHARS_PER_PAGE_FOR_GUIDE)[page_number - 1]
+        start_offset, end_offset = page_boundary['start'], page_boundary['end']
+        new_full_content = full_content[:start_offset] + reformatted_content + full_content[end_offset:]
 
     # 6. Overwrite the markdown file with the new full content
     try:
@@ -911,10 +939,10 @@ async def rewrite_page_content(book_id: str, page_number: int, current_user_id: 
             with open(path, 'w', encoding='utf-8') as f:
                 f.write(content)
         await run_in_threadpool(write_file_sync, markdown_file_path, new_full_content)
-        logger.info(f"Successfully overwrote markdown file at {markdown_file_path} with page-rewritten content.")
+        logger.info(f"Successfully overwrote markdown file at {markdown_file_path} with reformatted content.")
     except Exception as e:
-        logger.error(f"Failed to write rewritten content to {markdown_file_path}: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to save rewritten content.")
+        logger.error(f"Failed to write reformatted content to {markdown_file_path}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to save reformatted content.")
 
     # 7. Update timestamp and return book object with new full content
     now = datetime.utcnow()
