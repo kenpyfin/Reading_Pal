@@ -40,13 +40,6 @@ from backend.db.mongodb import (
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# Feature Flag for Page Rewriting
-FEATURE_FLAG_ENABLE_REWRITE = os.getenv("FEATURE_FLAG_ENABLE_REWRITE", "false").lower() == "true"
-if FEATURE_FLAG_ENABLE_REWRITE:
-    logger.info("Feature Flag: Page rewriting is ENABLED.")
-else:
-    logger.info("Feature Flag: Page rewriting is DISABLED.")
-
 
 # Dependency to get current user_id from token
 async def get_current_user_id(request: Request) -> str:
@@ -842,7 +835,8 @@ async def get_features():
     """
     Returns the status of various feature flags.
     """
-    return {"rewrite_enabled": FEATURE_FLAG_ENABLE_REWRITE}
+    rewrite_enabled = os.getenv("FEATURE_FLAG_ENABLE_REWRITE", "false").lower() == "true"
+    return {"rewrite_enabled": rewrite_enabled}
 
 
 class ReformatPayload(BaseModel):
@@ -855,7 +849,8 @@ async def reformat_page_content(book_id: str, page_number: int, payload: Reforma
     Reformats either a selection of text or a single page of the book's markdown content using an LLM.
     This action overwrites the existing markdown file with the updated full content.
     """
-    if not FEATURE_FLAG_ENABLE_REWRITE:
+    rewrite_enabled = os.getenv("FEATURE_FLAG_ENABLE_REWRITE", "false").lower() == "true"
+    if not rewrite_enabled:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Feature not available")
         
     logger.info(f"User {current_user_id} requested to reformat content for book {book_id}, page {page_number}")
