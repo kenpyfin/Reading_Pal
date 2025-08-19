@@ -2332,6 +2332,10 @@ function BookView() {
       <NoteDisplayModal
         note={activeNoteForModal}
         onClose={() => setActiveNoteForModal(null)}
+        onDelete={(noteId) => {
+          handleDeleteNote(noteId);
+          setActiveNoteForModal(null); // Close modal after deletion is initiated
+        }}
       />
     )}
   </div> // End of book-view-container

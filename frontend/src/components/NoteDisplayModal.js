@@ -1,10 +1,17 @@
 import React from 'react';
 import './NoteDisplayModal.css';
 
-const NoteDisplayModal = ({ note, onClose }) => {
+const NoteDisplayModal = ({ note, onClose, onDelete }) => {
   if (!note) {
     return null;
   }
+
+  const handleDelete = () => {
+    if (onDelete) {
+      // The confirmation is handled by the parent function for consistency
+      onDelete(note._id || note.id);
+    }
+  };
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -23,6 +30,11 @@ const NoteDisplayModal = ({ note, onClose }) => {
           <small className="note-meta-display">
             On Page: {note.page_number} | {new Date(note.created_at).toLocaleString()}
           </small>
+        </div>
+        <div className="modal-footer">
+          <button onClick={handleDelete} className="delete-button-modal">
+            Delete Note
+          </button>
         </div>
       </div>
     </div>
