@@ -3,6 +3,8 @@ import { useParams, Link } from 'react-router-dom';
 import BookPane from '../components/BookPane';
 import NotePane from '../components/NotePane';
 import ReadingGuidePane from '../components/ReadingGuidePane'; // Import ReadingGuidePane
+import AllNotesModal from '../components/AllNotesModal';
+import NoteDisplayModal from '../components/NoteDisplayModal';
 import { debounce } from 'lodash';
 import './BookView.css';
 import logger from '../utils/logger'; // Ensure logger is imported
@@ -298,6 +300,8 @@ function BookView() {
 
   // State for Add Bookmark Modal
   const [showAddBookmarkModal, setShowAddBookmarkModal] = useState(false);
+  const [showAllNotesModal, setShowAllNotesModal] = useState(false);
+  const [activeNoteForModal, setActiveNoteForModal] = useState(null);
   const [newBookmarkName, setNewBookmarkName] = useState('');
   const [bookmarkError, setBookmarkError] = useState(null);
   const [bookmarks, setBookmarks] = useState([]); 
@@ -882,60 +886,44 @@ function BookView() {
       if (notesOnPage.length > 0) {
         logger.debug(`[BookView - Page Content Effect] Found ${notesOnPage.length} notes on page ${validCurrentPage}.`);
 
-        // Merge overlapping or adjacent highlight ranges to avoid nested <mark> tags.
-        const ranges = [];
-        if (notesOnPage.length > 0) {
-          // Initialize with the first note's range.
-          let currentRange = {
-            start: notesOnPage[0].global_character_offset - pageStartGlobalOffset,
-            end: (notesOnPage[0].global_character_offset - pageStartGlobalOffset) + (notesOnPage[0].source_text?.length || 0)
-          };
-
-          for (let i = 1; i < notesOnPage.length; i++) {
-            const nextStart = notesOnPage[i].global_character_offset - pageStartGlobalOffset;
-            const nextEnd = nextStart + (notesOnPage[i].source_text?.length || 0);
-
-            // If the next note's range overlaps with the current merged range, extend the current range.
-            if (nextStart <= currentRange.end) {
-              currentRange.end = Math.max(currentRange.end, nextEnd);
-            } else {
-              // Otherwise, the current range is complete. Push it and start a new one.
-              ranges.push(currentRange);
-              currentRange = { start: nextStart, end: nextEnd };
+        const sortedNotes = notesOnPage.sort((a, b) => {
+            const a_start = a.global_character_offset;
+            const b_start = b.global_character_offset;
+            if (a_start !== b_start) {
+                return a_start - b_start;
             }
-          }
-          ranges.push(currentRange); // Add the last merged range.
-        }
-        
-        logger.debug(`[BookView - Page Content Effect] Merged into ${ranges.length} highlight ranges.`);
+            return (b.source_text?.length || 0) - (a.source_text?.length || 0);
+        });
 
         let highlightedText = '';
         let lastIndex = 0;
 
-        for (const range of ranges) {
-          // Append the plain text segment before the current highlight.
-          if (range.start > lastIndex) {
-            highlightedText += plainPageText.substring(lastIndex, range.start);
+        for (const note of sortedNotes) {
+          const noteStartInPage = note.global_character_offset - pageStartGlobalOffset;
+          const noteEndInPage = noteStartInPage + (note.source_text?.length || 0);
+          
+          if (noteStartInPage < lastIndex) {
+              continue;
           }
-          // Append the highlighted text segment.
-          const textToHighlight = plainPageText.substring(range.start, Math.min(range.end, plainPageText.length)); // Ensure end is not out of bounds
-          if (textToHighlight) { // Only add mark if there's text
-            highlightedText += `<mark class="note-highlight">${textToHighlight}</mark>`;
+
+          highlightedText += plainPageText.substring(lastIndex, noteStartInPage);
+          
+          const noteId = note.id || note._id;
+          const textToHighlight = plainPageText.substring(noteStartInPage, Math.min(noteEndInPage, plainPageText.length));
+          if (textToHighlight) {
+            highlightedText += `<mark class="note-highlight" data-note-id="${noteId}">${textToHighlight}</mark>`;
           }
-          lastIndex = Math.min(range.end, plainPageText.length);
+          
+          lastIndex = Math.min(noteEndInPage, plainPageText.length);
         }
 
-        // Append any remaining plain text after the last highlight.
         if (lastIndex < plainPageText.length) {
           highlightedText += plainPageText.substring(lastIndex);
         }
 
         setHighlightedPageContent(highlightedText);
-        logger.debug(`[BookView - Page Content Effect] Set page content with note highlighting.`);
-
       } else {
         setHighlightedPageContent(plainPageText);
-        logger.debug(`[BookView - Page Content Effect] Set page content without note highlighting (no notes on page).`);
       }
       
       if (bookPaneContainerRef.current) {
@@ -1177,14 +1165,50 @@ function BookView() {
     }
   };
 
+  const handleDeleteNote = async (noteIdToDelete) => {
+    if (!window.confirm("Are you sure you want to delete this note?")) {
+      return;
+    }
+    logger.info(`[BookView - handleDeleteNote] Attempting to delete note ID: ${noteIdToDelete}`);
+    try {
+      const token = localStorage.getItem('authToken');
+      if (!token) {
+        alert("Authentication token not found.");
+        return;
+      }
+      const response = await fetch(`/api/notes/${noteIdToDelete}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: "Failed to delete note." }));
+        throw new Error(errorData.detail);
+      }
+      setNotes(prevNotes => prevNotes.filter(note => (note._id || note.id) !== noteIdToDelete));
+      logger.info(`Note with ID ${noteIdToDelete} deleted successfully.`);
+    } catch (err) {
+      logger.error('Error deleting note:', err);
+      alert(`Error deleting note: ${err.message}`);
+    }
+  };
+
+  const handleHighlightClick = (noteId) => {
+    const note = notes.find(n => (n._id || n.id) === noteId);
+    if (note) {
+      setActiveNoteForModal(note);
+    } else {
+      logger.warn(`[BookView - handleHighlightClick] Note with ID ${noteId} not found.`);
+    }
+  };
+
   const handleNoteClick = (navigationTarget) => {
     if (typeof navigationTarget === 'number') {
-      // It's a global character offset
       if (navigationTarget !== null && navigationTarget !== undefined) {
         setScrollToGlobalOffset(navigationTarget);
       }
     } else if (typeof navigationTarget === 'object' && navigationTarget !== null && navigationTarget.pageNumber !== undefined) {
-      // It's a page navigation request
       const targetPage = navigationTarget.pageNumber;
       if (targetPage >= 1 && targetPage <= totalPages) {
         logger.info(`[BookView - handleNoteClick] Navigating to page ${targetPage} from note click.`);
@@ -2124,6 +2148,9 @@ function BookView() {
                 <button onClick={handleReformatPage} className="control-button" title={selectedBookText ? "Reformat selected text with AI." : "Reformat current page with AI. This cannot be undone."} disabled={isReformatting} style={{ marginLeft: '8px' }}>
                   {isReformatting ? 'Reformatting...' : (selectedBookText ? 'Reformat Selection' : 'Reformat Page')}
                 </button>
+                <button onClick={() => setShowAllNotesModal(true)} className="control-button" title="Review all saved notes for this book" style={{ marginLeft: '8px' }}>
+                  Review Notes
+                </button>
               </div>
               
               {/* Center: Pagination Controls */}
@@ -2168,9 +2195,10 @@ function BookView() {
             {/* The BookPane container itself */}
             <div className="book-pane-container" ref={bookPaneContainerRef}>
               <BookPane
-                markdownContent={highlightedPageContent} 
+                markdownContent={highlightedPageContent}
                 imageUrls={bookData.image_urls}
                 onTextSelect={handleTextSelect}
+                onHighlightClick={handleHighlightClick}
               />
             </div>
             {/* The original pagination block was here and is now removed */}
@@ -2203,12 +2231,10 @@ function BookView() {
                   selectedBookText={selectedBookText}
                   selectedScrollPercentage={selectedScrollPercentage}
                   selectedGlobalCharOffset={selectedGlobalCharOffset}
-                  currentPage={currentPage} 
-                  currentPageContent={currentPageContent} 
-                  onNoteClick={handleNoteClick}
+                  currentPage={currentPage}
+                  currentPageContent={currentPageContent}
                   onNewNoteSaved={handleNewNoteSaved}
-                  // No mobile-specific props needed for desktop version
-                />
+                  />
               </div>
             </div>
           </div>
@@ -2225,9 +2251,8 @@ function BookView() {
                   selectedBookText={selectedBookText}
                   selectedScrollPercentage={selectedScrollPercentage}
                   selectedGlobalCharOffset={selectedGlobalCharOffset}
-                  currentPage={currentPage} 
-                  currentPageContent={currentPageContent} 
-                  onNoteClick={handleNoteClick}
+                  currentPage={currentPage}
+                  currentPageContent={currentPageContent}
                   onNewNoteSaved={handleNewNoteSaved}
                   isMobileContext={true} // Indicate mobile overlay context
                   onClosePane={toggleNotePaneVisibility} // Pass the toggle function to close
@@ -2290,6 +2315,22 @@ function BookView() {
           </div>
         </div>
       </div>
+    )}
+
+    {showAllNotesModal && (
+      <AllNotesModal
+        notes={notes}
+        onClose={() => setShowAllNotesModal(false)}
+        onNoteClick={handleNoteClick}
+        onDeleteNote={handleDeleteNote}
+      />
+    )}
+
+    {activeNoteForModal && (
+      <NoteDisplayModal
+        note={activeNoteForModal}
+        onClose={() => setActiveNoteForModal(null)}
+      />
     )}
   </div> // End of book-view-container
   );

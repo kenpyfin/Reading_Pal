@@ -6,7 +6,7 @@ import remarkMath from 'remark-math'; // Import remark-math
 import rehypeKatex from 'rehype-katex'; // Import rehype-katex
 import 'katex/dist/katex.min.css'; // Import KaTeX CSS
 
-const BookPane = forwardRef(({ markdownContent, imageUrls, onTextSelect }, ref) => {
+const BookPane = forwardRef(({ markdownContent, imageUrls, onTextSelect, onHighlightClick }, ref) => {
   const [fontSize, setFontSize] = useState(16); // Default font size in pixels
   const FONT_SIZE_STEP = 1;
   const MIN_FONT_SIZE = 10;
@@ -36,6 +36,19 @@ const BookPane = forwardRef(({ markdownContent, imageUrls, onTextSelect }, ref) 
     setLineHeight(prevHeight => parseFloat(Math.max(MIN_LINE_HEIGHT, prevHeight - LINE_HEIGHT_STEP).toFixed(2)));
   };
   // --- END NEW ---
+
+  const handlePaneClick = useCallback((event) => {
+    let target = event.target;
+    while (target && target !== event.currentTarget) {
+      if (target.classList.contains('note-highlight') && target.dataset.noteId) {
+        if (onHighlightClick) {
+          onHighlightClick(target.dataset.noteId);
+        }
+        return;
+      }
+      target = target.parentElement;
+    }
+  }, [onHighlightClick]);
 
   const processSelection = useCallback(() => {
     const selection = window.getSelection();
@@ -136,16 +149,17 @@ const BookPane = forwardRef(({ markdownContent, imageUrls, onTextSelect }, ref) 
 
   return (
     // Add position: 'relative' to allow absolute positioning of children
-    <div 
-      className="book-pane" 
-      ref={ref} 
-      onMouseUp={handleMouseUp} 
-      onTouchEnd={handleTouchEnd} // ADDED onTouchEnd
+    <div
+      className="book-pane"
+      ref={ref}
+      onMouseUp={handleMouseUp}
+      onTouchEnd={handleTouchEnd}
+      onClick={handlePaneClick}
       style={{ position: 'relative', paddingTop: '40px' /* Add padding to prevent overlap */ }}
     >
       {/* Adjusted font controls styling and placement */}
-      <div 
-        className="font-controls" 
+      <div
+        className="font-controls"
         style={{ 
           position: 'absolute', 
           top: '10px', 

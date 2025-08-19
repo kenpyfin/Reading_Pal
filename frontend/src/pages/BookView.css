@@ -328,11 +328,17 @@
 }
 
 /* Styling for highlighted note text (from user selection for new notes) */
-.highlighted-note-text {
-  background-color: yellow; /* Or your preferred highlight color */
-  /* padding: 0 2px; */ /* Optional: if you want a little space around the text */
-  /* border-radius: 3px; */ /* Optional: for rounded corners on the highlight */
-  /* cursor: pointer; */ /* Optional: if you plan to make them clickable */
+.note-highlight {
+  background-color: rgba(255, 226, 146, 0.8);
+  cursor: pointer;
+  transition: background-color 0.2s ease-in-out;
+  border-radius: 2px;
+  padding: 0 1px;
+  margin: 0 -1px;
+}
+
+.note-highlight:hover {
+  background-color: rgba(255, 210, 99, 0.9);
 }
 
 /* Styling for the temporary highlight when scrolling to a note */
@@ -431,6 +437,10 @@
   margin-top: -5px; /* Adjust spacing */
   margin-bottom: 5px;
 }
+
+/* Import child component CSS files */
+@import url('../components/AllNotesModal.css');
+@import url('../components/NoteDisplayModal.css');
 
 /* --- Styling for the new Book Pane Controls Header --- */
 .book-pane-controls-header {

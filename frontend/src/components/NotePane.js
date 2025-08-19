@@ -11,21 +11,15 @@ const NotePane = ({ // Removed ref from props
   selectedGlobalCharOffset, // Make sure this prop is received
   currentPage, // ADDED: Current page number from BookView
   currentPageContent, // ADDED: Raw markdown content of the current page from BookView
-  onNoteClick,
   onNewNoteSaved, // ACCEPT THE NEW PROP
   isMobileContext, // New prop for mobile overlay context
   onClosePane // New prop to handle closing the pane in mobile overlay
 }) => {
-  const [notes, setNotes] = useState([]); // This state is local to NotePane for display
   const [newNoteContent, setNewNoteContent] = useState('');
-  const [isPageNoteMode, setIsPageNoteMode] = useState(false); // State for page-specific note mode
-  const [loading, setLoading] = useState(true);
+  const [isPageNoteMode, setIsPageNoteMode] = useState(true);
   const [error, setError] = useState(null);
 
-  const [currentNotesPage, setCurrentNotesPage] = useState(1);
-  const notesPerPage = 6;
-
-  // Add state variables for LLM interaction
+    // Add state variables for LLM interaction
   const [llmLoading, setLlmLoading] = useState(false);
   const [llmQuestion, setLlmQuestion] = useState('');
   const [llmAskResponse, setLlmAskResponse] = useState(null);
@@ -49,33 +43,13 @@ const NotePane = ({ // Removed ref from props
     }
   };
 
-  // Fetch notes when bookId changes (for NotePane's internal display)
   useEffect(() => {
-    const fetchNotes = async () => {
-      if (!bookId) return;
-      setLoading(true);
-      setError(null);
-      try {
-        const response = await fetch(`/api/notes/${bookId}`);
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(`HTTP error! status: ${response.status} - ${errorData.detail || response.statusText}`);
-        }
-        const data = await response.json();
-        // Sort notes by creation date if not already sorted by backend
-        const sortedNotes = data.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-        setNotes(sortedNotes);
-        setCurrentNotesPage(1); // <<< ADD THIS LINE to reset page on book change
-      } catch (err) {
-        console.error('Failed to fetch notes for NotePane:', err);
-        setError(`Failed to load notes: ${err.message || 'Unknown error'}`);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchNotes();
-  }, [bookId]);
+    if (selectedBookText) {
+      setIsPageNoteMode(false);
+    } else {
+      setIsPageNoteMode(true);
+    }
+  }, [selectedBookText]);
 
   const handleSaveNote = async () => {
     if (!newNoteContent.trim()) return;
@@ -116,89 +90,18 @@ const NotePane = ({ // Removed ref from props
       }
 
       const savedNote = await response.json();
-      console.log('[NotePane - handleSaveNote] Received savedNote from backend:', savedNote);
-
-
-      // Update NotePane's local list of notes for display
-      setNotes(prevNotes => {
-        const updatedNotesList = [...prevNotes, savedNote].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-        
-        // Calculate new total pages based on the updated list and go to the last page
-        const newTotalPages = Math.ceil(updatedNotesList.length / notesPerPage);
-        setCurrentNotesPage(newTotalPages); // <<< ADD THIS LINE
-
-        return updatedNotesList;
-      });
       
-      // Call the callback prop to inform BookView
       if (onNewNoteSaved) {
-        onNewNoteSaved(savedNote); // INFORM BookView
+        onNewNoteSaved(savedNote);
       }
 
-      setNewNoteContent(''); // Clear the input field
-      // selectedBookText, selectedScrollPercentage, selectedGlobalCharOffset are props.
-      // BookView should manage clearing its own state for these if desired after a note is saved.
-      // For example, BookView's handleNewNoteSaved could call setSelectedBookText(null), etc.
+      setNewNoteContent('');
 
     } catch (err) {
-      logger.error('Failed to save note:', err); // Use logger
+      logger.error('Failed to save note:', err);
       setError(`Failed to save note: ${err.message || 'Unknown error'}`);
     }
   };
-
-  const handleDeleteNote = async (noteIdToDelete) => {
-    if (!window.confirm("Are you sure you want to delete this note?")) {
-      return;
-    }
-    logger.info(`[NotePane - handleDeleteNote] Attempting to delete note ID: ${noteIdToDelete}`);
-    try {
-      const response = await fetch(`/api/notes/${noteIdToDelete}`, {
-        method: 'DELETE',
-      });
-      if (!response.ok) {
-        if (response.status === 404) {
-          throw new Error(`Note not found (ID: ${noteIdToDelete}). It might have already been deleted.`);
-        }
-        const errorData = await response.json().catch(() => ({ detail: "Failed to delete note. Server error." }));
-        throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
-      }
-      setNotes(prevNotes => {
-        const updatedNotesList = prevNotes.filter(note => note._id !== noteIdToDelete);
-        
-        // Adjust current page if necessary
-        if (updatedNotesList.length > 0) {
-          const newTotalPages = Math.ceil(updatedNotesList.length / notesPerPage);
-          if (currentNotesPage > newTotalPages) {
-            setCurrentNotesPage(newTotalPages);
-          } else if (currentNotesPage === 0 && newTotalPages > 0) { // Should ideally not happen
-            setCurrentNotesPage(1);
-          }
-        } else { // No notes left
-          setCurrentNotesPage(1);
-        }
-        return updatedNotesList;
-      });
-      logger.info(`Note with ID ${noteIdToDelete} deleted successfully from UI.`);
-    } catch (err) {
-      logger.error('Error deleting note:', err);
-      alert(`Error deleting note: ${err.message}`);
-      setError(`Error deleting note: ${err.message}`);
-    }
-  };
-
-  const handleNoteClickInternal = (note) => {
-      logger.debug("[NotePane - handleNoteClickInternal] Clicked note object:", JSON.stringify(note, null, 2));
-      if (onNoteClick) {
-        // Prioritize global_character_offset for precise text linking
-        if (note.global_character_offset !== null && note.global_character_offset !== undefined) {
-          onNoteClick(note.global_character_offset);
-        } else if (note.page_number !== null && note.page_number !== undefined) {
-          // If no specific offset, but page_number exists, navigate to the page
-          onNoteClick({ pageNumber: note.page_number });
-        }
-      }
-  };
-
 
   const handleAskLLM = async () => {
     if (!bookId || !llmQuestion.trim()) {
@@ -238,31 +141,8 @@ const NotePane = ({ // Removed ref from props
     }
   };
 
-  const handleNextNotesPage = () => {
-    setCurrentNotesPage(prevPage => Math.min(prevPage + 1, totalNotePages));
-  };
-
-  const handlePreviousNotesPage = () => {
-    setCurrentNotesPage(prevPage => Math.max(prevPage - 1, 1));
-  };
-
-
-  if (loading) {
-    return <div className="note-pane">Loading notes...</div>; // Removed ref
-  }
-
-  if (error && notes.length === 0) { // Show error only if there are no notes to display
-    return <div className="note-pane" style={{ color: 'red' }}>Error loading notes: {error}</div>; // Removed ref
-  }
-
-  // Calculate notes for the current page
-  const indexOfLastNote = currentNotesPage * notesPerPage;
-  const indexOfFirstNote = indexOfLastNote - notesPerPage;
-  const currentNotesToDisplay = notes.slice(indexOfFirstNote, indexOfLastNote);
-  const totalNotePages = Math.ceil(notes.length / notesPerPage);
-
   return (
-    <div className="note-pane"> {/* Removed ref, root div of NotePane */}
+    <div className="note-pane">
       {isMobileContext && (
         <div className="note-pane-mobile-header">
           <h2>Notes &amp; LLM Insights</h2>
@@ -296,11 +176,6 @@ const NotePane = ({ // Removed ref from props
         selectedBookText && (
           <div
             className="selected-text-display clickable-selection"
-            onClick={() => {
-              if (onNoteClick && selectedGlobalCharOffset !== null) {
-                onNoteClick(selectedGlobalCharOffset);
-              }
-            }}
             title="Click to jump to this location in the book"
           >
             <h4>Selected Text from Book:</h4>
@@ -356,57 +231,7 @@ const NotePane = ({ // Removed ref from props
         <button onClick={handleSaveNote} disabled={!newNoteContent.trim()}>
           Save Note
         </button>
-      </div>
-      
-      <div className="notes-list">
-        <h3>Saved Notes</h3>
-        {error && notes.length > 0 && <p className="error-message">Error loading notes: {error}. Displaying cached notes.</p>}
-        {notes.length === 0 && !loading && <p>No notes yet. Add one above!</p>}
-        {currentNotesToDisplay.map(note => (
-          <div
-              key={note._id} // USE _id FOR KEY
-              className={`note-item ${(note.global_character_offset !== null && note.global_character_offset !== undefined) ? 'clickable-note' : ''}`}
-              // onClick is removed from here, moved to note-content-clickable div
-          >
-            <div className="note-actions"> {/* Wrapper for note content and delete button */}
-                <div className="note-content-clickable" onClick={() => handleNoteClickInternal(note)}>
-                    {note.page_number && (
-                        <p className="note-page-context-indicator">
-                            <em>From Page: {note.page_number}</em>
-                        </p>
-                    )}
-                    {note.source_text && note.source_text !== `Context: Page ${note.page_number}` && (
-                        <blockquote className="note-source-text">
-                            <em>Source: "{note.source_text}"</em>
-                        </blockquote>
-                    )}
-                    <p className="note-content-display">{note.content}</p>
-                    <small className="note-meta-display">{new Date(note.created_at).toLocaleString()}</small>
-                </div>
-                <button
-                  onClick={() => handleDeleteNote(note._id)} // USE _id FOR DELETION
-                  className="delete-button delete-note-button"
-                  title="Delete this note"
-                >
-                  ✕
-                </button>
-            </div>
-          </div>
-        ))}
-        {/* Notes Pagination Controls */}
-        {notes.length > notesPerPage && (
-          <div className="notes-pagination-controls">
-            <button onClick={handlePreviousNotesPage} disabled={currentNotesPage === 1}>
-              Previous
-            </button>
-            <span>
-              Page {currentNotesPage} of {totalNotePages}
-            </span>
-            <button onClick={handleNextNotesPage} disabled={currentNotesPage === totalNotePages}>
-              Next
-            </button>
-          </div>
-        )}
+        {error && <p className="error-message">{error}</p>}
       </div>
     </div>
   );

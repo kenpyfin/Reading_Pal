@@ -1,0 +1,58 @@
+/* frontend/src/components/NoteDisplayModal.css */
+
+/* Uses .modal-overlay and .modal-content from BookView.css */
+
+.note-display-modal {
+  max-width: 500px;
+  min-width: 300px;
+}
+
+.note-display-modal .modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 10px;
+  margin-bottom: 15px;
+}
+
+.note-display-modal .modal-header h2 {
+  margin: 0;
+  font-size: 1.4em;
+}
+
+.note-display-modal .close-button {
+  background: none;
+  border: none;
+  font-size: 1.5em;
+  cursor: pointer;
+  color: #888;
+}
+.note-display-modal .close-button:hover {
+  color: #000;
+}
+
+.note-display-modal .modal-body .note-source-text {
+  background-color: #f9f9f9;
+  border-left: 3px solid #007bff;
+  padding: 8px 12px;
+  margin: 0 0 15px 0;
+  font-size: 0.9em;
+  color: #555;
+}
+
+.note-display-modal .modal-body .note-content-display {
+  font-size: 1em;
+  line-height: 1.6;
+  white-space: pre-wrap; /* Respect line breaks in the note */
+}
+
+.note-display-modal .modal-body .note-meta-display {
+  display: block;
+  margin-top: 15px;
+  font-size: 0.8em;
+  color: #777;
+  text-align: right;
+  border-top: 1px solid #eee;
+  padding-top: 8px;
+}

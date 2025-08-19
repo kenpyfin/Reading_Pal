@@ -1,0 +1,98 @@
+/* frontend/src/components/AllNotesModal.css */
+
+/* Uses .modal-overlay and .modal-content from BookView.css */
+
+.all-notes-modal {
+  width: 90%;
+  max-width: 700px; /* Wider modal for list view */
+  max-height: 80vh; /* Limit height */
+  display: flex;
+  flex-direction: column;
+}
+
+.all-notes-modal .modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 10px;
+  margin-bottom: 10px;
+  flex-shrink: 0;
+}
+
+.all-notes-modal .modal-header h2 {
+  margin: 0;
+}
+
+.all-notes-modal .close-button {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+}
+
+.all-notes-modal .modal-body {
+  overflow-y: auto; /* Allow body to scroll */
+  padding-right: 15px; /* Add some padding for scrollbar */
+}
+
+.notes-list-modal {
+  margin-bottom: 15px;
+}
+
+.note-item-modal {
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  margin-bottom: 10px;
+  background-color: #fff;
+  transition: box-shadow 0.2s ease-in-out;
+}
+.note-item-modal:hover {
+  box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+}
+
+.note-item-modal .note-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 12px;
+}
+
+.note-item-modal .note-content-clickable {
+  flex-grow: 1;
+  cursor: pointer;
+  margin-right: 10px;
+}
+
+.note-item-modal .note-page-context-indicator {
+  margin: 0 0 5px 0;
+  font-size: 0.8em;
+  color: #666;
+}
+
+.note-item-modal .note-source-text {
+  font-size: 0.9em;
+  margin: 5px 0;
+  padding: 5px 8px;
+  background-color: #f9f9f9;
+  border-left: 2px solid #007bff;
+  color: #555;
+}
+
+.note-item-modal .note-content-display {
+  margin: 5px 0;
+  white-space: pre-wrap;
+}
+
+.note-item-modal .note-meta-display {
+  font-size: 0.75em;
+  color: #888;
+  margin-top: 8px;
+}
+
+/* Uses .notes-pagination-controls from BookView.css, can add overrides here if needed */
+.all-notes-modal .notes-pagination-controls {
+  padding-top: 10px;
+  border-top: 1px solid #eee;
+  flex-shrink: 0;
+}
