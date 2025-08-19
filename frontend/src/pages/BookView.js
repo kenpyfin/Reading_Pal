@@ -1234,15 +1234,17 @@ function BookView() {
   
   const handleNewNoteSaved = (newNote) => {
     logger.debug("[BookView - handleNewNoteSaved] Received new note:", newNote);
-    if (newNote && newNote.id) { 
+    const newNoteId = newNote ? (newNote.id || newNote._id) : null;
+
+    if (newNote && newNoteId) {
       setNotes(prevNotes => {
-        const noteExists = prevNotes.some(note => note.id === newNote.id);
+        const noteExists = prevNotes.some(note => (note.id || note._id) === newNoteId);
         if (noteExists) {
-            logger.warn("[BookView - handleNewNoteSaved] Note ID", newNote.id, "already exists in state. Not adding again.");
+            logger.warn("[BookView - handleNewNoteSaved] Note ID", newNoteId, "already exists in state. Not adding again.");
             return prevNotes;
         }
         const updatedNotes = [...prevNotes, newNote].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-        logger.debug("[BookView - handleNewNoteSaved] Updated notes state with new note:", updatedNotes.map(n => n.id));
+        logger.debug("[BookView - handleNewNoteSaved] Updated notes state with new note:", updatedNotes.map(n => (n.id || n._id)));
         return updatedNotes;
       });
     } else {
