@@ -1,6 +1,10 @@
 # Use an official Node.js runtime as a parent image
 FROM node:18-alpine as builder
 
+# Accept build argument for image secret
+ARG REACT_APP_IMAGE_SECRET
+ENV REACT_APP_IMAGE_SECRET=$REACT_APP_IMAGE_SECRET
+
 # Set the working directory in the container
 WORKDIR /app
 

@@ -39,12 +39,13 @@ This repository contains the code for the Reading Pal application, a tool for re
 
 ### Configuration
 
-1.  Copy the `.env.example` (if you create one later) or manually create a `.env` file in the root directory.
+1.  Copy the `.env.example` file to `.env` in the root directory.
 2.  Populate the `.env` file with your specific configurations, including:
     *   `MONGO_URI` (should point to your host MongoDB, e.g., `mongodb://host.docker.internal:27017/`)
     *   `PDF_CLIENT_URL` (the URL where your standalone PDF service is running, e.g., `http://localhost:8502`)
     *   LLM API keys (`ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`, `GEMINI_API_KEY`) or `OLLAMA_BASE_URL`
     *   Absolute paths for `PDF_STORAGE_PATH`, `MARKDOWN_PATH`, `IMAGES_PATH` on your host machine.
+    *   **Optional:** Formatting-specific LLM configuration (`FORMATTING_LLM_SERVICE`, `FORMATTING_LLM_MODEL`, etc.) for enhanced text formatting. If not set, the system will use the standard LLM service for formatting.
 
 ### Running the Application
 

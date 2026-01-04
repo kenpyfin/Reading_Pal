@@ -48,15 +48,10 @@ print(f"DEBUG: Raw BACKEND_PORT env var: {os.getenv('BACKEND_PORT')}")
 print(f"DEBUG: Parsed BACKEND_PORT for Uvicorn: {BACKEND_PORT}")
 
 
-# Mount static files directory for images
-# This path must match the IMAGES_PATH configured in .env and docker-compose
-# It should be the CONTAINER path, which is correctly set in docker-compose.yml
-images_path = os.getenv("IMAGES_PATH")
-if images_path and os.path.exists(images_path):
-    app.mount("/images", StaticFiles(directory=images_path), name="images")
-    logger.info(f"Serving static images from {images_path} at /images")
-else:
-    logger.warning(f"IMAGES_PATH not set or directory not found: {images_path}. Static image serving disabled.")
+# Note: We don't mount /images statically anymore
+# - App images are served through /api/books/images/app/ (requires authentication)
+# - Public images are served by the image_server at /images/public/
+# This ensures app images are only accessible through authenticated API calls
 
 # Mount static files directory for markdown (optional, but good for debugging/direct access)
 # This path must match the MARKDOWN_PATH configured in .env and docker-compose

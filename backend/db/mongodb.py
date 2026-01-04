@@ -696,7 +696,8 @@ def get_reading_guides_collection():
     return database["reading_guide_pages"]
 
 async def upsert_reading_guide_page(
-    book_id: str, user_id: str, page_number: int, content: str
+    book_id: str, user_id: str, page_number: int, content: str,
+    sections: Optional[List[Dict]] = None, document_structure_map: Optional[Dict] = None
 ) -> Optional['ReadingGuidePageInDB']: # Forward reference for type hint
     collection = get_reading_guides_collection()
     now = datetime.utcnow()
@@ -708,8 +709,35 @@ async def upsert_reading_guide_page(
         return None
 
     query = {"book_id": book_obj_id, "user_id": user_id, "page_number": page_number}
+    
+    # Build update document with backward compatibility
+    update_set = {"content": content, "updated_at": now}
+    
+    # Add structured guide fields if provided
+    if sections is not None:
+        # Convert Pydantic models to dicts if needed
+        sections_dicts = []
+        for section in sections:
+            if hasattr(section, 'model_dump'):
+                sections_dicts.append(section.model_dump())
+            elif isinstance(section, dict):
+                sections_dicts.append(section)
+            else:
+                # Try to convert to dict
+                sections_dicts.append({
+                    "section_title": getattr(section, "section_title", ""),
+                    "rewritten_content": getattr(section, "rewritten_content", ""),
+                    "original_start_offset": getattr(section, "original_start_offset", 0),
+                    "original_end_offset": getattr(section, "original_end_offset", 0),
+                    "original_text_preview": getattr(section, "original_text_preview", None)
+                })
+        update_set["sections"] = sections_dicts
+    
+    if document_structure_map is not None:
+        update_set["document_structure_map"] = document_structure_map
+    
     update = {
-        "$set": {"content": content, "updated_at": now},
+        "$set": update_set,
         "$setOnInsert": {"book_id": book_obj_id, "user_id": user_id, "page_number": page_number, "created_at": now}
     }
     

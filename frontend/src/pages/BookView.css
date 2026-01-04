@@ -63,6 +63,27 @@
 }
 
 
+/* Guide search highlight styling */
+.guide-search-highlight {
+  background-color: #fff3cd; /* Light yellow background */
+  border: 2px solid #ffc107; /* Yellow border */
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-weight: 500;
+  animation: guide-highlight-pulse 2s ease-in-out;
+}
+
+@keyframes guide-highlight-pulse {
+  0%, 100% {
+    background-color: #fff3cd;
+    border-color: #ffc107;
+  }
+  50% {
+    background-color: #ffeb3b;
+    border-color: #ff9800;
+  }
+}
+
 /* Font control buttons in BookPane */
 .font-control-btn {
   padding: 5px 8px; /* Adjusted padding for potentially smaller buttons */
@@ -452,6 +473,72 @@
   background-color: #f8f9fa;
   flex-shrink: 0;
   position: relative; /* For dropdown positioning context */
+}
+
+/* Book View Menu Container (Left) */
+.book-view-menu-container {
+  position: relative; /* For dropdown positioning */
+  display: inline-block; /* Or flex if needed for internal alignment */
+}
+
+.book-view-menu-button .arrow {
+  display: inline-block;
+  margin-left: 6px;
+  transition: transform 0.2s ease-in-out;
+}
+.book-view-menu-button .arrow.down::before {
+  content: '▼'; /* Simple down arrow */
+  font-size: 0.7em;
+}
+.book-view-menu-button .arrow.up::before {
+  content: '▲'; /* Simple up arrow */
+  font-size: 0.7em;
+}
+
+.book-view-dropdown-menu {
+  position: absolute;
+  top: 100%; /* Position below the button */
+  left: 0;
+  background-color: white;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  z-index: 100; /* Ensure it's above other content */
+  min-width: 220px; /* Adjust as needed */
+  padding: 5px 0; /* Padding for top/bottom of the dropdown itself */
+  display: flex;
+  flex-direction: column;
+}
+
+.book-view-dropdown-menu .dropdown-item,
+.book-view-dropdown-menu .dropdown-item-select-container {
+  display: block; /* Make items take full width */
+  width: 100%;
+  text-align: left;
+  background-color: transparent;
+  border: none;
+}
+
+.book-view-dropdown-menu .control-button.dropdown-item {
+  margin: 0; /* Remove margin from base .control-button */
+  border-radius: 0; /* No border-radius for items inside dropdown */
+  border-bottom: 1px solid #f0f0f0; /* Separator line */
+  padding: 8px 12px; /* Consistent padding */
+  width: calc(100% - 0px); /* Full width accounting for potential box-sizing issues */
+  box-sizing: border-box;
+}
+.book-view-dropdown-menu .control-button.dropdown-item:last-child {
+  border-bottom: none;
+}
+.book-view-dropdown-menu .control-button.dropdown-item:hover {
+  background-color: #f0f0f0; /* Hover for dropdown items */
+}
+
+/* Font Controls Group */
+.font-controls-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 /* Bookmark Menu Container (Left) */

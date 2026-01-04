@@ -8,6 +8,7 @@ import NoteDisplayModal from '../components/NoteDisplayModal';
 import { debounce } from 'lodash';
 import './BookView.css';
 import logger from '../utils/logger'; // Ensure logger is imported
+import { getPageForOffset } from '../utils/textLinking'; // Import text linking utilities
 
 const APPROX_CHARS_PER_PAGE = 25000; // Approximate target characters per page
 
@@ -326,6 +327,23 @@ function BookView() {
   const bookmarkMenuRef = useRef(null); // For detecting clicks outside
   const [initialScrollTop, setInitialScrollTop] = useState(null); // For restoring scroll position
 
+  // Close dropdown menus when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (bookViewMenuRef.current && !bookViewMenuRef.current.contains(event.target)) {
+        setIsBookViewMenuOpen(false);
+      }
+      if (bookmarkMenuRef.current && !bookmarkMenuRef.current.contains(event.target)) {
+        setIsBookmarkMenuOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
+
   // State for Reading Guide Pane
   const [showReadingGuidePane, setShowReadingGuidePane] = useState(false);
   // const [readingGuideContent, setReadingGuideContent] = useState([]); // REMOVED - Replaced by page-specific
@@ -345,8 +363,45 @@ function BookView() {
   const [documentStructure, setDocumentStructure] = useState([]);
   // --- END NEW State for Document Structure ---
 
+  // --- State for Reading Guide Search/Highlight ---
+  const [guideSearchText, setGuideSearchText] = useState(null); // Text to search and highlight from reading guide
+  const guideSearchHighlightRef = useRef(null); // Ref for the highlighted element to scroll to
+  // --- END State for Reading Guide Search/Highlight ---
+
   // State and Refs for Reading Guide Pane Resizing
   const [readingGuidePaneFlexBasis, setReadingGuidePaneFlexBasis] = useState('25%'); // Initial width
+
+  // --- Font Control State (moved from BookPane) ---
+  const [fontSize, setFontSize] = useState(16);
+  const [lineHeight, setLineHeight] = useState(1.6);
+  const FONT_SIZE_STEP = 1;
+  const MIN_FONT_SIZE = 10;
+  const MAX_FONT_SIZE = 32;
+  const LINE_HEIGHT_STEP = 0.1;
+  const MIN_LINE_HEIGHT = 1.2;
+  const MAX_LINE_HEIGHT = 2.5;
+
+  const increaseFontSize = () => {
+    setFontSize(prevSize => Math.min(prevSize + FONT_SIZE_STEP, MAX_FONT_SIZE));
+  };
+
+  const decreaseFontSize = () => {
+    setFontSize(prevSize => Math.max(prevSize - FONT_SIZE_STEP, MIN_FONT_SIZE));
+  };
+
+  const increaseLineHeight = () => {
+    setLineHeight(prevHeight => parseFloat(Math.min(prevHeight + LINE_HEIGHT_STEP, MAX_LINE_HEIGHT).toFixed(2)));
+  };
+
+  const decreaseLineHeight = () => {
+    setLineHeight(prevHeight => parseFloat(Math.max(prevHeight - LINE_HEIGHT_STEP, MIN_LINE_HEIGHT).toFixed(2)));
+  };
+  // --- END Font Control State ---
+
+  // --- Dropdown Menu State ---
+  const [isBookViewMenuOpen, setIsBookViewMenuOpen] = useState(false);
+  const bookViewMenuRef = useRef(null);
+  // --- END Dropdown Menu State ---
   const readingGuidePaneAreaRef = useRef(null); // Ref for the reading-guide-pane-area div
   const initialReadingGuidePaneWidthPx = useRef(0);
   // dragStartX is already defined and can be reused if we ensure no overlap in active resizing
@@ -578,14 +633,30 @@ function BookView() {
         }
       } else {
         const data = await response.json();
-        if (data && data.content) {
-          setCurrentPageGuide(data.content);
-          setHasGuideForCurrentPage(true);
-          logger.info(`[BookView - fetchPageGuide] Successfully fetched guide for page ${pageNumberToFetch}.`);
+        if (data) {
+          // Handle both structured guide (with sections) and simple text guide (backward compatibility)
+          if (data.sections && Array.isArray(data.sections) && data.sections.length > 0) {
+            // Structured guide
+            setCurrentPageGuide({
+              sections: data.sections,
+              document_structure_map: data.document_structure_map || {},
+              content: data.content || "" // Keep content for backward compatibility
+            });
+            setHasGuideForCurrentPage(true);
+            logger.info(`[BookView - fetchPageGuide] Successfully fetched structured guide with ${data.sections.length} sections for page ${pageNumberToFetch}.`);
+          } else if (data.content) {
+            // Simple text guide (backward compatibility)
+            setCurrentPageGuide(data.content);
+            setHasGuideForCurrentPage(true);
+            logger.info(`[BookView - fetchPageGuide] Successfully fetched simple text guide for page ${pageNumberToFetch}.`);
+          } else {
+            setCurrentPageGuide(null);
+            setHasGuideForCurrentPage(false); 
+            logger.info(`[BookView - fetchPageGuide] Guide endpoint returned OK but no content for page ${pageNumberToFetch}.`);
+          }
         } else {
           setCurrentPageGuide(null);
-          setHasGuideForCurrentPage(false); 
-          logger.info(`[BookView - fetchPageGuide] Guide endpoint returned OK but no content for page ${pageNumberToFetch}.`);
+          setHasGuideForCurrentPage(false);
         }
       }
     } catch (err) {
@@ -622,10 +693,25 @@ function BookView() {
         throw new Error(errorData.detail);
       }
       const data = await response.json();
-      if (data && data.content) {
-        setCurrentPageGuide(data.content);
-        setHasGuideForCurrentPage(true);
-        logger.info(`[BookView - handleGeneratePageGuide] Successfully generated and received guide for page ${currentPage}.`);
+      if (data) {
+        // Handle both structured guide (with sections) and simple text guide (backward compatibility)
+        if (data.sections && Array.isArray(data.sections) && data.sections.length > 0) {
+          // Structured guide
+          setCurrentPageGuide({
+            sections: data.sections,
+            document_structure_map: data.document_structure_map || {},
+            content: data.content || "" // Keep content for backward compatibility
+          });
+          setHasGuideForCurrentPage(true);
+          logger.info(`[BookView - handleGeneratePageGuide] Successfully generated structured guide with ${data.sections.length} sections for page ${currentPage}.`);
+        } else if (data.content) {
+          // Simple text guide (backward compatibility)
+          setCurrentPageGuide(data.content);
+          setHasGuideForCurrentPage(true);
+          logger.info(`[BookView - handleGeneratePageGuide] Successfully generated simple text guide for page ${currentPage}.`);
+        } else {
+          throw new Error("Generated guide content was not received correctly.");
+        }
       } else {
         throw new Error("Generated guide content was not received correctly.");
       }
@@ -637,10 +723,101 @@ function BookView() {
     }
   };
 
-  // --- NEW: Handler for clicking a document structure item ---
+  // --- NEW: Handler for clicking a document structure item or guide section ---
   const handleStructureItemClick = (offset) => {
-    logger.debug(`[BookView - handleStructureItemClick] Clicked structure item with offset: ${offset}`);
-    setScrollToGlobalOffset(offset);
+    logger.info(`[BookView - handleStructureItemClick] Clicked item with global offset: ${offset}`);
+    if (offset === null || offset === undefined || isNaN(offset)) {
+      logger.warn(`[BookView - handleStructureItemClick] Invalid offset provided: ${offset}`);
+      return;
+    }
+    // Ensure offset is a number and within valid range
+    const globalOffset = parseInt(offset, 10);
+    if (globalOffset < 0) {
+      logger.warn(`[BookView - handleStructureItemClick] Negative offset provided: ${globalOffset}`);
+      return;
+    }
+    if (fullMarkdownContent && globalOffset > fullMarkdownContent.length) {
+      logger.warn(`[BookView - handleStructureItemClick] Offset ${globalOffset} exceeds document length ${fullMarkdownContent.length}`);
+      return;
+    }
+    setScrollToGlobalOffset(globalOffset);
+    // Optional: Close the reading guide pane if it's in overlay mode on mobile after click
+    if (isMobileView && showReadingGuidePane) {
+      // setShowReadingGuidePane(false); // Consider if this is desired UX
+    }
+  };
+  // --- END NEW Handler ---
+
+  // --- NEW: Enhanced handler for TextLink objects with smooth scrolling and highlighting ---
+  const handleGuideTextLink = useCallback((textLink, highlightMode = 'smooth') => {
+    if (!textLink || typeof textLink !== 'object') {
+      logger.warn('[BookView - handleGuideTextLink] Invalid textLink provided');
+      return;
+    }
+
+    const { start_offset, end_offset, preview_text, context_before, context_after } = textLink;
+    
+    logger.info(`[BookView - handleGuideTextLink] Navigating to offset ${start_offset} with preview: "${preview_text?.substring(0, 50)}..."`);
+    
+    // 1. Navigate to correct page if needed
+    if (pageBoundaries && pageBoundaries.length > 0) {
+      const pageInfo = getPageForOffset(start_offset, pageBoundaries);
+      
+      if (pageInfo && pageInfo.pageNumber !== currentPage) {
+        logger.info(`[BookView - handleGuideTextLink] Switching to page ${pageInfo.pageNumber} for offset ${start_offset}`);
+        isProgrammaticScroll.current = true;
+        setCurrentPage(pageInfo.pageNumber);
+        refreshImageUrls();
+        // Store pending link to execute after page loads
+        setPendingScrollOffsetInPage(pageInfo.offsetInPage);
+        setScrollToGlobalOffset(start_offset);
+        setTimeout(() => {
+          isProgrammaticScroll.current = false;
+        }, 300);
+        return;
+      }
+    }
+    
+    // 2. Scroll to exact offset with highlighting
+    if (start_offset !== null && start_offset !== undefined && !isNaN(start_offset)) {
+      setScrollToGlobalOffset(start_offset);
+      
+      // If we have preview text, also set it for highlighting
+      if (preview_text) {
+        setGuideSearchText(preview_text.trim());
+      }
+    }
+    
+    // 3. Optional: Close guide pane on mobile after navigation
+    if (isMobileView && showReadingGuidePane) {
+      // Keep pane open for now - user might want to navigate back
+    }
+  }, [currentPage, pageBoundaries, isMobileView, showReadingGuidePane, refreshImageUrls]);
+
+  // --- Handler for searching and highlighting text from reading guide (legacy support) ---
+  const handleGuideTextSearch = (searchText, globalOffset) => {
+    logger.info(`[BookView - handleGuideTextSearch] Searching for text: "${searchText?.substring(0, 50)}..." with offset: ${globalOffset}`);
+    
+    if (!searchText || searchText.trim().length === 0) {
+      logger.warn(`[BookView - handleGuideTextSearch] Empty search text provided`);
+      // Fall back to offset-based navigation if no search text
+      if (globalOffset !== null && globalOffset !== undefined && !isNaN(globalOffset)) {
+        handleStructureItemClick(globalOffset);
+      }
+      return;
+    }
+
+    // Clean the search text - remove extra whitespace and normalize
+    const cleanSearchText = searchText.trim().replace(/\s+/g, ' ');
+    
+    // Set the search text to trigger highlighting
+    setGuideSearchText(cleanSearchText);
+    
+    // Also set scroll offset as fallback
+    if (globalOffset !== null && globalOffset !== undefined && !isNaN(globalOffset)) {
+      setScrollToGlobalOffset(globalOffset);
+    }
+    
     // Optional: Close the reading guide pane if it's in overlay mode on mobile after click
     if (isMobileView && showReadingGuidePane) {
       // setShowReadingGuidePane(false); // Consider if this is desired UX
@@ -830,7 +1007,7 @@ function BookView() {
     fetchNotes();
   }, [bookId]);
 
-  // Effect for handling pagination logic AND highlighting when content, currentPage, or notes change
+  // Effect for handling pagination logic AND highlighting when content, currentPage, notes, or guideSearchText change
   useEffect(() => {
     logger.debug("[BookView - Page Content Effect] Running. Current Page:", currentPage, "Notes count:", notes.length, "PendingScrollOffsetInPage:", pendingScrollOffsetInPage, "PendingScrollToPercentage:", pendingScrollToPercentage);
     
@@ -872,7 +1049,7 @@ function BookView() {
       setCurrentPageContent(plainPageText);
       logger.debug(`[BookView - Page Content Effect] Page ${validCurrentPage}: Global Offset [${pageStartGlobalOffset}-${pageEndGlobalOffset}]. Plain text (len: ${plainPageText.length}): "${plainPageText.substring(0, 100)}..."`);
 
-      // --- NEW: Highlight text with notes ---
+      // --- NEW: Highlight text with notes and guide search ---
       // Filter and sort notes relevant to the current page.
       const notesOnPage = notes
         .filter(note =>
@@ -883,6 +1060,10 @@ function BookView() {
         )
         .sort((a, b) => a.global_character_offset - b.global_character_offset);
 
+      // Prepare highlights array for both notes and guide search
+      const highlights = [];
+
+      // Add note highlights
       if (notesOnPage.length > 0) {
         logger.debug(`[BookView - Page Content Effect] Found ${notesOnPage.length} notes on page ${validCurrentPage}.`);
 
@@ -895,26 +1076,123 @@ function BookView() {
             return (b.source_text?.length || 0) - (a.source_text?.length || 0);
         });
 
-        let highlightedText = '';
-        let lastIndex = 0;
-
         for (const note of sortedNotes) {
           const noteStartInPage = note.global_character_offset - pageStartGlobalOffset;
           const noteEndInPage = noteStartInPage + (note.source_text?.length || 0);
+          const noteId = note.id || note._id;
           
-          if (noteStartInPage < lastIndex) {
-              continue;
+          highlights.push({
+            start: noteStartInPage,
+            end: noteEndInPage,
+            type: 'note',
+            id: noteId,
+            text: note.source_text
+          });
+        }
+      }
+
+      // Add guide search highlight if search text is provided
+      // Note: If the text is on a different page, scrollToGlobalOffset will handle navigation
+      // and this effect will re-run with the correct page content
+      if (guideSearchText && guideSearchText.trim().length > 0) {
+        const cleanSearchText = guideSearchText.trim().replace(/\s+/g, ' ');
+        // Try to find the search text in the current page
+        // Use case-insensitive search and handle variations in whitespace
+        // Escape special regex characters but allow flexible whitespace matching
+        const escapedText = cleanSearchText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const searchRegex = new RegExp(escapedText.replace(/\s+/g, '\\s+'), 'gi');
+        let match;
+        const searchMatches = [];
+        
+        // Reset regex lastIndex to ensure we search from the beginning
+        searchRegex.lastIndex = 0;
+        while ((match = searchRegex.exec(plainPageText)) !== null) {
+          searchMatches.push({
+            start: match.index,
+            end: match.index + match[0].length,
+            type: 'guide-search',
+            text: match[0]
+          });
+        }
+
+        // If we found matches, add them to highlights (prefer first match or closest to expected offset)
+        if (searchMatches.length > 0) {
+          // If we have a global offset, try to find the match closest to it
+          let bestMatch = searchMatches[0];
+          if (scrollToGlobalOffset !== null && scrollToGlobalOffset !== undefined) {
+            const expectedOffsetInPage = scrollToGlobalOffset - pageStartGlobalOffset;
+            // Only consider matches that are reasonably close to the expected offset (within 500 chars)
+            const closeMatches = searchMatches.filter(m => Math.abs(m.start - expectedOffsetInPage) < 500);
+            if (closeMatches.length > 0) {
+              let minDistance = Math.abs(closeMatches[0].start - expectedOffsetInPage);
+              bestMatch = closeMatches[0];
+              for (const match of closeMatches) {
+                const distance = Math.abs(match.start - expectedOffsetInPage);
+                if (distance < minDistance) {
+                  minDistance = distance;
+                  bestMatch = match;
+                }
+              }
+            }
+          }
+          
+          highlights.push(bestMatch);
+          logger.info(`[BookView - Page Content Effect] Found guide search text at position ${bestMatch.start} in page ${validCurrentPage} (${searchMatches.length} total matches)`);
+        } else {
+          // If not found on current page, check if we're waiting for page navigation
+          if (scrollToGlobalOffset !== null && scrollToGlobalOffset !== undefined) {
+            const expectedOffsetInPage = scrollToGlobalOffset - pageStartGlobalOffset;
+            if (expectedOffsetInPage < 0 || expectedOffsetInPage >= plainPageText.length) {
+              logger.info(`[BookView - Page Content Effect] Guide search text not on current page ${validCurrentPage}, waiting for navigation to correct page`);
+            } else {
+              logger.warn(`[BookView - Page Content Effect] Guide search text not found in page ${validCurrentPage} at expected location: "${cleanSearchText.substring(0, 50)}"`);
+            }
+          } else {
+            logger.warn(`[BookView - Page Content Effect] Guide search text not found in page ${validCurrentPage}: "${cleanSearchText.substring(0, 50)}"`);
+          }
+        }
+      }
+
+      // Sort all highlights by start position
+      highlights.sort((a, b) => {
+        if (a.start !== b.start) {
+          return a.start - b.start;
+        }
+        return b.end - a.end; // Longer highlights first if same start
+      });
+
+      // Apply highlights to text
+      if (highlights.length > 0) {
+        let highlightedText = '';
+        let lastIndex = 0;
+
+        for (const highlight of highlights) {
+          if (highlight.start < lastIndex) {
+            continue; // Skip overlapping highlights
           }
 
-          highlightedText += plainPageText.substring(lastIndex, noteStartInPage);
+          highlightedText += plainPageText.substring(lastIndex, highlight.start);
           
-          const noteId = note.id || note._id;
-          const textToHighlight = plainPageText.substring(noteStartInPage, Math.min(noteEndInPage, plainPageText.length));
-          if (textToHighlight) {
-            highlightedText += `<mark class="note-highlight" data-note-id="${noteId}">${textToHighlight}</mark>`;
+          if (highlight.type === 'note') {
+            const textToHighlight = plainPageText.substring(highlight.start, Math.min(highlight.end, plainPageText.length));
+            if (textToHighlight) {
+              highlightedText += `<mark class="note-highlight" data-note-id="${highlight.id}">${textToHighlight}</mark>`;
+            }
+          } else if (highlight.type === 'guide-search') {
+            const textToHighlight = plainPageText.substring(highlight.start, Math.min(highlight.end, plainPageText.length));
+            if (textToHighlight) {
+              // Escape HTML in the text to highlight
+              const escapedText = textToHighlight
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+              highlightedText += `<mark class="guide-search-highlight">${escapedText}</mark>`;
+            }
           }
           
-          lastIndex = Math.min(noteEndInPage, plainPageText.length);
+          lastIndex = Math.min(highlight.end, plainPageText.length);
         }
 
         if (lastIndex < plainPageText.length) {
@@ -924,6 +1202,11 @@ function BookView() {
         setHighlightedPageContent(highlightedText);
       } else {
         setHighlightedPageContent(plainPageText);
+      }
+      
+      // Clear guide search when page changes (unless it's a programmatic page change for search)
+      if (guideSearchText && scrollToGlobalOffset === null) {
+        setGuideSearchText(null);
       }
       
       if (bookPaneContainerRef.current) {
@@ -957,7 +1240,7 @@ function BookView() {
       setCurrentPageContent('');
       setHighlightedPageContent('');
     }
-  }, [fullMarkdownContent, currentPage, notes, pendingScrollOffsetInPage, pendingScrollToPercentage]);
+  }, [fullMarkdownContent, currentPage, notes, pendingScrollOffsetInPage, pendingScrollToPercentage, guideSearchText, scrollToGlobalOffset]);
 
 
   // Effect to apply initial scroll once content is ready
@@ -987,6 +1270,8 @@ function BookView() {
     const pageNum = parseInt(pageInput, 10);
     if (!isNaN(pageNum) && pageNum >= 1 && pageNum <= totalPages) {
       setCurrentPage(pageNum);
+      // Refresh signed URLs when page changes
+      refreshImageUrls();
     } else {
       setPageInput(String(currentPage)); 
       alert(`Please enter a page number between 1 and ${totalPages}.`);
@@ -1214,6 +1499,7 @@ function BookView() {
         logger.info(`[BookView - handleNoteClick] Navigating to page ${targetPage} from note click.`);
         isProgrammaticScroll.current = true; // Prevent scroll sync issues
         setCurrentPage(targetPage);
+        refreshImageUrls(); // Refresh signed URLs when page changes
         // The useEffect for currentPage changes will handle scrolling to top of the new page
         // and resetting isProgrammaticScroll.current.
         // Explicit scroll to top here might be redundant if page content effect handles it,
@@ -1300,6 +1586,7 @@ function BookView() {
     if (targetPageNum !== currentPage && targetPageNum !== -1) { // Ensure targetPageNum is valid
       logger.info(`[ScrollToNoteEffect] Target page ${targetPageNum} is different from current page ${currentPage}. Setting current page and pending offset.`);
       setCurrentPage(targetPageNum);
+      refreshImageUrls(); // Refresh signed URLs when page changes
       // The offsetWithinTargetPage is already calculated based on the raw markdown of that page.
       // The pendingScrollEffect will need to use this raw offset to find the visual scroll position.
       setPendingScrollOffsetInPage(offsetWithinTargetPage); 
@@ -1566,6 +1853,26 @@ function BookView() {
     }
   }, [currentPageContent, pendingScrollOffsetInPage, pageBoundaries]); // Added pageBoundaries
 
+  // Effect to scroll to guide search highlight after content is rendered
+  useEffect(() => {
+    if (guideSearchText && bookPaneContainerRef.current && highlightedPageContent) {
+      // Small delay to ensure DOM is updated with highlighted content
+      const scrollTimeout = setTimeout(() => {
+        const highlightElement = bookPaneContainerRef.current?.querySelector('.guide-search-highlight');
+        if (highlightElement) {
+          logger.info(`[BookView - GuideSearchScroll] Scrolling to guide search highlight`);
+          highlightElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          // Store ref for potential future use
+          guideSearchHighlightRef.current = highlightElement;
+        } else {
+          logger.warn(`[BookView - GuideSearchScroll] Guide search highlight element not found. Search text: "${guideSearchText.substring(0, 50)}"`);
+        }
+      }, 200);
+      
+      return () => clearTimeout(scrollTimeout);
+    }
+  }, [guideSearchText, highlightedPageContent]);
+
   useEffect(() => {
     // This effect applies scrolling when a pendingScrollToPercentage is set,
     // typically after a page change initiated by selecting a bookmark.
@@ -1759,6 +2066,7 @@ function BookView() {
           setPendingScrollToPercentage(0);
         }
         setCurrentPage(selectedBookmark.page_number);
+        refreshImageUrls(); // Refresh signed URLs when page changes
       } else {
         logger.debug(`[BookView - handleBookmarkSelect] Already on target page ${currentPage}. Scrolling directly.`);
         if (bookPaneContainerRef.current) {
@@ -1783,12 +2091,55 @@ function BookView() {
     }
   };
 
+  // Function to refresh signed URLs in markdown content
+  const refreshImageUrls = async () => {
+    if (!bookId) return;
+    
+    try {
+      const token = localStorage.getItem('authToken');
+      if (!token) {
+        logger.warn("[BookView - refreshImageUrls] Auth token not found.");
+        return;
+      }
+      
+      const response = await fetch(`/api/books/${bookId}/refresh-image-urls`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        if (data.markdown_content) {
+          setFullMarkdownContent(data.markdown_content);
+          logger.info("[BookView - refreshImageUrls] Refreshed signed URLs in markdown content");
+        }
+      } else {
+        logger.warn("[BookView - refreshImageUrls] Failed to refresh URLs, continuing with existing content");
+      }
+    } catch (err) {
+      logger.error("[BookView - refreshImageUrls] Error refreshing URLs:", err);
+      // Don't block page navigation if URL refresh fails
+    }
+  };
+
   const handlePreviousPage = () => {
-    setCurrentPage((prev) => Math.max(1, prev - 1));
+    setCurrentPage((prev) => {
+      const newPage = Math.max(1, prev - 1);
+      // Refresh signed URLs when page changes
+      refreshImageUrls();
+      return newPage;
+    });
   };
 
   const handleNextPage = () => {
-    setCurrentPage((prev) => Math.min(totalPages, prev + 1));
+    setCurrentPage((prev) => {
+      const newPage = Math.min(totalPages, prev + 1);
+      // Refresh signed URLs when page changes
+      refreshImageUrls();
+      return newPage;
+    });
   };
 
   const openAddBookmarkModal = () => {
@@ -1802,10 +2153,6 @@ function BookView() {
   };
 
   const handleSaveBookmark = async () => {
-    if (!newBookmarkName.trim()) {
-      setBookmarkError("Bookmark name cannot be empty.");
-      return;
-    }
     setBookmarkError(null); // Clear error if any
 
     let currentScrollPercentage = 0; // Default to 0
@@ -1820,9 +2167,10 @@ function BookView() {
 
     const bookmarkData = {
       book_id: bookId,
-      name: newBookmarkName.trim(),
+      name: newBookmarkName.trim() || null, // Allow empty name - backend will generate default
       page_number: currentPage, // Assumes currentPage state is correctly maintained
       scroll_percentage: currentScrollPercentage,
+      global_character_offset: selectedGlobalCharOffset || null, // Include global character offset for line calculation
     };
 
     logger.debug("Attempting to save bookmark with data:", bookmarkData);
@@ -2030,6 +2378,8 @@ function BookView() {
             isGenerating={isGeneratingGuide}
             documentStructure={documentStructure} // Pass structure
             onStructureItemClick={handleStructureItemClick} // Pass click handler
+            onGuideTextSearch={handleGuideTextSearch} // Pass search handler (legacy)
+            onGuideTextLink={handleGuideTextLink} // Pass enhanced TextLink handler
             // No onClose for desktop version
           />
         </div>
@@ -2058,6 +2408,8 @@ function BookView() {
             isGenerating={isGeneratingGuide}
             documentStructure={documentStructure} // Pass structure
             onStructureItemClick={handleStructureItemClick} // Pass click handler
+            onGuideTextSearch={handleGuideTextSearch} // Pass search handler (legacy)
+            onGuideTextLink={handleGuideTextLink} // Pass enhanced TextLink handler
           />
         </div>
       )}
@@ -2096,35 +2448,49 @@ function BookView() {
           <div className="book-pane-wrapper">
             {/* --- MODIFIED Controls Header for Book Pane --- */}
             <div className="book-pane-controls-header">
-              {/* Left Group: Toggle Guide and Bookmarks */}
+              {/* Left Group: Font Controls and Book View Menu */}
               <div className="left-controls-group">
-                <button onClick={toggleReadingGuidePane} className="control-button" title="Toggle Reading Guide">
-                  {/* Icon for guide - using text for now */}
-                  {isMobileView ? 'Guide' : (showReadingGuidePane ? 'Hide Guide' : 'Show Guide')}
-                </button>
-                <div className="bookmark-menu-container" ref={bookmarkMenuRef} style={{ marginLeft: '8px' }}>
+                {/* Font Controls */}
+                <div className="font-controls-group" style={{ display: 'flex', alignItems: 'center', marginRight: '8px' }}>
+                  <button onClick={decreaseFontSize} className="font-control-btn" title="Decrease font size">A-</button>
+                  <span style={{ margin: '0 8px', fontSize: '13px', minWidth: '40px', textAlign: 'center' }}>{fontSize}px</span>
+                  <button onClick={increaseFontSize} className="font-control-btn" title="Increase font size">A+</button>
+                  <span style={{ borderLeft: '1px solid #ccc', height: '20px', margin: '0 10px' }}></span>
+                  <button onClick={decreaseLineHeight} className="font-control-btn" title="Decrease line spacing">LH-</button>
+                  <span style={{ margin: '0 8px', fontSize: '13px', minWidth: '35px', textAlign: 'center' }}>{lineHeight.toFixed(1)}</span>
+                  <button onClick={increaseLineHeight} className="font-control-btn" title="Increase line spacing">LH+</button>
+                </div>
+
+                {/* Book View Menu Dropdown */}
+                <div className="book-view-menu-container" ref={bookViewMenuRef} style={{ marginLeft: '8px' }}>
                   <button 
-                    onClick={() => setIsBookmarkMenuOpen(prev => !prev)} 
-                    className="control-button bookmark-menu-button"
+                    onClick={() => setIsBookViewMenuOpen(prev => !prev)} 
+                    className="control-button book-view-menu-button"
                     aria-haspopup="true"
-                    aria-expanded={isBookmarkMenuOpen}
+                    aria-expanded={isBookViewMenuOpen}
                   >
-                    Bookmarks <span className={`arrow ${isBookmarkMenuOpen ? 'up' : 'down'}`}></span>
+                    Menu <span className={`arrow ${isBookViewMenuOpen ? 'up' : 'down'}`}></span>
                   </button>
-                  {isBookmarkMenuOpen && (
-                    <div className="bookmark-dropdown-menu">
+                  {isBookViewMenuOpen && (
+                    <div className="book-view-dropdown-menu">
                       <button 
-                        onClick={() => { openAddBookmarkModal(); setIsBookmarkMenuOpen(false); }} 
+                        onClick={() => { toggleReadingGuidePane(); setIsBookViewMenuOpen(false); }} 
+                        className="dropdown-item control-button"
+                      >
+                        {showReadingGuidePane ? 'Hide Reading Guide' : 'Show Reading Guide'}
+                      </button>
+                      <button 
+                        onClick={() => { openAddBookmarkModal(); setIsBookViewMenuOpen(false); }} 
                         className="dropdown-item control-button"
                       >
                         Add Bookmark
                       </button>
                       {bookmarks.length > 0 && (
                         <div className="dropdown-item-select-container">
-                          <label htmlFor="jump-to-bookmark-select" className="sr-only">Jump to Bookmark</label>
+                          <label htmlFor="jump-to-bookmark-select-menu" className="sr-only">Jump to Bookmark</label>
                           <select
-                            id="jump-to-bookmark-select"
-                            onChange={(e) => { handleBookmarkSelect(e); setIsBookmarkMenuOpen(false); }}
+                            id="jump-to-bookmark-select-menu"
+                            onChange={(e) => { handleBookmarkSelect(e); setIsBookViewMenuOpen(false); }}
                             className="bookmark-select dropdown-item-select control-button"
                             defaultValue=""
                             aria-label="Jump to bookmark"
@@ -2139,20 +2505,36 @@ function BookView() {
                         </div>
                       )}
                       <button 
-                        onClick={() => { setShowManageBookmarksModal(true); setIsBookmarkMenuOpen(false); }} 
+                        onClick={() => { setShowManageBookmarksModal(true); setIsBookViewMenuOpen(false); }} 
                         className="dropdown-item control-button"
                       >
                         Manage Bookmarks
                       </button>
+                      <button 
+                        onClick={() => { handleReformatPage(); setIsBookViewMenuOpen(false); }} 
+                        className="dropdown-item control-button"
+                        disabled={isReformatting}
+                        title={selectedBookText ? "Reformat selected text with AI." : "Reformat current page with AI. This cannot be undone."}
+                      >
+                        {isReformatting ? 'Reformatting...' : (selectedBookText ? 'Reformat Selection' : 'Reformat Page')}
+                      </button>
+                      <button 
+                        onClick={() => { setShowAllNotesModal(true); setIsBookViewMenuOpen(false); }} 
+                        className="dropdown-item control-button"
+                      >
+                        Review Notes
+                      </button>
+                      <button 
+                        onClick={() => { toggleNotePaneVisibility(); setIsBookViewMenuOpen(false); }} 
+                        className="dropdown-item control-button"
+                      >
+                        {isMobileView
+                          ? (showNotesPanelOnMobile ? 'Hide Notes' : 'Show Notes')
+                          : (isNotePaneVisible ? 'Hide Notes' : 'Show Notes')}
+                      </button>
                     </div>
                   )}
                 </div>
-                <button onClick={handleReformatPage} className="control-button" title={selectedBookText ? "Reformat selected text with AI." : "Reformat current page with AI. This cannot be undone."} disabled={isReformatting} style={{ marginLeft: '8px' }}>
-                  {isReformatting ? 'Reformatting...' : (selectedBookText ? 'Reformat Selection' : 'Reformat Page')}
-                </button>
-                <button onClick={() => setShowAllNotesModal(true)} className="control-button" title="Review all saved notes for this book" style={{ marginLeft: '8px' }}>
-                  Review Notes
-                </button>
               </div>
               
               {/* Center: Pagination Controls */}
@@ -2183,14 +2565,8 @@ function BookView() {
               {totalPages <= 1 && <div className="pagination-controls-placeholder"></div>}
 
 
-              {/* Right: Toggle Notes Button */}
-              <div className="right-controls-group"> {/* New wrapper for right-aligned items */}
-                <button onClick={toggleNotePaneVisibility} className="control-button">
-                  {isMobileView
-                    ? (showNotesPanelOnMobile ? 'Hide Notes' : 'Show Notes')
-                    : (isNotePaneVisible ? 'Hide Notes' : 'Show Notes')}
-                </button>
-              </div>
+              {/* Right: Empty for now (all controls moved to left group) */}
+              <div className="right-controls-group"></div>
             </div>
             {/* --- END OF MODIFIED Controls Header --- */}
 
@@ -2201,6 +2577,8 @@ function BookView() {
                 imageUrls={bookData.image_urls}
                 onTextSelect={handleTextSelect}
                 onHighlightClick={handleHighlightClick}
+                fontSize={fontSize}
+                lineHeight={lineHeight}
               />
             </div>
             {/* The original pagination block was here and is now removed */}
@@ -2274,7 +2652,7 @@ function BookView() {
             type="text"
             value={newBookmarkName}
             onChange={(e) => setNewBookmarkName(e.target.value)}
-            placeholder="Enter bookmark name"
+            placeholder="Enter bookmark name (optional - default: Page X, Line Y)"
             className="bookmark-name-input"
             aria-label="Bookmark name"
           />

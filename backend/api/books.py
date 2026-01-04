@@ -5,7 +5,13 @@ import asyncio # Import asyncio
 import os
 import logging
 import requests # Import requests
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, status, Body, Response, Depends, Request
+import hmac
+import hashlib
+import time
+import urllib.parse
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, status, Body, Response, Depends, Request, Query
+from fastapi.responses import FileResponse
+from pathlib import Path
 from typing import List, Optional, Dict, Any 
 from bson import ObjectId # Keep ObjectId import
 from bson.errors import InvalidId # Import InvalidId
@@ -376,27 +382,40 @@ async def get_book_by_id(book_id: str, current_user_id: str = Depends(get_curren
 
             markdown_content = await run_in_threadpool(check_and_read_markdown, container_markdown_path)
 
-            # Log raw markdown content before replacement
+            # Replace /images/app/ paths in markdown with signed URLs
             if isinstance(markdown_content, str) and not markdown_content.startswith("Error:"):
-                logger.info(f"Get endpoint: Book ID {book_id} - Raw markdown before replacement (first 500 chars): {markdown_content[:500]}")
-                # Log a few image paths found in raw markdown for direct comparison
-                raw_md_img_paths = re.findall(r"!\[[^\]]*\]\(([^)]+)\)", markdown_content)
-                raw_html_img_paths = re.findall(r"<img [^>]*src\s*=\s*['\"]([^'\"]+)['\"][^>]*>", markdown_content)
-                logger.info(f"Get endpoint: Book ID {book_id} - Image paths in RAW markdown (MD syntax): {raw_md_img_paths[:5]}")
-                logger.info(f"Get endpoint: Book ID {book_id} - Image paths in RAW markdown (MD syntax): {raw_md_img_paths[:5]}")
-                logger.info(f"Get endpoint: Book ID {book_id} - Image paths in RAW markdown (HTML syntax): {raw_html_img_paths[:5]}")
-            
-            # --- REMOVE THE ENTIRE IMAGE PATH REWRITING BLOCK ---
-            # if markdown_content and isinstance(markdown_content, str) and book.processed_images_info:
-            #    ... (all the re.subn logic) ...
-            # elif markdown_content and isinstance(markdown_content, str) and not book.processed_images_info:
-            #    logger.info(f"Get endpoint: Book {book_id} has markdown content but no processed_images_info. Skipping new replacement logic.")
-            logger.info(f"Get endpoint: Markdown content for book {book_id} is now assumed to have web-ready image paths from the file itself.")
+                # Replace markdown image syntax: ![](/images/app/filename.jpg)
+                def replace_md_image(match):
+                    full_match = match.group(0)
+                    image_path = match.group(2)  # The URL part
+                    if image_path.startswith('/images/app/'):
+                        filename = image_path.replace('/images/app/', '')
+                        signed_url = generate_signed_image_url(filename)
+                        return full_match.replace(image_path, signed_url)
+                    return full_match
+                
+                # Replace HTML img tags: <img src="/images/app/filename.jpg">
+                def replace_html_image(match):
+                    full_match = match.group(0)
+                    image_path = match.group(2)  # The src value
+                    if image_path.startswith('/images/app/'):
+                        filename = image_path.replace('/images/app/', '')
+                        signed_url = generate_signed_image_url(filename)
+                        return full_match.replace(image_path, signed_url)
+                    return full_match
+                
+                # Apply replacements
+                markdown_content = re.sub(r"!\[([^\]]*)\]\(([^)]+)\)", replace_md_image, markdown_content)
+                markdown_content = re.sub(r"<img ([^>]*src\s*=\s*['\"])([^'\"]+)(['\"][^>]*)>", replace_html_image, markdown_content)
+                
+                logger.info(f"Get endpoint: Replaced image paths in markdown with signed URLs for book {book_id}")
 
 
     if book.status == 'completed' and book.image_filenames:
-         image_urls_for_response = [f"/images/{filename}" for filename in book.image_filenames if filename]
-         logger.info(f"Get endpoint: Generated {len(image_urls_for_response)} image URLs for response model from image_filenames.")
+         # App images (from PDF processing) are stored in /images/app/ subdirectory
+         # Generate signed URLs that expire after 1 hour to prevent direct URL access
+         image_urls_for_response = [generate_signed_image_url(filename) for filename in book.image_filenames if filename]
+         logger.info(f"Get endpoint: Generated {len(image_urls_for_response)} signed image URLs for response model from image_filenames (app images).")
     elif book.status == 'completed' and not book.image_filenames:
          logger.info(f"Get endpoint: Book ID {book_id} completed but no image filenames stored.")
     elif book.status != 'completed':
@@ -423,6 +442,71 @@ async def get_book_by_id(book_id: str, current_user_id: str = Depends(get_curren
 
     logger.info(f"Get endpoint: Returning book data for ID {book_id}")
     return book
+
+@router.post("/{book_id}/refresh-image-urls")
+async def refresh_image_urls(book_id: str, current_user_id: str = Depends(get_current_user_id)):
+    """
+    Refreshes signed URLs for all images in the book's markdown content.
+    Returns the markdown content with fresh signed URLs.
+    This is called when user navigates pages to ensure URLs don't expire.
+    """
+    logger.info(f"Refresh image URLs request for book ID: {book_id} by user {current_user_id}")
+    
+    book_data_doc = await get_book(book_id, current_user_id)
+    if not book_data_doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found or not owned by user")
+    
+    book = Book.model_validate(book_data_doc)
+    
+    # Read markdown content
+    markdown_content = None
+    if book.status == 'completed' and book.markdown_filename:
+        container_markdown_path = os.path.join(CONTAINER_MARKDOWN_PATH, book.markdown_filename)
+        
+        def read_markdown_file(path):
+            if os.path.exists(path) and os.path.isfile(path):
+                try:
+                    with open(path, 'r', encoding='utf-8') as f:
+                        return f.read()
+                except Exception as file_read_error:
+                    logger.error(f"Error reading markdown file {path}: {file_read_error}")
+                    return f"Error: Could not read processed content. {file_read_error}"
+            else:
+                logger.error(f"Markdown file not found at container path: {path}")
+                return "Error: Processed content file not found."
+        
+        markdown_content = await run_in_threadpool(read_markdown_file, container_markdown_path)
+    
+    if not markdown_content or isinstance(markdown_content, str) and markdown_content.startswith("Error:"):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Markdown content not found")
+    
+    # Replace /images/app/ paths with fresh signed URLs
+    if isinstance(markdown_content, str):
+        def replace_md_image(match):
+            full_match = match.group(0)
+            image_path = match.group(2)  # The URL part
+            if image_path.startswith('/images/app/'):
+                filename = image_path.replace('/images/app/', '')
+                signed_url = generate_signed_image_url(filename)
+                return full_match.replace(image_path, signed_url)
+            return full_match
+        
+        def replace_html_image(match):
+            full_match = match.group(0)
+            image_path = match.group(2)  # The src value
+            if image_path.startswith('/images/app/'):
+                filename = image_path.replace('/images/app/', '')
+                signed_url = generate_signed_image_url(filename)
+                return full_match.replace(image_path, signed_url)
+            return full_match
+        
+        # Apply replacements
+        markdown_content = re.sub(r"!\[([^\]]*)\]\(([^)]+)\)", replace_md_image, markdown_content)
+        markdown_content = re.sub(r"<img ([^>]*src\s*=\s*['\"])([^'\"]+)(['\"][^>]*)>", replace_html_image, markdown_content)
+        
+        logger.info(f"Refreshed signed URLs in markdown for book {book_id}")
+    
+    return {"markdown_content": markdown_content}
 
 
 # --- Add this helper function if it's not already present in this file ---
@@ -1009,37 +1093,104 @@ async def generate_page_reading_guide(
 
         page_boundary = boundaries[page_number - 1]
         page_content_text = full_markdown_content[page_boundary['start']:page_boundary['end']]
+        page_global_start_offset = page_boundary['start']  # Store the global start offset for this page
 
     except Exception as e:
         logger.error(f"Error reading or processing markdown for guide: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error processing book content for guide.")
 
-    # Use the imported llm_service instance
-    # llm_service_instance = LLMService() # REMOVE THIS LINE
-
-    llm_prompt = (
-        f"You are an expert reading assistant. Generate a concise reading guide for page {page_number} "
-        f"of the book titled '{book.title}'. "
-        "Focus on identifying key themes, main ideas, important characters or events if any, "
-        "and suggest 1-2 thought-provoking questions related to this specific page's content. "
-        "If the content is very short, a header, or seems like an image caption, note that. "
-        "If the content is blank or unavailable, state that the page appears to be empty or mainly visual. "
-        "Format the guide clearly. Keep the guide concise, suitable for a small panel in a reading application."
-    )
-    
+    # Use the imported llm_service instance to generate structured reading guide
     try:
-        logger.info(f"Sending prompt to LLM for book {book.id}, page {page_number}. Prompt length (approx): {len(llm_prompt)}")
-        guide_text = await llm_service.ask(prompt=llm_prompt, context=page_content_text) # Use imported llm_service instance
-        if not guide_text or not guide_text.strip():
-            guide_text = "The LLM did not provide a guide for this page. It might be empty or contain non-textual content."
-            logger.warning(f"LLM returned empty guide for book {book.id}, page {page_number}")
+        logger.info(f"Generating structured reading guide for book {book.id}, page {page_number}")
+        structured_guide = await llm_service.generate_structured_reading_guide(
+            page_content=page_content_text,
+            book_title=book.title,
+            page_number=page_number
+        )
+        
+        # Import the ReadingGuideSection and TextLink models for validation
+        from backend.models.reading_guide import ReadingGuideSection, TextLink
+        
+        # Convert structured guide to model format
+        # IMPORTANT: Convert page-relative offsets to global offsets
+        sections = []
+        if structured_guide.get("sections"):
+            for section_data in structured_guide["sections"]:
+                # LLM returns offsets relative to the page content (0 to page_length)
+                # Convert them to global offsets by adding the page's global start offset
+                page_relative_start = section_data.get("original_start_offset", 0)
+                page_relative_end = section_data.get("original_end_offset", 0)
+                
+                # Ensure offsets are within page bounds
+                page_relative_start = max(0, min(page_relative_start, len(page_content_text)))
+                page_relative_end = max(page_relative_start, min(page_relative_end, len(page_content_text)))
+                
+                # Convert to global offsets
+                global_start_offset = page_global_start_offset + page_relative_start
+                global_end_offset = page_global_start_offset + page_relative_end
+                
+                # Get original text preview from the actual content if not provided or if we want to verify it
+                original_text_preview = section_data.get("original_text_preview")
+                if not original_text_preview and page_relative_start < len(page_content_text):
+                    preview_length = min(200, len(page_content_text) - page_relative_start)
+                    original_text_preview = page_content_text[page_relative_start:page_relative_start + preview_length]
+                
+                # Get context from LLM response or extract from content
+                context_before = section_data.get("context_before")
+                if not context_before and page_relative_start > 0:
+                    context_length = min(50, page_relative_start)
+                    context_before = page_content_text[max(0, page_relative_start - context_length):page_relative_start]
+                
+                context_after = section_data.get("context_after")
+                if not context_after and page_relative_end < len(page_content_text):
+                    context_length = min(50, len(page_content_text) - page_relative_end)
+                    context_after = page_content_text[page_relative_end:page_relative_end + context_length]
+                
+                # Create TextLink for primary link
+                primary_link = TextLink(
+                    start_offset=global_start_offset,
+                    end_offset=global_end_offset,
+                    preview_text=original_text_preview or "",
+                    context_before=context_before,
+                    context_after=context_after
+                )
+                
+                section = ReadingGuideSection(
+                    section_title=section_data.get("section_title", ""),
+                    rewritten_content=section_data.get("rewritten_content", ""),
+                    original_start_offset=global_start_offset,  # Store as global offset (legacy)
+                    original_end_offset=global_end_offset,  # Store as global offset (legacy)
+                    original_text_preview=original_text_preview,  # Legacy
+                    primary_link=primary_link  # Enhanced linking
+                )
+                sections.append(section)
+                logger.debug(f"Converted section '{section.section_title}': page-relative [{page_relative_start}-{page_relative_end}] -> global [{global_start_offset}-{global_end_offset}] with TextLink")
+        
+        # Generate a simple text content for backward compatibility
+        # Combine all rewritten sections into a single text
+        simple_content = ""
+        if sections:
+            simple_content = "\n\n".join([
+                f"## {section.section_title}\n\n{section.rewritten_content}"
+                for section in sections
+            ])
+        else:
+            simple_content = "No guide sections were generated for this page."
+            logger.warning(f"No guide sections generated for book {book.id}, page {page_number}")
+        
+        # Store structured guide with backward compatibility
+        db_guide_page = await upsert_reading_guide_page(
+            book_id=str(book.id),
+            user_id=current_user_id,
+            page_number=page_number,
+            content=simple_content,  # Legacy simple text
+            sections=sections,  # New structured sections
+            document_structure_map=structured_guide.get("document_structure_map", {})  # Structure mapping
+        )
+        
     except Exception as e:
         logger.error(f"LLM service error for book {book.id}, page {page_number}: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="LLM service unavailable or failed.")
-
-    db_guide_page = await upsert_reading_guide_page(
-        book_id=str(book.id), user_id=current_user_id, page_number=page_number, content=guide_text.strip()
-    )
 
     if not db_guide_page:
         logger.error(f"Failed to save reading guide for book {book.id}, page {page_number} to DB.")
@@ -1071,4 +1222,140 @@ async def get_page_reading_guide(
     logger.info(f"Successfully retrieved reading guide for book {book_id}, page {page_number}")
     return db_guide_page
 
-# ... (rest of the file) ...
+# Shared secret for app image access (simpler than full auth for img tags)
+APP_IMAGE_SECRET = os.getenv("APP_IMAGE_SECRET", "")
+logger.info(f"App image secret configured: {bool(APP_IMAGE_SECRET)} (length: {len(APP_IMAGE_SECRET) if APP_IMAGE_SECRET else 0})")
+
+# Signed URL expiration time (1 minute)
+SIGNED_URL_EXPIRATION = 60  # seconds
+
+def generate_signed_image_url(filepath: str) -> str:
+    """
+    Generate a signed URL for an app image that expires after SIGNED_URL_EXPIRATION seconds.
+    The signature is based on filepath + timestamp + secret.
+    """
+    if not APP_IMAGE_SECRET:
+        # Fallback to simple secret if signing not configured
+        return f"/api/books/images/app/{filepath}?secret={urllib.parse.quote(APP_IMAGE_SECRET)}"
+    
+    # Generate expiration timestamp
+    expires = int(time.time()) + SIGNED_URL_EXPIRATION
+    
+    # Create message to sign: filepath + expiration timestamp
+    message = f"{filepath}:{expires}"
+    
+    # Generate HMAC signature
+    signature = hmac.new(
+        APP_IMAGE_SECRET.encode('utf-8'),
+        message.encode('utf-8'),
+        hashlib.sha256
+    ).hexdigest()
+    
+    # Return signed URL
+    return f"/api/books/images/app/{filepath}?expires={expires}&signature={signature}"
+
+def verify_signed_url(filepath: str, expires: Optional[str], signature: Optional[str]) -> bool:
+    """
+    Verify that a signed URL is valid and not expired.
+    """
+    if not APP_IMAGE_SECRET or not expires or not signature:
+        return False
+    
+    try:
+        expires_int = int(expires)
+        # Check if URL has expired
+        if time.time() > expires_int:
+            logger.debug(f"Signed URL expired: {filepath} (expired at {expires_int}, current time {int(time.time())})")
+            return False
+        
+        # Recreate the message
+        message = f"{filepath}:{expires_int}"
+        
+        # Recompute the signature
+        expected_signature = hmac.new(
+            APP_IMAGE_SECRET.encode('utf-8'),
+            message.encode('utf-8'),
+            hashlib.sha256
+        ).hexdigest()
+        
+        # Compare signatures (use constant-time comparison to prevent timing attacks)
+        return hmac.compare_digest(signature, expected_signature)
+    except (ValueError, TypeError):
+        return False
+
+@router.get("/images/app/{filepath:path}")
+async def serve_app_image(
+    filepath: str,
+    request: Request,
+    expires: Optional[str] = Query(None),
+    signature: Optional[str] = Query(None),
+    secret: Optional[str] = Query(None)  # Legacy support
+):
+    """
+    Serves an app image file (from PDF processing).
+    These images are only accessible through the reading_pal app.
+    Accepts either:
+    - Bearer token authentication (via Authorization header)
+    - Signed URL with expiration (expires + signature query parameters)
+    - Legacy: Shared secret key (via secret query parameter, deprecated)
+    """
+    logger.debug(f"App image request received - filepath: '{filepath}', has_signed_url: {bool(expires and signature)}, has_legacy_secret: {bool(secret)}")
+    
+    # Try to get user_id from token first (optional - won't raise if missing)
+    current_user_id = None
+    try:
+        current_user_id = await get_current_user_id(request)
+    except HTTPException:
+        # No valid token, will check signed URL or legacy secret instead
+        pass
+    
+    # Check authentication: Bearer token OR signed URL OR legacy secret
+    is_authenticated = False
+    
+    if current_user_id:
+        # User authenticated via Bearer token
+        is_authenticated = True
+        logger.debug(f"Serving app image: {filepath} for authenticated user: {current_user_id}")
+    elif expires and signature:
+        # Verify signed URL
+        if verify_signed_url(filepath, expires, signature):
+            is_authenticated = True
+            logger.debug(f"Serving app image: {filepath} with valid signed URL")
+        else:
+            logger.warning(f"App image request denied - invalid or expired signed URL: {filepath}")
+    elif APP_IMAGE_SECRET and secret == APP_IMAGE_SECRET:
+        # Legacy: Valid secret key provided (deprecated, but kept for backward compatibility)
+        is_authenticated = True
+        logger.debug(f"Serving app image: {filepath} with legacy secret key")
+    
+    if not is_authenticated:
+        logger.warning(f"App image request denied - no valid authentication: {filepath} (has_signed_url: {bool(expires and signature)}, has_legacy_secret: {bool(secret)}, current_user_id: {current_user_id})")
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied. App images require authentication or a valid signed URL.",
+        )
+    
+    try:
+        # Construct the full path to the app image file
+        app_images_path = os.path.join(CONTAINER_IMAGES_PATH, "app")
+        image_file_path = Path(app_images_path) / filepath
+
+        logger.debug(f"App image request - filepath: {filepath}, full_path: {image_file_path}")
+
+        if not image_file_path.exists() or not image_file_path.is_file():
+            logger.warning(f"App image not found: {image_file_path} (exists: {image_file_path.exists()}, is_file: {image_file_path.is_file() if image_file_path.exists() else 'N/A'})")
+            raise HTTPException(status_code=404, detail="Image not found")
+
+        # Security check: ensure the resolved path is still within the app directory
+        app_images_path_resolved = Path(app_images_path).resolve()
+        if not image_file_path.resolve().is_relative_to(app_images_path_resolved):
+            logger.error(f"Path traversal attempt detected: {filepath} resolved outside {app_images_path_resolved}")
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        return FileResponse(image_file_path)
+
+    except HTTPException as http_exc:
+        raise http_exc
+    except Exception as e:
+        logger.error(f"Error serving app image {filepath}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
