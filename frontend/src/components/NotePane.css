@@ -2,6 +2,12 @@
 
 /* Styles for elements unique to NotePane or specific refinements */
 
+/* When NotePane is inside a modal (e.g. .modal-body-scrollable), avoid overflowing */
+.modal-body-scrollable .note-pane {
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
 /* Styles for the main h2 title in NotePane */
 .note-pane h2 { /* Targets the <h2>Notes & LLM Insights</h2> */
   margin-top: 0;

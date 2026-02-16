@@ -1,9 +1,6 @@
 version: '3.8'
 
 services:
-  # The pdf_service runs independently outside of this docker-compose setup.
-  # Remove the pdf_service block entirely.
-
   backend:
     build: ./backend
     # When using network_mode: "host", the container shares the host's network namespace.
@@ -48,6 +45,33 @@ services:
       IMAGES_BASE_PATH: /app/storage/images # Internal path to images
       PORT: ${IMAGE_SERVICE_PORT} # Port for the service to listen on internally
     # depends_on: # No explicit dependencies needed for other services to start
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  pdf_service:
+    build: ./pdf_service
+    ports:
+      - "${PDF_SERVICE_PORT:-8502}:8502"
+    env_file:
+      - .env
+    environment:
+      PORT: "8502"
+      PDF_STORAGE_PATH: /app/storage/pdfs
+      MARKDOWN_PATH: /app/storage/output
+      IMAGES_PATH: /app/storage/images
+      # From inside the container, reach the host backend (backend uses network_mode: host)
+      BACKEND_CALLBACK_URL: "http://host.docker.internal:8501/api/books/callback"
+    volumes:
+      - ${PDF_STORAGE_PATH}:/app/storage/pdfs
+      - ${MARKDOWN_PATH}:/app/storage/output
+      - ${IMAGES_PATH}:/app/storage/images
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     extra_hosts:
       - "host.docker.internal:host-gateway"
 

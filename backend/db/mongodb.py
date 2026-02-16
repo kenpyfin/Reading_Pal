@@ -727,9 +727,11 @@ async def upsert_reading_guide_page(
                 sections_dicts.append({
                     "section_title": getattr(section, "section_title", ""),
                     "rewritten_content": getattr(section, "rewritten_content", ""),
+                    "key_takeaway": getattr(section, "key_takeaway", None),
                     "original_start_offset": getattr(section, "original_start_offset", 0),
                     "original_end_offset": getattr(section, "original_end_offset", 0),
-                    "original_text_preview": getattr(section, "original_text_preview", None)
+                    "original_text_preview": getattr(section, "original_text_preview", None),
+                    "primary_link": getattr(section, "primary_link", None),
                 })
         update_set["sections"] = sections_dicts
     

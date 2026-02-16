@@ -5,7 +5,6 @@ import uuid
 from typing import Optional
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Header, Depends, Request
 from fastapi.responses import FileResponse, JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 import uvicorn
 
@@ -16,22 +15,8 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Image Serving Service")
 
-# Add CORS middleware to handle cross-origin requests
-# Allow specific origins for security (can be configured via environment variable)
-ALLOWED_ORIGINS = os.getenv("ALLOWED_CORS_ORIGINS", "*").split(",")
-if ALLOWED_ORIGINS == ["*"]:
-    logger.warning("CORS is configured to allow all origins. Consider setting ALLOWED_CORS_ORIGINS in .env for production.")
-else:
-    logger.info(f"CORS configured for origins: {ALLOWED_ORIGINS}")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=False,  # Set to False when using wildcard origins
-    allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["*"],  # Allows all headers including X-API-Key
-    expose_headers=["*"],  # Expose all headers in response
-)
+# Note: CORS is handled by nginx at the proxy level to avoid duplicate headers
+# See nginx/readingpal.subdomain.conf location /images/upload for CORS configuration
 
 # Get the base path for images from environment variable
 # This path is where the IMAGES_PATH from the host is mounted inside the container

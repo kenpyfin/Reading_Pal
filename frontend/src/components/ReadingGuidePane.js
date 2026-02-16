@@ -65,9 +65,6 @@ const AuthenticatedImage = ({ src, style, alt }) => {
   return <img src={imageUrl} alt={alt} style={style} />;
 };
 
-const MIN_STRUCTURE_HEIGHT = 50; // Minimum height for the structure section in pixels
-const DEFAULT_STRUCTURE_HEIGHT = 150; // Default height
-
 // Simple tooltip component for link previews
 const LinkPreviewTooltip = ({ textLink, children }) => {
   const [showTooltip, setShowTooltip] = useState(false);
@@ -77,8 +74,14 @@ const LinkPreviewTooltip = ({ textLink, children }) => {
   const handleMouseEnter = (e) => {
     if (textLink && textLink.preview_text) {
       const rect = e.currentTarget.getBoundingClientRect();
+      const centerX = rect.left + rect.width / 2;
+      const padding = 16;
+      const maxHalfWidth = 200; // tooltip max-width is 400px in CSS
+      const minX = padding + maxHalfWidth;
+      const maxX = typeof window !== 'undefined' ? window.innerWidth - padding - maxHalfWidth : centerX;
+      const clampedX = Math.max(minX, Math.min(centerX, maxX));
       setTooltipPosition({
-        x: rect.left + rect.width / 2,
+        x: clampedX,
         y: rect.top - 10
       });
       setShowTooltip(true);
@@ -125,81 +128,36 @@ const LinkPreviewTooltip = ({ textLink, children }) => {
 };
 
 const ReadingGuidePane = ({
-  guideContent, // This can be a string (simple guide), an object (structured guide with sections), or null
-  onGenerateGuide, // New prop: function to call when "Generate" is clicked
-  isLoading, // Loading state for fetching or generating guide
-  error, // Error message if fetching/generating fails
+  guideContent,
+  onGenerateGuide,
+  isLoading,
+  error,
   onClose,
   isVisible,
-  hasGuideForCurrentPage, // New prop: boolean to indicate if a guide exists for the current page
-  isGenerating, // New prop: boolean to indicate if generation is in progress (for button text/state)
-  documentStructure, // New prop: array of {text, level, offset}
-  onStructureItemClick, // New prop: function to handle structure item click (for guide section navigation)
-  onGuideTextSearch, // New prop: function to search and highlight text from guide section (legacy)
-  onGuideTextLink, // New prop: function to handle TextLink navigation (enhanced)
+  hasGuideForCurrentPage,
+  isGenerating,
+  onStructureItemClick,
+  onGuideTextSearch,
+  onGuideTextLink,
+  onSwitchToOriginal,
+  scrollContainerRef, // Ref for the scrollable content div (parent can read/restore scroll)
+  scrollPositionToRestore = 0, // Restore this scroll position when mounted (e.g. returning from original view)
+  embedInMainArea = false,
 }) => {
-  const [structureSectionHeight, setStructureSectionHeight] = useState(DEFAULT_STRUCTURE_HEIGHT);
   const readingGuidePaneRef = useRef(null);
-  const isResizingStructureRef = useRef(false);
-  const dragStartYRef = useRef(0);
-  const initialStructureHeightRef = useRef(0);
 
-  const handleMouseDownOnStructureResizer = useCallback((e) => {
-    e.preventDefault();
-    isResizingStructureRef.current = true;
-    dragStartYRef.current = e.clientY;
-    initialStructureHeightRef.current = structureSectionHeight;
-    document.body.classList.add('resizing-no-select-vertical'); // Optional: for cursor styling
-
-    const handleMouseMove = (event) => {
-      if (!isResizingStructureRef.current || !readingGuidePaneRef.current) return;
-      const deltaY = event.clientY - dragStartYRef.current;
-      let newHeight = initialStructureHeightRef.current + deltaY;
-
-      const paneTotalHeight = readingGuidePaneRef.current.offsetHeight;
-      const maxStructureHeight = paneTotalHeight * 0.5; // 50% of total pane height
-
-      const effectiveMaxHeight = Math.max(MIN_STRUCTURE_HEIGHT, maxStructureHeight);
-
-      newHeight = Math.max(MIN_STRUCTURE_HEIGHT, Math.min(newHeight, effectiveMaxHeight));
-      setStructureSectionHeight(newHeight);
-    };
-
-    const handleMouseUp = () => {
-      isResizingStructureRef.current = false;
-      document.body.classList.remove('resizing-no-select-vertical');
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-  }, [structureSectionHeight]);
-
+  // Restore scroll position when returning to guide view or when guide content changes (e.g. page change)
   useEffect(() => {
-    const currentPaneRef = readingGuidePaneRef.current;
-    if (!currentPaneRef) return;
+    if (scrollPositionToRestore > 0 && scrollContainerRef?.current) {
+      const el = scrollContainerRef.current;
+      const raf = requestAnimationFrame(() => {
+        el.scrollTop = scrollPositionToRestore;
+      });
+      return () => cancelAnimationFrame(raf);
+    }
+  }, [scrollPositionToRestore, scrollContainerRef, guideContent]);
 
-    const observer = new ResizeObserver(entries => {
-      for (let entry of entries) {
-        const paneTotalHeight = entry.contentRect.height;
-        const maxStructureHeight = paneTotalHeight * 0.5;
-        if (structureSectionHeight > maxStructureHeight) {
-          setStructureSectionHeight(Math.max(MIN_STRUCTURE_HEIGHT, maxStructureHeight));
-        }
-      }
-    });
-
-    observer.observe(currentPaneRef);
-    return () => {
-      if (currentPaneRef) { // Check if ref still exists on cleanup
-        observer.unobserve(currentPaneRef);
-      }
-    };
-  }, [structureSectionHeight]);
-
-
-  if (!isVisible) {
+  if (!embedInMainArea && !isVisible) {
     return null;
   }
 
@@ -263,49 +221,22 @@ const ReadingGuidePane = ({
   };
 
   return (
-    <div className={`reading-guide-pane ${isVisible ? 'visible' : ''}`} ref={readingGuidePaneRef}>
+    <div className={`reading-guide-pane ${isVisible ? 'visible' : ''} ${embedInMainArea ? 'reading-guide-pane-embed' : ''}`} ref={readingGuidePaneRef}>
       <div className="reading-guide-header">
         <h3>Reading Guide (Current Page)</h3>
-        {onClose && (
-          <button onClick={onClose} className="close-guide-pane-btn" aria-label="Close Reading Guide">
-            &times;
-          </button>
-        )}
-      </div>
-
-      {/* Document Structure Section */}
-      {documentStructure && documentStructure.length > 0 && (
-        <div 
-          className="document-structure-section"
-          style={{ height: `${structureSectionHeight}px` }} // Apply height, overflowY: 'auto' is not present
-        >
-          <h4>Document Structure</h4>
-          <ul className="document-structure-list">
-            {documentStructure.map((item, index) => (
-              <li
-                key={index}
-                className={`structure-item level-${item.level}`}
-                style={{ paddingLeft: `${(item.level - 1) * 15}px` }} // Indent based on level
-                onClick={() => onStructureItemClick && onStructureItemClick(item.offset)}
-                role="button"
-                tabIndex={0} // Make it focusable
-                onKeyPress={(e) => { if (e.key === 'Enter' || e.key === ' ') onStructureItemClick && onStructureItemClick(item.offset);}} // Keyboard accessible
-                title={`Go to: ${item.text}`} // Add title for better UX
-              >
-                {item.text}
-              </li>
-            ))}
-          </ul>
+        <div className="reading-guide-header-actions">
+          {embedInMainArea && onSwitchToOriginal && (
+            <button onClick={onSwitchToOriginal} className="switch-to-original-btn" aria-label="Switch to original text">
+              Switch to Original Text
+            </button>
+          )}
+          {!embedInMainArea && onClose && (
+            <button onClick={onClose} className="close-guide-pane-btn" aria-label="Close Reading Guide">
+              &times;
+            </button>
+          )}
         </div>
-      )}
-      
-      {documentStructure && documentStructure.length > 0 && (
-        <div 
-          className="structure-resizer-handle"
-          onMouseDown={handleMouseDownOnStructureResizer}
-          title="Resize document structure area"
-        ></div>
-      )}
+      </div>
 
       <div className="reading-guide-actions">
         <button
@@ -316,7 +247,7 @@ const ReadingGuidePane = ({
           {isGenerating ? 'Generating...' : (hasGuideForCurrentPage ? 'Regenerate Guide' : 'Generate Guide')}
         </button>
       </div>
-      <div className="reading-guide-content">
+      <div className="reading-guide-content" ref={scrollContainerRef}>
         {isLoading && <p>Loading guide...</p>}
         {error && <p className="error-message">Error: {error}</p>}
         {!isLoading && !error && !guideContent && !hasGuideForCurrentPage && (
@@ -335,6 +266,9 @@ const ReadingGuidePane = ({
                 {guideContent.sections.map((section, index) => (
                   <div key={index} className="guide-section">
                     <h4 className="guide-section-title">{section.section_title || `Section ${index + 1}`}</h4>
+                    {section.key_takeaway && (
+                      <p className="guide-section-key-takeaway">{section.key_takeaway}</p>
+                    )}
                     <div className="guide-section-content">
                       <ReactMarkdown
                         children={section.rewritten_content}

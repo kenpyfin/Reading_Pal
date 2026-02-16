@@ -3,7 +3,7 @@ print("DEBUG: Executing backend/services/llm_service.py module")
 import os
 from dotenv import load_dotenv
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List, List
 # Import client libraries for different LLM providers
 from anthropic import Anthropic # Assuming Anthropic is used
 from ollama import AsyncClient # Use AsyncClient for better FastAPI integration
@@ -492,78 +492,56 @@ Reformat the following markdown:
             logger.error(f"Error calling {self.service_name} LLM 'reformat_content' method: {e}", exc_info=True)
             return f"Error reformatting content from LLM: {e}"
 
-    async def generate_structured_reading_guide(self, page_content: str, book_title: str, page_number: int) -> Dict[str, Any]:
+    async def generate_structured_reading_guide(
+        self,
+        segments: List[Dict[str, Any]],
+        book_title: str,
+        page_number: int,
+        total_pages: int,
+        guide_type: str = "summary",
+    ) -> Dict[str, Any]:
         """
-        Generates a structured reading guide with section-to-section rewrite/remap.
-        Returns a dictionary with sections, offsets, and mappings.
+        Generates a structured reading guide from pre-segmented content.
+        segments: list of {"section_title": str, "content": str}. Offsets are assigned by the caller.
+        Returns {"sections": [{"section_title", "key_takeaway", "rewritten_content"}], "document_structure_map": {}}.
         """
-        if not page_content:
+        if not segments:
             return {"sections": [], "document_structure_map": {}}
 
-        # Enhanced prompt for structured guide generation with precise linking
-        system_prompt = """You are an expert reading assistant specializing in creating structured, section-by-section reading guides. Your task is to analyze the provided page content and create a meaningful rewrite/remap that helps users quickly understand and reference the original text.
+        brevity_instruction = {
+            "summary": "For each section provide: 1) key_takeaway: one sentence capturing the main idea; 2) rewritten_content: 2-4 bullet points OR 1-3 sentences. Be concise.",
+            "comprehensive": "For each section provide: 1) key_takeaway: one sentence main idea; 2) rewritten_content: a condensed rewrite preserving key information, in simpler language when appropriate.",
+            "quick_reference": "For each section provide: 1) key_takeaway: one sentence main idea; 2) rewritten_content: one line only (one short sentence or phrase).",
+        }.get(guide_type, "For each section provide: 1) key_takeaway: one sentence main idea; 2) rewritten_content: 2-4 bullet points OR 1-3 sentences. Be concise.")
 
-**CRITICAL LINKING REQUIREMENTS:**
-The most important element of the reading guide is enabling users to quickly link back to the original text. Every component must provide precise linking information.
+        system_prompt = f"""You are an expert reading assistant. Your task is to create a READING GUIDE that helps readers quickly absorb the main ideas of a book. The guide is a replacement for skimming—readers use it to grasp the content fast, then click through to the original text when they want to go deeper.
 
-1. For every section, identify the EXACT character offsets in the original text
-2. Provide accurate preview text (100-200 characters) from the original source
-3. Include context (50 chars before/after) for better navigation
-4. Ensure offsets are precise - users will jump directly to these locations
-5. Character offsets must be relative to the provided page content (starting from 0)
+CONTEXT:
+- Book: "{book_title}"
+- This is page {page_number} of {total_pages}
 
-**TASK:**
-1. Analyze the page content to identify natural sections (based on headings, paragraph breaks, topic changes)
-2. For each identified section, create a condensed rewrite that:
-   - Preserves all key information and main ideas
-   - Uses simpler, clearer language when appropriate
-   - Maintains the essential meaning and context
-   - Is suitable for quick reading and quick reference
-3. Provide precise character offsets and preview text for each section
-4. Map sections to the original document structure (headings, levels)
+INPUT:
+The following content is pre-segmented by headings. Each section has a title and content. Your job is to summarize each section concisely.
 
-**OUTPUT FORMAT (JSON):**
-Return a JSON object with this exact structure:
-{
-  "sections": [
-    {
-      "section_title": "Section heading or descriptive title",
-      "rewritten_content": "Condensed rewrite of this section in simpler language",
-      "original_start_offset": 0,
-      "original_end_offset": 150,
-      "original_text_preview": "First 100-200 chars of original text for reference (exact excerpt from source)",
-      "context_before": "Up to 50 chars of text before this section (if available)",
-      "context_after": "Up to 50 chars of text after this section (if available)"
-    }
-  ],
-  "document_structure_map": {
-    "section_0": {"heading_level": 2, "original_heading": "Original Heading Text"},
-    "section_1": {"heading_level": 3, "original_heading": "Subsection Text"}
-  }
-}
+TASK:
+{brevity_instruction}
 
-**IMPORTANT:**
-- Character offsets (original_start_offset and original_end_offset) must be relative to the provided page content (starting from 0)
-- Offsets should accurately correspond to positions within the page content you receive
-- original_text_preview must be an EXACT excerpt from the original text (not paraphrased)
-- context_before and context_after should be exact excerpts when available
-- Section titles should match or reflect the original document structure
-- Rewritten content should be meaningful and useful for quick reading
-- Preserve all key information while making it more accessible
-- If content is very short, a header, or an image caption, note that appropriately
-- If content is blank, return empty sections array
-- The offsets you provide will be converted to global document offsets automatically
+CRITICAL: You do NOT need to provide character offsets. The system will link each section to the original text automatically.
+
+OUTPUT FORMAT (JSON):
+Return a JSON object with this exact structure. Use double braces for literal braces in the example:
+{{"sections": [{{"section_title": "Exact or cleaned heading from input", "key_takeaway": "One sentence main idea", "rewritten_content": "Bullet points or 1-3 sentences. Be brief."}}]}}
 
 Return ONLY valid JSON, no other text."""
 
-        user_prompt = f"""Generate a structured reading guide for page {page_number} of the book "{book_title}".
+        input_parts = []
+        for i, seg in enumerate(segments):
+            title = seg.get("section_title", f"Section {i + 1}")
+            content = seg.get("content", "")
+            input_parts.append(f"[SECTION {i + 1}]\nTitle: {title}\nContent:\n{content}")
+        user_prompt = "INPUT SECTIONS:\n\n" + "\n\n".join(input_parts) + "\n\nProvide the structured guide in JSON format as specified."
 
-Original page content:
-{page_content}
-
-Provide the structured guide in JSON format as specified."""
-
-        logger.info(f"Generating structured reading guide for page {page_number} using {self.service_name}/{self.model_name}")
+        logger.info(f"Generating structured reading guide for page {page_number} ({len(segments)} segments), guide_type={guide_type} using {self.service_name}/{self.model_name}")
 
         try:
             response_text = ""
@@ -635,15 +613,18 @@ Provide the structured guide in JSON format as specified."""
             
             # Parse JSON response
             try:
-                # Try to extract JSON from response (in case it's wrapped in markdown code blocks)
-                import re
-                json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
-                if json_match:
-                    json_str = json_match.group(0)
-                else:
-                    json_str = response_text
-                
-                guide_data = json.loads(json_str)
+                # Strip markdown code blocks (```json ... ``` or ``` ... ```)
+                json_str = response_text.strip()
+                if json_str.startswith("```"):
+                    first_newline = json_str.find("\n")
+                    if first_newline != -1:
+                        json_str = json_str[first_newline + 1:]
+                    if json_str.endswith("```"):
+                        json_str = json_str[:-3].rstrip()
+                # Extract only the first JSON object (ignore trailing text / extra data)
+                json_str = json_str.strip()
+                decoder = json.JSONDecoder()
+                guide_data, _ = decoder.raw_decode(json_str)
                 
                 # Validate and normalize the structure
                 if not isinstance(guide_data, dict):
@@ -652,18 +633,14 @@ Provide the structured guide in JSON format as specified."""
                 sections = guide_data.get("sections", [])
                 structure_map = guide_data.get("document_structure_map", {})
                 
-                # Validate sections structure
                 validated_sections = []
                 for i, section in enumerate(sections):
                     if isinstance(section, dict):
+                        default_title = segments[i].get("section_title", f"Section {i+1}") if i < len(segments) else f"Section {i+1}"
                         validated_section = {
-                            "section_title": section.get("section_title", f"Section {i+1}"),
+                            "section_title": section.get("section_title", default_title),
+                            "key_takeaway": section.get("key_takeaway"),
                             "rewritten_content": section.get("rewritten_content", ""),
-                            "original_start_offset": int(section.get("original_start_offset", 0)),
-                            "original_end_offset": int(section.get("original_end_offset", 0)),
-                            "original_text_preview": section.get("original_text_preview", ""),
-                            "context_before": section.get("context_before"),
-                            "context_after": section.get("context_after")
                         }
                         validated_sections.append(validated_section)
                 
@@ -674,14 +651,13 @@ Provide the structured guide in JSON format as specified."""
             
             except json.JSONDecodeError as e:
                 logger.error(f"Failed to parse JSON from LLM response: {e}. Response: {response_text[:500]}")
-                # Fallback: create a simple guide from the response
+                first_content = segments[0].get("content", "") if segments else ""
+                default_title = segments[0].get("section_title", "Page content") if segments else "Page content"
                 return {
                     "sections": [{
-                        "section_title": "Reading Guide",
-                        "rewritten_content": response_text,
-                        "original_start_offset": 0,
-                        "original_end_offset": len(page_content),
-                        "original_text_preview": page_content[:150] if len(page_content) > 150 else page_content
+                        "section_title": default_title,
+                        "key_takeaway": None,
+                        "rewritten_content": response_text[:2000] if response_text else "No content generated.",
                     }],
                     "document_structure_map": {}
                 }

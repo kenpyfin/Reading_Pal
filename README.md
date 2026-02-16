@@ -6,7 +6,7 @@ This repository contains the code for the Reading Pal application, a tool for re
 
 - `backend/`: Python backend API (FastAPI/Flask)
 - `frontend/`: React frontend application
-- `pdf_service/`: Python PDF processing service (FastAPI) - *This service runs independently.*
+- `pdf_service/`: PDF-to-markdown service (FastAPI). Uses **PaddleOCR** (GPU) for scanned PDFs and **PyMuPDF** for text extraction on digital PDFs. Can run in Docker Compose with GPU or standalone.
 
 ## Setup
 
@@ -33,7 +33,7 @@ This repository contains the code for the Reading Pal application, a tool for re
           mongo_data:
         ```
         Save this as `docker-compose.mongo.yml` and run `docker-compose -f docker-compose.mongo.yml up -d`.
-*   **PDF Processing Service:** This service (`pdf_service/app.py`) must be running independently and accessible at the URL configured in the `.env` file (`PDF_CLIENT_URL`). It requires its own Python environment (e.g., Conda) and dependencies (`magic_pdf`, `fastapi`, `uvicorn`, `anthropic`, etc.).
+*   **PDF Processing Service:** The service (`pdf_service/app.py`) is available as a Docker Compose service (`pdf_service`) with GPU support, or can run standalone at the URL in `.env` (`PDF_CLIENT_URL`, default port 8502). It uses PaddleOCR (GPU) for scanned PDFs and PyMuPDF for text PDFs. Optional env: `PDF_OCR_ENGINE` (paddle|none|text-only), `PDF_OCR_LANG`, `PDF_PAGE_DPI`.
 *   **LLM Providers:** You will need API keys or access to local LLM services (Ollama) as configured in the `.env` file.
 *   **File Storage:** The PDF service requires specific directories on your host machine for storing PDFs, Markdown, and Images. These paths are configured in the `.env` file and the `IMAGES_PATH` is mounted as a volume into the `backend` service container in `docker-compose.yml` so the backend can serve the images. **You must create these directories on your host machine and update the volume paths in the root `.env` and the `docker-compose.yml` backend service volume mount to match.**
 
@@ -50,12 +50,13 @@ This repository contains the code for the Reading Pal application, a tool for re
 ### Running the Application
 
 1.  Ensure your MongoDB instance is running and accessible from `host.docker.internal:27017`.
-2.  **Start the PDF Processing Service independently** in its required environment (https://github.com/opendatalab/MinerU). Personally, I use Ananconda and install MinerU package. Ensure it is accessible at the `PDF_CLIENT_URL` specified in your `.env`.
-3.  Ensure the file storage directories exist on your host and the volume paths for the `backend` service in `docker-compose.yml` are correct and match the `IMAGES_PATH` in your `.env`.
-4.  Build and run the backend and frontend services using Docker Compose:
+2.  Ensure the file storage directories exist on your host (`PDF_STORAGE_PATH`, `MARKDOWN_PATH`, `IMAGES_PATH`) and that volume paths in `docker-compose.yml` match your `.env`.
+3.  Build and run all services (including the PDF service) with Docker Compose:
     ```bash
-    docker-compose up --build backend frontend
+    docker compose up --build
     ```
+    Or use `bash start_services.sh`, which runs `docker compose up`. The **PDF processing service** is part of the compose stack and starts with the other services. Ensure `PDF_CLIENT_URL` in your `.env` points to where the backend can reach it (e.g. `http://localhost:8502` when the backend uses host networking and the PDF service port is published).
+4.  Optionally, you can still run the PDF service **outside** Docker (e.g. in a Conda MinerU environment) and start only the other services: `docker compose up --build backend frontend image_server`. In that case, set `PDF_CLIENT_URL` to the URL of your standalone PDF service.
 5.  The frontend should be accessible at `http://localhost:${FRONTEND_PORT}` (default 3100).
     The backend API should be accessible at `http://localhost:${BACKEND_PORT}` (default 8000).
 

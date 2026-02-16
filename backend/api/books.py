@@ -618,6 +618,12 @@ class PDFServiceCallbackData(BaseModel):
 # class ReadingGuideResponse(BaseModel):
 # guide: List[ReadingGuideItem]
 
+
+class ReadingGuideGenerateBody(BaseModel):
+    """Optional body for POST reading-guide; guide_type controls brevity."""
+    guide_type: Optional[str] = Field(default="summary", description="summary, comprehensive, or quick_reference")
+
+
 # Define APPROX_CHARS_PER_PAGE, must match frontend's BookView.js
 # This is crucial for consistency.
 APPROX_CHARS_PER_PAGE_FOR_GUIDE = 25000 # Based on BookView.js current value
@@ -679,6 +685,44 @@ def _calculate_page_boundaries(markdown: str, target_chars_per_page: int) -> Lis
             
     logger.info(f"[_calculate_page_boundaries] Calculated {len(boundaries)} pages.")
     return boundaries
+
+
+def _extract_heading_sections(markdown: str, page_start: int, page_end: int) -> List[Dict[str, Any]]:
+    """
+    Extract sections based on markdown headings that overlap the given page range.
+    Returns list of {"text": str, "level": int, "start_offset": int, "end_offset": int}.
+    Offsets are global (relative to full markdown). Sections are content from one heading to the next.
+    If no headings fall in range, returns empty list (caller should use single page chunk).
+    """
+    if not markdown or page_start < 0 or page_end > len(markdown) or page_start >= page_end:
+        return []
+    heading_re = re.compile(r"^(#+)\s+(.*)$")
+    headings: List[Dict[str, Any]] = []
+    current_offset = 0
+    lines = markdown.split("\n")
+    for line in lines:
+        match = heading_re.match(line)
+        if match:
+            level = len(match.group(1))
+            text = match.group(2).strip()
+            headings.append({"text": text, "level": level, "start_offset": current_offset})
+        current_offset += len(line) + 1
+    if not headings:
+        return []
+    # Assign end_offset for each heading (start of next heading or end of document)
+    total_len = len(markdown)
+    for i in range(len(headings)):
+        if i + 1 < len(headings):
+            headings[i]["end_offset"] = headings[i + 1]["start_offset"]
+        else:
+            headings[i]["end_offset"] = total_len
+    # Filter to sections that overlap [page_start, page_end]
+    overlapping = [
+        h for h in headings
+        if h["start_offset"] < page_end and h["end_offset"] > page_start
+    ]
+    logger.info(f"[_extract_heading_sections] Found {len(headings)} headings, {len(overlapping)} overlap page [{page_start}, {page_end}].")
+    return overlapping
 
 
 @router.post("/callback", status_code=status.HTTP_200_OK)
@@ -1049,9 +1093,13 @@ async def reformat_page_content(book_id: str, page_number: int, payload: Reforma
 async def generate_page_reading_guide(
     book_id: str,
     page_number: int,
+    body: Optional[ReadingGuideGenerateBody] = Body(None),
     current_user_id: str = Depends(get_current_user_id)
 ):
-    logger.info(f"Request to generate reading guide for book {book_id}, page {page_number} by user {current_user_id}")
+    guide_type = (body.guide_type if body else None) or "summary"
+    if guide_type not in ("summary", "comprehensive", "quick_reference"):
+        guide_type = "summary"
+    logger.info(f"Request to generate reading guide for book {book_id}, page {page_number}, guide_type={guide_type} by user {current_user_id}")
     
     book_data_doc = await get_book(book_id, current_user_id)
     if not book_data_doc:
@@ -1073,6 +1121,8 @@ async def generate_page_reading_guide(
     markdown_file_path = os.path.join(CONTAINER_MARKDOWN_PATH, book.markdown_filename)
     
     page_content_text = None
+    page_global_start_offset = 0
+    page_global_end_offset = 0
     try:
         def read_file_sync(path):
             if not os.path.exists(path):
@@ -1086,106 +1136,109 @@ async def generate_page_reading_guide(
         if not full_markdown_content:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Markdown content not found or empty.")
 
-        # Use the new, consistent page boundary calculation
         boundaries = _calculate_page_boundaries(full_markdown_content, APPROX_CHARS_PER_PAGE_FOR_GUIDE)
         if not (1 <= page_number <= len(boundaries)):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid page number. Must be between 1 and {len(boundaries)}.")
 
         page_boundary = boundaries[page_number - 1]
-        page_content_text = full_markdown_content[page_boundary['start']:page_boundary['end']]
-        page_global_start_offset = page_boundary['start']  # Store the global start offset for this page
+        page_global_start_offset = page_boundary["start"]
+        page_global_end_offset = page_boundary["end"]
+        page_content_text = full_markdown_content[page_global_start_offset:page_global_end_offset]
+        total_pages = len(boundaries)
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error reading or processing markdown for guide: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error processing book content for guide.")
 
-    # Use the imported llm_service instance to generate structured reading guide
+    # Heading-based segmentation: sections overlapping this page
+    heading_sections = _extract_heading_sections(full_markdown_content, page_global_start_offset, page_global_end_offset)
+    if heading_sections:
+        segments = [
+            {"section_title": h["text"], "content": full_markdown_content[h["start_offset"]:h["end_offset"]]}
+            for h in heading_sections
+        ]
+        segment_bounds = [(h["start_offset"], h["end_offset"]) for h in heading_sections]
+    else:
+        segments = [{"section_title": "Page content", "content": page_content_text}]
+        segment_bounds = [(page_global_start_offset, page_global_end_offset)]
+
     try:
-        logger.info(f"Generating structured reading guide for book {book.id}, page {page_number}")
+        logger.info(f"Generating structured reading guide for book {book.id}, page {page_number} ({len(segments)} segments)")
         structured_guide = await llm_service.generate_structured_reading_guide(
-            page_content=page_content_text,
+            segments=segments,
             book_title=book.title,
-            page_number=page_number
+            page_number=page_number,
+            total_pages=total_pages,
+            guide_type=guide_type,
         )
         
-        # Import the ReadingGuideSection and TextLink models for validation
         from backend.models.reading_guide import ReadingGuideSection, TextLink
         
-        # Convert structured guide to model format
-        # IMPORTANT: Convert page-relative offsets to global offsets
         sections = []
-        if structured_guide.get("sections"):
-            for section_data in structured_guide["sections"]:
-                # LLM returns offsets relative to the page content (0 to page_length)
-                # Convert them to global offsets by adding the page's global start offset
-                page_relative_start = section_data.get("original_start_offset", 0)
-                page_relative_end = section_data.get("original_end_offset", 0)
-                
-                # Ensure offsets are within page bounds
-                page_relative_start = max(0, min(page_relative_start, len(page_content_text)))
-                page_relative_end = max(page_relative_start, min(page_relative_end, len(page_content_text)))
-                
-                # Convert to global offsets
-                global_start_offset = page_global_start_offset + page_relative_start
-                global_end_offset = page_global_start_offset + page_relative_end
-                
-                # Get original text preview from the actual content if not provided or if we want to verify it
-                original_text_preview = section_data.get("original_text_preview")
-                if not original_text_preview and page_relative_start < len(page_content_text):
-                    preview_length = min(200, len(page_content_text) - page_relative_start)
-                    original_text_preview = page_content_text[page_relative_start:page_relative_start + preview_length]
-                
-                # Get context from LLM response or extract from content
-                context_before = section_data.get("context_before")
-                if not context_before and page_relative_start > 0:
-                    context_length = min(50, page_relative_start)
-                    context_before = page_content_text[max(0, page_relative_start - context_length):page_relative_start]
-                
-                context_after = section_data.get("context_after")
-                if not context_after and page_relative_end < len(page_content_text):
-                    context_length = min(50, len(page_content_text) - page_relative_end)
-                    context_after = page_content_text[page_relative_end:page_relative_end + context_length]
-                
-                # Create TextLink for primary link
-                primary_link = TextLink(
-                    start_offset=global_start_offset,
-                    end_offset=global_end_offset,
-                    preview_text=original_text_preview or "",
-                    context_before=context_before,
-                    context_after=context_after
-                )
-                
-                section = ReadingGuideSection(
-                    section_title=section_data.get("section_title", ""),
-                    rewritten_content=section_data.get("rewritten_content", ""),
-                    original_start_offset=global_start_offset,  # Store as global offset (legacy)
-                    original_end_offset=global_end_offset,  # Store as global offset (legacy)
-                    original_text_preview=original_text_preview,  # Legacy
-                    primary_link=primary_link  # Enhanced linking
-                )
-                sections.append(section)
-                logger.debug(f"Converted section '{section.section_title}': page-relative [{page_relative_start}-{page_relative_end}] -> global [{global_start_offset}-{global_end_offset}] with TextLink")
+        llm_sections = structured_guide.get("sections") or []
+        for i, section_data in enumerate(llm_sections):
+            if i >= len(segment_bounds):
+                break
+            global_start_offset, global_end_offset = segment_bounds[i]
+            segment_content = full_markdown_content[global_start_offset:global_end_offset]
+            preview_length = min(200, len(segment_content))
+            original_text_preview = segment_content[:preview_length] if segment_content else ""
+            context_before = None
+            if global_start_offset > 0:
+                context_before = full_markdown_content[max(0, global_start_offset - 50):global_start_offset]
+            context_after = None
+            if global_end_offset < len(full_markdown_content):
+                context_after = full_markdown_content[global_end_offset:min(len(full_markdown_content), global_end_offset + 50)]
+            
+            primary_link = TextLink(
+                start_offset=global_start_offset,
+                end_offset=global_end_offset,
+                preview_text=original_text_preview,
+                context_before=context_before,
+                context_after=context_after,
+            )
+            key_takeaway = section_data.get("key_takeaway")
+            raw_rewritten = section_data.get("rewritten_content", "")
+            # LLM may return rewritten_content as a list (e.g. bullet points); normalize to string
+            if isinstance(raw_rewritten, list):
+                rewritten_content = "\n".join(str(item) for item in raw_rewritten)
+            else:
+                rewritten_content = str(raw_rewritten) if raw_rewritten is not None else ""
+            section = ReadingGuideSection(
+                section_title=section_data.get("section_title", ""),
+                rewritten_content=rewritten_content,
+                original_start_offset=global_start_offset,
+                original_end_offset=global_end_offset,
+                original_text_preview=original_text_preview,
+                primary_link=primary_link,
+                key_takeaway=key_takeaway,
+            )
+            sections.append(section)
+            logger.debug(f"Converted section '{section.section_title}': global [{global_start_offset}-{global_end_offset}]")
         
-        # Generate a simple text content for backward compatibility
-        # Combine all rewritten sections into a single text
         simple_content = ""
         if sections:
-            simple_content = "\n\n".join([
-                f"## {section.section_title}\n\n{section.rewritten_content}"
-                for section in sections
-            ])
+            parts = []
+            for section in sections:
+                block = f"## {section.section_title}\n\n"
+                if section.key_takeaway:
+                    block += f"**Key idea:** {section.key_takeaway}\n\n"
+                block += section.rewritten_content
+                parts.append(block)
+            simple_content = "\n\n".join(parts)
         else:
             simple_content = "No guide sections were generated for this page."
             logger.warning(f"No guide sections generated for book {book.id}, page {page_number}")
         
-        # Store structured guide with backward compatibility
         db_guide_page = await upsert_reading_guide_page(
             book_id=str(book.id),
             user_id=current_user_id,
             page_number=page_number,
-            content=simple_content,  # Legacy simple text
-            sections=sections,  # New structured sections
-            document_structure_map=structured_guide.get("document_structure_map", {})  # Structure mapping
+            content=simple_content,
+            sections=sections,
+            document_structure_map=structured_guide.get("document_structure_map", {}),
         )
         
     except Exception as e:

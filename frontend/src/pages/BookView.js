@@ -226,34 +226,6 @@ function calculatePageBoundaries(markdown, targetCharsPerPage) {
   return boundaries;
 }
 
-// --- NEW Helper function to extract document structure (headings) ---
-function extractDocumentStructure(markdownContent) {
-  if (!markdownContent || typeof markdownContent !== 'string') {
-    logger.warn("[extractDocumentStructure] Markdown content is invalid or empty.");
-    return [];
-  }
-  const structure = [];
-  const lines = markdownContent.split('\n');
-  let currentOffset = 0;
-
-  for (const line of lines) {
-    const match = line.match(/^(#+)\s+(.*)/); // Matches lines starting with #, ##, ### etc.
-    if (match) {
-      const level = match[1].length; // Number of '#' characters
-      const text = match[2].trim();   // Text of the heading
-      structure.push({
-        text: text,
-        level: level,
-        offset: currentOffset, // Offset of the start of this line
-      });
-    }
-    currentOffset += line.length + 1; // Add line length + 1 for the newline character
-  }
-  logger.info(`[extractDocumentStructure] Extracted ${structure.length} headings.`);
-  return structure;
-}
-// --- END NEW Helper function ---
-
 function BookView() {
   const { bookId } = useParams();
   const [bookData, setBookData] = useState(null);
@@ -262,7 +234,6 @@ function BookView() {
 
   // Refs for the scrollable container divs
   const bookPaneContainerRef = useRef(null);
-  const notePaneContainerRef = useRef(null);
   const isProgrammaticScroll = useRef(false);
   const [fullMarkdownContent, setFullMarkdownContent] = useState(''); // To store the full markdown as state
 
@@ -308,21 +279,16 @@ function BookView() {
   const [bookmarks, setBookmarks] = useState([]); 
   const [pendingScrollToPercentage, setPendingScrollToPercentage] = useState(null); // New state for bookmark jump
 
-  // State and Refs for Resizing
-  const [bookPaneFlexBasis, setBookPaneFlexBasis] = useState('50%'); // Initial width as percentage
+  // State and Refs for Resizing (guide pane only; note pane is now popup)
   const bookViewContainerRef = useRef(null); // Ref for the main flex container
   const bookPaneAreaRef = useRef(null);      // Ref for the book-pane-area div
 
-  // const isResizing = useRef(false); // This will be replaced by specific flags
   const isResizingGuideMainActive = useRef(false); // For Guide Pane vs Main Content Area
-  const isResizingBookNoteActive = useRef(false);  // For Book Pane vs Note Pane
   const dragStartX = useRef(0);
-  const initialBookPaneWidthPx = useRef(0);
 
-  const [showManageBookmarksModal, setShowManageBookmarksModal] = useState(false); // ADD THIS STATE
-  const [isNotePaneVisible, setIsNotePaneVisible] = useState(true); // For desktop side-by-side
-  const [showNotesPanelOnMobile, setShowNotesPanelOnMobile] = useState(false); // For mobile overlay
-  const [isMobileView, setIsMobileView] = useState(window.innerWidth <= 768); // ADD THIS LINE, initialize directly
+  const [showManageBookmarksModal, setShowManageBookmarksModal] = useState(false);
+  const [notesLLMPopupMode, setNotesLLMPopupMode] = useState(null); // null | 'note' | 'llm'
+  const [isMobileView, setIsMobileView] = useState(window.innerWidth <= 768);
   const [isBookmarkMenuOpen, setIsBookmarkMenuOpen] = useState(false);
   const bookmarkMenuRef = useRef(null); // For detecting clicks outside
   const [initialScrollTop, setInitialScrollTop] = useState(null); // For restoring scroll position
@@ -344,12 +310,21 @@ function BookView() {
     };
   }, []);
 
-  // State for Reading Guide Pane
-  const [showReadingGuidePane, setShowReadingGuidePane] = useState(false);
-  // const [readingGuideContent, setReadingGuideContent] = useState([]); // REMOVED - Replaced by page-specific
-  // const [readingGuideLoading, setReadingGuideLoading] = useState(false); // REMOVED - Replaced by page-specific
-  // const [readingGuideError, setReadingGuideError] = useState(null); // REMOVED - Replaced by page-specific
-  // const readingGuideFetched = useRef(false); // REMOVED - Replaced by page-specific logic
+  // View mode: 'guide' = reading guide as main content, 'original' = original text as main content
+  const [viewMode, setViewMode] = useState(() => {
+    const saved = localStorage.getItem(`readingPalViewMode_${bookId}`);
+    return saved === 'guide' ? 'guide' : 'original';
+  });
+
+  // Show floating "Back to Reading Guide" when user navigated from guide via "View in original text"
+  const [showBackToGuide, setShowBackToGuide] = useState(false);
+
+  // Remember guide scroll position per page so we can restore when returning or changing page
+  const [guideScrollPositionByPage, setGuideScrollPositionByPage] = useState({});
+  const guideScrollContainerRef = useRef(null);
+  const lastScrollToTopPageRef = useRef(null); // Only scroll book pane to top when page actually changed (not when only notes changed)
+  // Remember book (original) pane scroll per page when switching to guide so we can restore when switching back
+  const [bookScrollPositionByPage, setBookScrollPositionByPage] = useState({});
 
   // --- NEW State for Page-Specific Reading Guide ---
   const [currentPageGuide, setCurrentPageGuide] = useState(null); // Stores the guide content string
@@ -358,10 +333,6 @@ function BookView() {
   const [hasGuideForCurrentPage, setHasGuideForCurrentPage] = useState(false);
   const [isGeneratingGuide, setIsGeneratingGuide] = useState(false);
   // --- END NEW State for Page-Specific Reading Guide ---
-
-  // --- NEW State for Document Structure ---
-  const [documentStructure, setDocumentStructure] = useState([]);
-  // --- END NEW State for Document Structure ---
 
   // --- State for Reading Guide Search/Highlight ---
   const [guideSearchText, setGuideSearchText] = useState(null); // Text to search and highlight from reading guide
@@ -471,21 +442,11 @@ function BookView() {
             logger.error(`[BookView - fetchBook] Error parsing saved position for scroll restore:`, parseError);
           }
         }
-        
-        // --- NEW: Extract document structure after full content is loaded ---
-        if (data.markdown_content) {
-          const structure = extractDocumentStructure(data.markdown_content);
-          setDocumentStructure(structure);
-        } else {
-          setDocumentStructure([]);
-        }
-        // --- END NEW ---
 
       } else {
         setFullMarkdownContent('');
         setPageBoundaries([]);
         setTotalPages(1);
-        setDocumentStructure([]); // Clear structure if no content
       }
     } catch (err) {
       logger.error('Failed to fetch book:', err);
@@ -598,11 +559,23 @@ function BookView() {
       setCurrentPageGuide(null); // Clear page-specific guide for new book
       setGuideError(null);
       setHasGuideForCurrentPage(false);
-      setShowReadingGuidePane(false); // Close guide pane when book changes
     }
-    setDocumentStructure([]); // Clear structure on bookId change
   }, [bookId]);
 
+  // Persist viewMode to localStorage when it changes
+  useEffect(() => {
+    if (bookId) {
+      localStorage.setItem(`readingPalViewMode_${bookId}`, viewMode);
+    }
+  }, [bookId, viewMode]);
+
+  // Restore viewMode from localStorage when bookId changes
+  useEffect(() => {
+    if (bookId) {
+      const saved = localStorage.getItem(`readingPalViewMode_${bookId}`);
+      setViewMode(saved === 'guide' ? 'guide' : 'original');
+    }
+  }, [bookId]);
 
   // --- NEW: Function to fetch page-specific reading guide ---
   const fetchPageGuide = useCallback(async (pageNumberToFetch) => {
@@ -669,6 +642,33 @@ function BookView() {
     }
   }, [bookId]);
 
+  // Function to refresh signed URLs in markdown content (must be defined before handleGuideTextLink)
+  const refreshImageUrls = useCallback(async () => {
+    if (!bookId) return;
+    try {
+      const token = localStorage.getItem('authToken');
+      if (!token) {
+        logger.warn("[BookView - refreshImageUrls] Auth token not found.");
+        return;
+      }
+      const response = await fetch(`/api/books/${bookId}/refresh-image-urls`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      if (response.ok) {
+        const data = await response.json();
+        if (data.markdown_content) {
+          setFullMarkdownContent(data.markdown_content);
+          logger.info("[BookView - refreshImageUrls] Refreshed signed URLs in markdown content");
+        }
+      } else {
+        logger.warn("[BookView - refreshImageUrls] Failed to refresh URLs, continuing with existing content");
+      }
+    } catch (err) {
+      logger.error("[BookView - refreshImageUrls] Error refreshing URLs:", err);
+    }
+  }, [bookId]);
+
   // --- NEW: Function to generate/regenerate page-specific reading guide ---
   const handleGeneratePageGuide = async () => {
     if (!bookId || !currentPage) return;
@@ -687,6 +687,7 @@ function BookView() {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
+        body: JSON.stringify({ guide_type: 'summary' }),
       });
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ detail: `HTTP error ${response.status}` }));
@@ -730,7 +731,6 @@ function BookView() {
       logger.warn(`[BookView - handleStructureItemClick] Invalid offset provided: ${offset}`);
       return;
     }
-    // Ensure offset is a number and within valid range
     const globalOffset = parseInt(offset, 10);
     if (globalOffset < 0) {
       logger.warn(`[BookView - handleStructureItemClick] Negative offset provided: ${globalOffset}`);
@@ -740,11 +740,10 @@ function BookView() {
       logger.warn(`[BookView - handleStructureItemClick] Offset ${globalOffset} exceeds document length ${fullMarkdownContent.length}`);
       return;
     }
+    if (guideScrollContainerRef.current) setGuideScrollPositionByPage(prev => ({ ...prev, [currentPage]: guideScrollContainerRef.current.scrollTop }));
+    setShowBackToGuide(true);
+    setViewMode('original');
     setScrollToGlobalOffset(globalOffset);
-    // Optional: Close the reading guide pane if it's in overlay mode on mobile after click
-    if (isMobileView && showReadingGuidePane) {
-      // setShowReadingGuidePane(false); // Consider if this is desired UX
-    }
   };
   // --- END NEW Handler ---
 
@@ -788,11 +787,7 @@ function BookView() {
       }
     }
     
-    // 3. Optional: Close guide pane on mobile after navigation
-    if (isMobileView && showReadingGuidePane) {
-      // Keep pane open for now - user might want to navigate back
-    }
-  }, [currentPage, pageBoundaries, isMobileView, showReadingGuidePane, refreshImageUrls]);
+  }, [currentPage, pageBoundaries, refreshImageUrls]);
 
   // --- Handler for searching and highlighting text from reading guide (legacy support) ---
   const handleGuideTextSearch = (searchText, globalOffset) => {
@@ -818,68 +813,63 @@ function BookView() {
       setScrollToGlobalOffset(globalOffset);
     }
     
-    // Optional: Close the reading guide pane if it's in overlay mode on mobile after click
-    if (isMobileView && showReadingGuidePane) {
-      // setShowReadingGuidePane(false); // Consider if this is desired UX
-    }
   };
   // --- END NEW Handler ---
 
   // Effect to fetch page guide when currentPage or bookId changes, if pane is visible
   useEffect(() => {
-    if (bookId && currentPage && showReadingGuidePane) {
+    if (bookId && currentPage && viewMode === 'guide') {
       fetchPageGuide(currentPage);
-    } else if (!showReadingGuidePane) {
+    } else if (viewMode !== 'guide') {
       setCurrentPageGuide(null);
       setGuideError(null);
       setHasGuideForCurrentPage(false);
     }
-  }, [bookId, currentPage, fetchPageGuide, showReadingGuidePane]);
+  }, [bookId, currentPage, fetchPageGuide, viewMode]);
 
+  // Clear floating "Back to Guide" when user navigates to a different page (guide scroll is remembered per page)
+  useEffect(() => {
+    setShowBackToGuide(false);
+  }, [currentPage]);
 
-  // Resizer Event Handlers for BookPane and NotePane
-  // This resizer will now operate within the 'main-content-area'
-  const mainContentAreaRef = useRef(null); // New ref for the container of Book and Note panes
-  const handleBookNoteResizeMouseMove = useCallback((e) => {
-    if (!isResizingBookNoteActive.current || !mainContentAreaRef.current || !bookPaneAreaRef.current) { // Use specific flag
-        return;
-    }
-    e.preventDefault();
+  // Persist reading guide scroll position as user scrolls (debounced) so it is remembered per page
+  useEffect(() => {
+    if (viewMode !== 'guide' || typeof currentPage !== 'number') return;
+    let cleanup = () => {};
+    const t = setTimeout(() => {
+      const el = guideScrollContainerRef.current;
+      if (!el) return;
+      const saveGuideScroll = debounce(() => {
+        if (guideScrollContainerRef.current) {
+          setGuideScrollPositionByPage(prev => ({ ...prev, [currentPage]: guideScrollContainerRef.current.scrollTop }));
+        }
+      }, 150);
+      el.addEventListener('scroll', saveGuideScroll, { passive: true });
+      cleanup = () => {
+        el.removeEventListener('scroll', saveGuideScroll);
+        saveGuideScroll.cancel?.();
+      };
+    }, 0);
+    return () => {
+      clearTimeout(t);
+      cleanup();
+    };
+  }, [viewMode, currentPage]);
 
-    const deltaX = e.clientX - dragStartX.current;
-    let newBookPaneWidthPx = initialBookPaneWidthPx.current + deltaX;
+  // Restore book (original) pane scroll when switching from Guide back to Original
+  useEffect(() => {
+    if (viewMode !== 'original' || !bookPaneContainerRef.current) return;
+    const saved = bookScrollPositionByPage[currentPage];
+    if (typeof saved !== 'number' || saved <= 0) return;
+    const raf = requestAnimationFrame(() => {
+      if (bookPaneContainerRef.current) {
+        bookPaneContainerRef.current.scrollTop = saved;
+      }
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [viewMode, currentPage, bookScrollPositionByPage]);
 
-    const contentAreaWidth = mainContentAreaRef.current.offsetWidth;
-    const minPaneWidth = Math.max(200, contentAreaWidth * 0.20);
-    const maxBookPaneWidth = contentAreaWidth - minPaneWidth;
-
-    newBookPaneWidthPx = Math.max(minPaneWidth, Math.min(newBookPaneWidthPx, maxBookPaneWidth));
-    setBookPaneFlexBasis(`${newBookPaneWidthPx}px`);
-  }, [isResizingBookNoteActive, dragStartX, initialBookPaneWidthPx, mainContentAreaRef, bookPaneAreaRef]); // Added dependencies
-
-  const handleBookNoteResizeMouseUp = useCallback(() => {
-    if (!isResizingBookNoteActive.current) { // Use specific flag
-        return;
-    }
-    isResizingBookNoteActive.current = false; // Use specific flag
-    document.body.classList.remove('resizing-no-select');
-    document.removeEventListener('mousemove', handleBookNoteResizeMouseMove);
-    document.removeEventListener('mouseup', handleBookNoteResizeMouseUp);
-  }, [handleBookNoteResizeMouseMove]);
-
-  const handleMouseDownOnBookNoteResizer = useCallback((e) => {
-    if (!bookPaneAreaRef.current || !mainContentAreaRef.current) return;
-
-    isResizingBookNoteActive.current = true; // Use specific flag
-    dragStartX.current = e.clientX;
-    initialBookPaneWidthPx.current = bookPaneAreaRef.current.offsetWidth;
-    e.preventDefault();
-
-    document.body.classList.add('resizing-no-select');
-    document.addEventListener('mousemove', handleBookNoteResizeMouseMove);
-    document.addEventListener('mouseup', handleBookNoteResizeMouseUp);
-  }, [handleBookNoteResizeMouseMove, handleBookNoteResizeMouseUp]);
-
+  const mainContentAreaRef = useRef(null); // Ref for the main content area (book + view mode)
 
   // Resizer Event Handlers
   // Note: The existing handleDocumentMouseMove, handleDocumentMouseUp, handleMouseDownOnResizer
@@ -1012,22 +1002,20 @@ function BookView() {
     logger.debug("[BookView - Page Content Effect] Running. Current Page:", currentPage, "Notes count:", notes.length, "PendingScrollOffsetInPage:", pendingScrollOffsetInPage, "PendingScrollToPercentage:", pendingScrollToPercentage);
     
     // Recalculate page boundaries whenever the full content changes
+    let boundariesToUse = [];
     if (fullMarkdownContent) {
       const newBoundaries = calculatePageBoundaries(fullMarkdownContent, APPROX_CHARS_PER_PAGE);
       setPageBoundaries(newBoundaries);
       setTotalPages(Math.max(1, newBoundaries.length));
-      
-      // Also recalculate document structure
-      const structure = extractDocumentStructure(fullMarkdownContent);
-      setDocumentStructure(structure);
+      boundariesToUse = newBoundaries;
     } else {
       setPageBoundaries([]);
       setTotalPages(1);
-      setDocumentStructure([]);
     }
 
-    if (fullMarkdownContent && pageBoundaries.length > 0) {
-      const numPages = pageBoundaries.length;
+    // Use locally computed boundaries so we don't rely on stale pageBoundaries state (same run)
+    if (fullMarkdownContent && boundariesToUse.length > 0) {
+      const numPages = boundariesToUse.length;
       const validCurrentPage = Math.max(1, Math.min(currentPage, numPages || 1));
       
       if (currentPage !== validCurrentPage) {
@@ -1037,13 +1025,13 @@ function BookView() {
       }
       
       const pageIndex = validCurrentPage - 1;
-      if (pageIndex < 0 || pageIndex >= pageBoundaries.length) {
-          logger.error(`[BookView - Page Content Effect] Invalid pageIndex ${pageIndex} for pageBoundaries length ${pageBoundaries.length}. CurrentPage: ${currentPage}`);
+      if (pageIndex < 0 || pageIndex >= boundariesToUse.length) {
+          logger.error(`[BookView - Page Content Effect] Invalid pageIndex ${pageIndex} for boundariesToUse length ${boundariesToUse.length}. CurrentPage: ${currentPage}`);
           setHighlightedPageContent("Error: Page data not found.");
           setCurrentPageContent("");
           return;
       }
-      const { start: pageStartGlobalOffset, end: pageEndGlobalOffset } = pageBoundaries[pageIndex];
+      const { start: pageStartGlobalOffset, end: pageEndGlobalOffset } = boundariesToUse[pageIndex];
       
       const plainPageText = fullMarkdownContent.substring(pageStartGlobalOffset, pageEndGlobalOffset);
       setCurrentPageContent(plainPageText);
@@ -1209,16 +1197,20 @@ function BookView() {
         setGuideSearchText(null);
       }
       
-      if (bookPaneContainerRef.current) {
+      if (bookPaneContainerRef.current && viewMode === 'original') {
         if (pendingScrollOffsetInPage === null && pendingScrollToPercentage === null) {
-            if (!isProgrammaticScroll.current) {
-                logger.debug("[BookView - Page Content Effect] Conditions met for scroll-to-top. Scrolling to top.");
+            const pageActuallyChanged = lastScrollToTopPageRef.current !== currentPage;
+            if (pageActuallyChanged && !isProgrammaticScroll.current) {
+                logger.debug("[BookView - Page Content Effect] Page changed to", currentPage, ". Scrolling to top.");
+                lastScrollToTopPageRef.current = currentPage;
                 isProgrammaticScroll.current = true;
                 bookPaneContainerRef.current.scrollTop = 0;
                 setTimeout(() => {
                     isProgrammaticScroll.current = false;
                     logger.debug("[BookView - Page Content Effect] Reset isProgrammaticScroll from scroll-to-top action.");
                 }, 100);
+            } else if (!pageActuallyChanged) {
+                logger.debug("[BookView - Page Content Effect] Same page; not scrolling to top (e.g. note saved).");
             } else {
                 logger.debug("[BookView - Page Content Effect] Scroll-to-top conditions met, BUT isProgrammaticScroll.current is true. Skipping.");
             }
@@ -1227,7 +1219,7 @@ function BookView() {
         }
       }
 
-    } else if (fullMarkdownContent && pageBoundaries.length === 0) {
+    } else if (fullMarkdownContent && boundariesToUse.length === 0) {
         logger.warn("[BookView - Page Content Effect] fullMarkdownContent exists but pageBoundaries is empty. This might be initial load. Displaying placeholder or first chunk.");
         const tempEndOffset = Math.min(APPROX_CHARS_PER_PAGE, fullMarkdownContent.length);
         const tempPageText = fullMarkdownContent.substring(0, tempEndOffset);
@@ -1240,7 +1232,7 @@ function BookView() {
       setCurrentPageContent('');
       setHighlightedPageContent('');
     }
-  }, [fullMarkdownContent, currentPage, notes, pendingScrollOffsetInPage, pendingScrollToPercentage, guideSearchText, scrollToGlobalOffset]);
+  }, [fullMarkdownContent, currentPage, notes, pendingScrollOffsetInPage, pendingScrollToPercentage, guideSearchText, scrollToGlobalOffset, viewMode]);
 
 
   // Effect to apply initial scroll once content is ready
@@ -1730,6 +1722,7 @@ function BookView() {
             logger.warn(`[ScrollToNoteEffect] Could not find exact node for rendered offset ${targetRenderedOffsetInPage}. Scrolling to top.`);
             isProgrammaticScroll.current = true; bookElement.scrollTop = 0; 
         }
+        setBookScrollPositionByPage(prev => ({ ...prev, [currentPage]: bookElement.scrollTop }));
         const timer = setTimeout(() => { isProgrammaticScroll.current = false; logger.debug("[ScrollToNoteEffect] Reset isProgrammaticScroll."); }, 300); 
         setScrollToGlobalOffset(null); 
         return () => { 
@@ -1843,15 +1836,17 @@ function BookView() {
           bookElement.scrollTop = 0;
       }
 
+      setBookScrollPositionByPage(prev => ({ ...prev, [currentPage]: bookElement.scrollTop }));
       setTimeout(() => { isProgrammaticScroll.current = false; }, 300);
       setPendingScrollOffsetInPage(null); 
     } else if (pendingScrollOffsetInPage !== null && bookPaneContainerRef.current && currentPageContent.length === 0 && pendingScrollOffsetInPage === 0) {
         isProgrammaticScroll.current = true;
         bookPaneContainerRef.current.scrollTop = 0;
+        setBookScrollPositionByPage(prev => ({ ...prev, [currentPage]: 0 }));
         setTimeout(() => { isProgrammaticScroll.current = false; }, 300);
         setPendingScrollOffsetInPage(null);
     }
-  }, [currentPageContent, pendingScrollOffsetInPage, pageBoundaries]); // Added pageBoundaries
+  }, [currentPageContent, pendingScrollOffsetInPage, pageBoundaries, currentPage]); // Added pageBoundaries, currentPage for setBookScrollPositionByPage
 
   // Effect to scroll to guide search highlight after content is rendered
   useEffect(() => {
@@ -1900,7 +1895,6 @@ function BookView() {
       // Reset pending scroll percentage
       setPendingScrollToPercentage(null);
       // Reset programmatic scroll flag after a short delay
-      // This delay should be longer than any potential debounce in syncScroll
       const timer = setTimeout(() => { 
         isProgrammaticScroll.current = false; 
         logger.debug("[BookView - PendingScrollPercentageEffect] Reset isProgrammaticScroll to false.");
@@ -1910,75 +1904,6 @@ function BookView() {
       logger.debug(`[BookView - PendingScrollPercentageEffect] Conditions not met for scroll: pendingScrollToPercentage=${pendingScrollToPercentage}, bookPaneContainerRef.current=${!!bookPaneContainerRef.current}, currentPageContent.length=${currentPageContent.length}`);
     }
   }, [currentPageContent, pendingScrollToPercentage, currentPage]); // Dependencies remain the same
-
-
-  const syncScroll = useCallback(
-    debounce((scrollingPaneRef, targetPaneRef) => {
-      // if (isProgrammaticScroll.current) { // Original check, might be too simple
-      //   return;
-      // }
-
-      if (!scrollingPaneRef.current || !targetPaneRef.current) return;
-
-      const scrollingElement = scrollingPaneRef.current;
-      const targetElement = targetPaneRef.current;
-
-      // If the pane being scrolled is not actually scrollable, don't attempt to sync.
-      if (scrollingElement.scrollHeight <= scrollingElement.clientHeight) return;
-      
-      const scrollPercentage = scrollingElement.scrollTop / (scrollingElement.scrollHeight - scrollingElement.clientHeight);
-      
-      let targetScrollTop;
-      if (targetElement.scrollHeight > targetElement.clientHeight) {
-        targetScrollTop = scrollPercentage * (targetElement.scrollHeight - targetElement.clientHeight);
-      } else {
-        // If target is not scrollable, decide where to "place" it based on source scroll.
-        // e.g., if source is scrolled past halfway, show bottom of target, else top.
-        targetScrollTop = scrollPercentage > 0.5 ? targetElement.scrollHeight : 0;
-      }
-
-      // Only scroll if the difference is significant, to avoid jitter
-      if (Math.abs(targetElement.scrollTop - targetScrollTop) > 5) { 
-        // If a major programmatic scroll (like a bookmark jump) is already in progress,
-        // this syncScroll is a secondary adjustment. It should occur, but not
-        // take over the isProgrammaticScroll flag from the primary operation.
-        const primaryScrollInProgress = isProgrammaticScroll.current;
-
-        if (!primaryScrollInProgress) {
-            // If no primary scroll is happening, this sync is its own programmatic scroll.
-            isProgrammaticScroll.current = true;
-        }
-        
-        targetElement.scrollTop = targetScrollTop;
-
-        if (!primaryScrollInProgress) {
-            // Only let syncScroll reset the flag if it was the one to set it.
-            setTimeout(() => { isProgrammaticScroll.current = false; }, 50); 
-        }
-      }
-    }, 50), // Debounce time
-    [] // No dependencies, as it uses refs and isProgrammaticScroll.current
-  );
-
-  useEffect(() => {
-    const bookElement = bookPaneContainerRef.current; // Use container ref
-    const noteElement = notePaneContainerRef.current; // Use container ref
-
-    if (bookElement && noteElement) {
-      const debouncedBookScroll = () => syncScroll(bookPaneContainerRef, notePaneContainerRef);
-      const debouncedNoteScroll = () => syncScroll(notePaneContainerRef, bookPaneContainerRef);
-
-      bookElement.addEventListener('scroll', debouncedBookScroll);
-      noteElement.addEventListener('scroll', debouncedNoteScroll);
-
-      return () => {
-        bookElement.removeEventListener('scroll', debouncedBookScroll);
-        noteElement.removeEventListener('scroll', debouncedNoteScroll);
-        debouncedBookScroll.cancel(); 
-        debouncedNoteScroll.cancel();
-      };
-    }
-  }, [syncScroll]);
 
   // Debounced function to save reading position (primarily for scroll)
   const debouncedSaveReadingPosition = useCallback(
@@ -2091,39 +2016,6 @@ function BookView() {
     }
   };
 
-  // Function to refresh signed URLs in markdown content
-  const refreshImageUrls = async () => {
-    if (!bookId) return;
-    
-    try {
-      const token = localStorage.getItem('authToken');
-      if (!token) {
-        logger.warn("[BookView - refreshImageUrls] Auth token not found.");
-        return;
-      }
-      
-      const response = await fetch(`/api/books/${bookId}/refresh-image-urls`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        if (data.markdown_content) {
-          setFullMarkdownContent(data.markdown_content);
-          logger.info("[BookView - refreshImageUrls] Refreshed signed URLs in markdown content");
-        }
-      } else {
-        logger.warn("[BookView - refreshImageUrls] Failed to refresh URLs, continuing with existing content");
-      }
-    } catch (err) {
-      logger.error("[BookView - refreshImageUrls] Error refreshing URLs:", err);
-      // Don't block page navigation if URL refresh fails
-    }
-  };
-
   const handlePreviousPage = () => {
     setCurrentPage((prev) => {
       const newPage = Math.max(1, prev - 1);
@@ -2214,29 +2106,6 @@ function BookView() {
     }
   };
 
-  const toggleNotePaneVisibility = () => {
-    if (isMobileView) {
-      setShowNotesPanelOnMobile(prev => !prev);
-      if (showReadingGuidePane) setShowReadingGuidePane(false); // Close guide if opening notes on mobile
-    } else {
-      setIsNotePaneVisible(prev => !prev);
-    }
-  };
-
-  // const fetchReadingGuide = async () => { // OLD - Full book guide
-  // ...
-  // };
-
-  const toggleReadingGuidePane = () => {
-    const newShowState = !showReadingGuidePane;
-    setShowReadingGuidePane(newShowState);
-    // The useEffect for [bookId, currentPage, fetchPageGuide, showReadingGuidePane]
-    // will handle fetching the guide if newShowState is true.
-    if (isMobileView && newShowState) {
-        setShowNotesPanelOnMobile(false); // Close notes if opening guide on mobile
-    }
-  };
-  
   // --- UPDATED: Handler for reformatting content ---
   const handleReformatPage = async () => {
     const reformatTarget = selectedBookText ? "the selected text" : `page ${currentPage}`;
@@ -2353,69 +2222,7 @@ function BookView() {
         justifyContent: 'flex-start'
       }}
     >
-      {/* Reading Guide Pane Area (Left) - Conditional Rendering */}
-      {showReadingGuidePane && !isMobileView && (
-        <div
-          className="reading-guide-pane-area"
-          ref={readingGuidePaneAreaRef} // Add ref
-          style={{
-            flexBasis: readingGuidePaneFlexBasis,
-            flexShrink: 0, // Prevent this panel from shrinking when window resizes
-            height: '100%',
-            display: 'flex',
-            flexDirection: 'column',
-            overflow: 'hidden',
-            position: 'relative',
-          }}
-        >
-          <ReadingGuidePane
-            guideContent={currentPageGuide}
-            onGenerateGuide={handleGeneratePageGuide}
-            isLoading={guideLoading}
-            error={guideError}
-            isVisible={showReadingGuidePane}
-            hasGuideForCurrentPage={hasGuideForCurrentPage}
-            isGenerating={isGeneratingGuide}
-            documentStructure={documentStructure} // Pass structure
-            onStructureItemClick={handleStructureItemClick} // Pass click handler
-            onGuideTextSearch={handleGuideTextSearch} // Pass search handler (legacy)
-            onGuideTextLink={handleGuideTextLink} // Pass enhanced TextLink handler
-            // No onClose for desktop version
-          />
-        </div>
-      )}
-
-      {/* Resizer Handle for Guide Pane / Main Content - Conditionally Render */}
-      {showReadingGuidePane && !isMobileView && (
-        <div 
-          className="resizer-handle resizer-handle-vertical"
-          onMouseDown={handleMouseDownOnGuideResizer}
-          title="Resize Reading Guide"
-        ></div>
-      )}
-
-      {/* Mobile: Reading Guide Pane - Overlay */}
-      {showReadingGuidePane && isMobileView && (
-        <div className="reading-guide-pane-area-mobile-overlay">
-          <ReadingGuidePane
-            guideContent={currentPageGuide}
-            onGenerateGuide={handleGeneratePageGuide}
-            isLoading={guideLoading}
-            error={guideError}
-            onClose={toggleReadingGuidePane}
-            isVisible={showReadingGuidePane}
-            hasGuideForCurrentPage={hasGuideForCurrentPage}
-            isGenerating={isGeneratingGuide}
-            documentStructure={documentStructure} // Pass structure
-            onStructureItemClick={handleStructureItemClick} // Pass click handler
-            onGuideTextSearch={handleGuideTextSearch} // Pass search handler (legacy)
-            onGuideTextLink={handleGuideTextLink} // Pass enhanced TextLink handler
-          />
-        </div>
-      )}
-      
-
-      {/* Main Content Area (Book and Notes) - Takes remaining space */}
+      {/* Main Content Area (Book/Guide and Notes) */}
       <div
         className="main-content-area"
         ref={mainContentAreaRef} // Ref for the resizer context
@@ -2424,8 +2231,7 @@ function BookView() {
           flexDirection: isMobileView ? 'column' : 'row',
           height: '100%',
           overflow: 'hidden',
-          // Hide this area if mobile guide is open, otherwise display as flex
-          display: (isMobileView && showReadingGuidePane) ? 'none' : 'flex',
+          display: 'flex',
           minWidth: !isMobileView ? 0 : undefined, // Prevent flex item from overflowing
         }}
       >
@@ -2434,7 +2240,7 @@ function BookView() {
           className="book-pane-area"
           ref={bookPaneAreaRef} // Ref for the resizable area
           style={{
-            flexBasis: !isMobileView && isNotePaneVisible ? bookPaneFlexBasis : '100%', // Desktop width, or full if mobile/notes hidden
+            flexBasis: '100%',
             width: isMobileView ? '100%' : undefined, // Full width on mobile
             height: '100%', // Occupy full height of its flex container part
             flexShrink: 0,
@@ -2473,12 +2279,6 @@ function BookView() {
                   </button>
                   {isBookViewMenuOpen && (
                     <div className="book-view-dropdown-menu">
-                      <button 
-                        onClick={() => { toggleReadingGuidePane(); setIsBookViewMenuOpen(false); }} 
-                        className="dropdown-item control-button"
-                      >
-                        {showReadingGuidePane ? 'Hide Reading Guide' : 'Show Reading Guide'}
-                      </button>
                       <button 
                         onClick={() => { openAddBookmarkModal(); setIsBookViewMenuOpen(false); }} 
                         className="dropdown-item control-button"
@@ -2525,12 +2325,16 @@ function BookView() {
                         Review Notes
                       </button>
                       <button 
-                        onClick={() => { toggleNotePaneVisibility(); setIsBookViewMenuOpen(false); }} 
+                        onClick={() => { setNotesLLMPopupMode('note'); setIsBookViewMenuOpen(false); }} 
                         className="dropdown-item control-button"
                       >
-                        {isMobileView
-                          ? (showNotesPanelOnMobile ? 'Hide Notes' : 'Show Notes')
-                          : (isNotePaneVisible ? 'Hide Notes' : 'Show Notes')}
+                        Add note
+                      </button>
+                      <button 
+                        onClick={() => { setNotesLLMPopupMode('llm'); setIsBookViewMenuOpen(false); }} 
+                        className="dropdown-item control-button"
+                      >
+                        Ask LLM
                       </button>
                     </div>
                   )}
@@ -2565,83 +2369,150 @@ function BookView() {
               {totalPages <= 1 && <div className="pagination-controls-placeholder"></div>}
 
 
-              {/* Right: Empty for now (all controls moved to left group) */}
-              <div className="right-controls-group"></div>
+              {/* Right: View mode toggle */}
+              <div className="right-controls-group">
+                <div className="view-mode-toggle" role="group" aria-label="View mode">
+                  <button
+                    className={`view-mode-btn ${viewMode === 'guide' ? 'active' : ''}`}
+                    onClick={() => {
+                      if (viewMode === 'original' && bookPaneContainerRef.current) {
+                        setBookScrollPositionByPage(prev => ({ ...prev, [currentPage]: bookPaneContainerRef.current.scrollTop }));
+                        bookPaneContainerRef.current.scrollTop = 0;
+                      }
+                      setViewMode('guide');
+                      setShowBackToGuide(false);
+                    }}
+                    aria-pressed={viewMode === 'guide'}
+                  >
+                    Reading Guide
+                  </button>
+                  <button
+                    className={`view-mode-btn ${viewMode === 'original' ? 'active' : ''}`}
+                    onClick={() => {
+                      if (guideScrollContainerRef.current) setGuideScrollPositionByPage(prev => ({ ...prev, [currentPage]: guideScrollContainerRef.current.scrollTop }));
+                      setViewMode('original');
+                      setShowBackToGuide(false);
+                    }}
+                    aria-pressed={viewMode === 'original'}
+                  >
+                    Original Text
+                  </button>
+                </div>
+              </div>
             </div>
             {/* --- END OF MODIFIED Controls Header --- */}
 
-            {/* The BookPane container itself */}
+            {/* Main content: Reading Guide (when viewMode is guide) or Original Text (BookPane) */}
             <div className="book-pane-container" ref={bookPaneContainerRef}>
-              <BookPane
-                markdownContent={highlightedPageContent}
-                imageUrls={bookData.image_urls}
-                onTextSelect={handleTextSelect}
-                onHighlightClick={handleHighlightClick}
-                fontSize={fontSize}
-                lineHeight={lineHeight}
-              />
+              {viewMode === 'guide' ? (
+                <ReadingGuidePane
+                  guideContent={currentPageGuide}
+                  onGenerateGuide={handleGeneratePageGuide}
+                  isLoading={guideLoading}
+                  error={guideError}
+                  isVisible={true}
+                  hasGuideForCurrentPage={hasGuideForCurrentPage}
+                  isGenerating={isGeneratingGuide}
+                  onStructureItemClick={handleStructureItemClick}
+                  onGuideTextSearch={handleGuideTextSearch}
+                  onGuideTextLink={(textLink) => {
+                    if (guideScrollContainerRef.current) setGuideScrollPositionByPage(prev => ({ ...prev, [currentPage]: guideScrollContainerRef.current.scrollTop }));
+                    setShowBackToGuide(true);
+                    setViewMode('original');
+                    handleGuideTextLink(textLink);
+                  }}
+                  onSwitchToOriginal={() => {
+                    if (guideScrollContainerRef.current) setGuideScrollPositionByPage(prev => ({ ...prev, [currentPage]: guideScrollContainerRef.current.scrollTop }));
+                    setViewMode('original');
+                  }}
+                  scrollContainerRef={guideScrollContainerRef}
+                  scrollPositionToRestore={guideScrollPositionByPage[currentPage] ?? 0}
+                  embedInMainArea={true}
+                />
+              ) : (
+                <BookPane
+                  markdownContent={highlightedPageContent}
+                  imageUrls={bookData.image_urls}
+                  onTextSelect={handleTextSelect}
+                  onHighlightClick={handleHighlightClick}
+                  fontSize={fontSize}
+                  lineHeight={lineHeight}
+                />
+              )}
             </div>
+            {/* Floating "Back to Reading Guide" button when user navigated from guide */}
+            {viewMode === 'original' && showBackToGuide && (
+              <button
+                className="back-to-guide-floating-btn"
+                onClick={() => {
+                  if (bookPaneContainerRef.current) {
+                    setBookScrollPositionByPage(prev => ({ ...prev, [currentPage]: bookPaneContainerRef.current.scrollTop }));
+                    bookPaneContainerRef.current.scrollTop = 0;
+                  }
+                  setViewMode('guide');
+                  setShowBackToGuide(false);
+                }}
+              >
+                Back to Reading Guide
+              </button>
+            )}
             {/* The original pagination block was here and is now removed */}
           </div>
         </div>
 
-        {/* Resizer Handle for Book/Note Panes - Conditionally Render */}
-        {isNotePaneVisible && !isMobileView && (
-          <div className="resizer-handle" onMouseDown={handleMouseDownOnBookNoteResizer}></div>
-        )}
-
-        {/* Desktop: Note Pane Area - side-by-side */}
-        {!isMobileView && isNotePaneVisible && (
-          <div
-            className="note-pane-area" // Existing class for desktop
-            style={{
-              flexGrow: 1,
-              flexShrink: 1,
-              flexBasis: '0%', // Grow to fill remaining space from bookPaneFlexBasis
-              display: 'flex',
-              flexDirection: 'column',
-              overflow: 'hidden',
-              borderLeft: '1px solid #ccc', // Always has left border on desktop
-            }}
-          >
-            <div className="note-pane-wrapper">
-              <div className="note-pane-container" ref={notePaneContainerRef}>
-                <NotePane
-                  bookId={bookId}
-                  selectedBookText={selectedBookText}
-                  selectedScrollPercentage={selectedScrollPercentage}
-                  selectedGlobalCharOffset={selectedGlobalCharOffset}
-                  currentPage={currentPage}
-                  currentPageContent={currentPageContent}
-                  onNewNoteSaved={handleNewNoteSaved}
-                  />
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Mobile: Note Pane Area - Overlay */}
-        {isMobileView && showNotesPanelOnMobile && (
-          <div className="note-pane-area-mobile-overlay"> {/* New class for overlay styling */}
-            {/* The wrapper and container structure can be similar if NotePane is self-contained */}
-            <div className="note-pane-wrapper">
-              <div className="note-pane-container" ref={notePaneContainerRef}> {/* Still need ref for scrolling */}
-                <NotePane
-                  bookId={bookId}
-                  selectedBookText={selectedBookText}
-                  selectedScrollPercentage={selectedScrollPercentage}
-                  selectedGlobalCharOffset={selectedGlobalCharOffset}
-                  currentPage={currentPage}
-                  currentPageContent={currentPageContent}
-                  onNewNoteSaved={handleNewNoteSaved}
-                  isMobileContext={true} // Indicate mobile overlay context
-                  onClosePane={toggleNotePaneVisibility} // Pass the toggle function to close
-                />
-              </div>
-            </div>
-          </div>
-        )}
     </div> {/* End of main-content-area */}
+
+    {/* Note popup modal */}
+    {notesLLMPopupMode === 'note' && (
+      <div className="modal-overlay" onClick={() => setNotesLLMPopupMode(null)}>
+        <div className="modal-content note-llm-popup-modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-header">
+            <h2>Add note</h2>
+            <button onClick={() => setNotesLLMPopupMode(null)} className="close-button" aria-label="Close">✕</button>
+          </div>
+          <div className="modal-body modal-body-scrollable">
+            <NotePane
+              bookId={bookId}
+              selectedBookText={selectedBookText}
+              selectedScrollPercentage={selectedScrollPercentage}
+              selectedGlobalCharOffset={selectedGlobalCharOffset}
+              currentPage={currentPage}
+              currentPageContent={currentPageContent}
+              onNewNoteSaved={handleNewNoteSaved}
+              mode="note"
+              embedInModal
+              onClose={() => setNotesLLMPopupMode(null)}
+            />
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* LLM popup modal */}
+    {notesLLMPopupMode === 'llm' && (
+      <div className="modal-overlay" onClick={() => setNotesLLMPopupMode(null)}>
+        <div className="modal-content note-llm-popup-modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-header">
+            <h2>Ask LLM</h2>
+            <button onClick={() => setNotesLLMPopupMode(null)} className="close-button" aria-label="Close">✕</button>
+          </div>
+          <div className="modal-body modal-body-scrollable">
+            <NotePane
+              bookId={bookId}
+              selectedBookText={selectedBookText}
+              selectedScrollPercentage={selectedScrollPercentage}
+              selectedGlobalCharOffset={selectedGlobalCharOffset}
+              currentPage={currentPage}
+              currentPageContent={currentPageContent}
+              onNewNoteSaved={handleNewNoteSaved}
+              mode="llm"
+              embedInModal
+              onClose={() => setNotesLLMPopupMode(null)}
+            />
+          </div>
+        </div>
+      </div>
+    )}
 
     {/* Add Bookmark Modal - Rendered conditionally (MOVED HERE) */}
     {showAddBookmarkModal && (

@@ -13,6 +13,31 @@
   /* Styles when visible, if needed for transitions, etc. */
 }
 
+/* When embedded as main content (replaces BookPane) */
+.reading-guide-pane.reading-guide-pane-embed {
+  border-right: none;
+  background-color: #fff;
+}
+
+.reading-guide-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.switch-to-original-btn {
+  background-color: #6c757d;
+  color: white;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9em;
+}
+.switch-to-original-btn:hover {
+  background-color: #5a6268;
+}
+
 .reading-guide-header {
   display: flex;
   justify-content: space-between;
@@ -113,90 +138,6 @@
   }
 }
 
-/* Styles for Document Structure Section */
-.document-structure-section {
-  /* margin-bottom: 15px; REMOVED - Resizer will provide separation */
-  padding: 10px 15px; /* Match other sections padding */
-  /* border-bottom: 1px solid #e0e0e0; REMOVED - Resizer will have its own border */
-  flex-shrink: 0; /* Prevent shrinking */
-  display: flex; /* Added for flex layout */
-  flex-direction: column; /* Stack header and list vertically */
-  min-height: 0; /* Important for flex children with overflow */
-  /* height is set by inline style from JS */
-  position: relative; /* For potential absolute positioning of internal elements if needed */
-}
-
-.document-structure-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 8px; /* Keep existing margin-bottom for h4 */
-}
-
-.document-structure-section h4 {
-  margin-top: 0;
-  margin-bottom: 0; /* Adjusted as margin-bottom is on header now */
-  font-size: 1em; /* Consistent with other subheadings */
-  color: #333;
-}
-
-.structure-controls {
-  display: flex;
-  align-items: center;
-}
-
-.structure-resize-button {
-  background-color: #e9ecef;
-  border: 1px solid #ced4da;
-  border-radius: .2rem;
-  padding: 1px 6px; /* Smaller padding */
-  margin-left: 5px;
-  cursor: pointer;
-  font-size: 1em; /* Match h4 font size or adjust as needed */
-  line-height: 1.2;
-  color: #495057;
-}
-
-.structure-resize-button:hover {
-  background-color: #dee2e6;
-  border-color: #adb5bd;
-}
-
-.structure-resize-button:active {
-  background-color: #ced4da;
-}
-
-.document-structure-list {
-  list-style-type: none;
-  padding-left: 0;
-  margin: 0;
-  /* max-height: 200px; REMOVED - Height is now dynamic via inline style */
-  overflow-y: auto;
-  flex-grow: 1; /* Allow list to take available space in its flex parent */
-  min-height: 0; /* Important for flex item that can shrink/grow and has overflow */
-  font-size: 0.9em;
-  border: 1px solid #e0e0e0; /* Optional: add a border to the list itself */
-  border-radius: 3px; /* Optional: rounded corners */
-  /* transition: height 0.2s ease-in-out; */ /* Optional: for smooth resize animation */
-}
-
-/* Styles for the horizontal resizer handle for the document structure section */
-.structure-resizer-handle {
-  height: 8px; /* Height of the draggable area */
-  background-color: #e0e0e0; /* A slightly darker or distinct color for the handle */
-  cursor: ns-resize; /* North-South resize cursor for vertical resizing */
-  flex-shrink: 0; /* Prevent the handle from shrinking */
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-top: 1px solid #c0c0c0;
-  border-bottom: 1px solid #c0c0c0;
-}
-
-.structure-resizer-handle:hover {
-  background-color: #d0d0d0; /* Darken on hover */
-}
-
 /* Optional: add a small visual indicator to the handle */
 .structure-resizer-handle::before {
   content: '•••'; /* Three dots or similar character */
@@ -270,6 +211,15 @@
   color: #0056b3;
   border-bottom: 2px solid #e0e0e0;
   padding-bottom: 6px;
+}
+
+.guide-section-key-takeaway {
+  margin: 0 0 10px 0;
+  font-style: italic;
+  color: #444;
+  font-size: 0.95em;
+  padding-left: 4px;
+  border-left: 3px solid #007bff;
 }
 
 .guide-section-content {

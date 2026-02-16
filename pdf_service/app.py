@@ -1,22 +1,21 @@
 import os
 import logging
 import sys
-import uuid # Import uuid for generating job IDs
-from typing import Optional, List, Dict, Any # Import Dict and Any
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks # Import BackgroundTasks
+import uuid
+from typing import Optional, List, Dict, Any, Tuple
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
 from pydantic import BaseModel
-import torch
-from dotenv import load_dotenv # Keep this import
-from magic_pdf.data.data_reader_writer import FileBasedDataWriter, FileBasedDataReader
-from magic_pdf.config.make_content_config import DropMode, MakeMode
-from magic_pdf.pipe.OCRPipe import OCRPipe
-from torch.cuda.amp import autocast
-import re # Import the regex module
-from contextlib import nullcontext # Import nullcontext for Python 3.7+
+from dotenv import load_dotenv
+import fitz  # PyMuPDF
+from pdf2image import convert_from_bytes as pdf2image_convert_from_bytes
+from paddleocr import PaddleOCR
+import numpy as np
+import re
 import ollama # Import the ollama library
 import asyncio # Import asyncio for background tasks
 import requests # Import requests for making HTTP calls in background task
 import google.generativeai as genai # ADD THIS LINE
+from anthropic import Anthropic # Import Anthropic for formatting-specific LLM
 
 # Initialize FastAPI app
 app = FastAPI(title="PDF Processing Service")
@@ -41,6 +40,13 @@ load_dotenv() # ADD this line here
 PDF_STORAGE_PATH = os.getenv('PDF_STORAGE_PATH')
 MARKDOWN_PATH = os.getenv('MARKDOWN_PATH')
 IMAGES_PATH = os.getenv('IMAGES_PATH')
+# App images (from PDF processing) go to app/ subdirectory
+APP_IMAGES_PATH = os.path.join(IMAGES_PATH, "app") if IMAGES_PATH else None
+
+# PaddleOCR and pipeline configuration
+PDF_OCR_ENGINE = os.getenv("PDF_OCR_ENGINE", "paddle")  # paddle, none, text-only
+PDF_OCR_LANG = os.getenv("PDF_OCR_LANG", "en")
+PDF_PAGE_DPI = int(os.getenv("PDF_PAGE_DPI", "200"))
 
 # Get Ollama configuration from environment variables
 OLLAMA_API_BASE = os.getenv('OLLAMA_API_BASE')
@@ -54,7 +60,7 @@ BACKEND_CALLBACK_URL = os.getenv("BACKEND_CALLBACK_URL")
 GEMINI_API_KEY_REFORMAT = os.getenv("GEMINI_API_KEY") # Use the general GEMINI_API_KEY for reformatting
 
 # Get Gemini Reformat Model Name (used if Gemini API key is present)
-GEMINI_REFORMAT_MODEL_NAME = os.getenv("GEMINI_REFORMAT_MODEL", "gemini-1.5-flash-latest")
+GEMINI_REFORMAT_MODEL_NAME = os.getenv("GEMINI_REFORMAT_MODEL", "gemini-2.5-flash")
 
 # Configure Gemini API if key is present
 if GEMINI_API_KEY_REFORMAT:
@@ -66,6 +72,45 @@ if GEMINI_API_KEY_REFORMAT:
         GEMINI_API_KEY_REFORMAT = None # Ensure it's None if configuration fails
 else:
     logger.info("GEMINI_API_KEY not found (used for reformatting). Google Gemini reformatting will not be available.")
+
+# --- Formatting-specific LLM configuration ---
+FORMATTING_LLM_SERVICE = os.getenv("FORMATTING_LLM_SERVICE")  # e.g., "anthropic", "gemini", "ollama"
+FORMATTING_LLM_MODEL = os.getenv("FORMATTING_LLM_MODEL")  # e.g., "claude-3-5-sonnet-20241022"
+FORMATTING_ANTHROPIC_API_KEY = os.getenv("FORMATTING_ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
+FORMATTING_GEMINI_API_KEY = os.getenv("FORMATTING_GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
+FORMATTING_OLLAMA_API_BASE = os.getenv("FORMATTING_OLLAMA_API_BASE") or os.getenv("OLLAMA_API_BASE")
+
+# Initialize formatting-specific LLM clients
+formatting_anthropic_client = None
+formatting_gemini_model = None
+formatting_ollama_client = None
+
+if FORMATTING_LLM_SERVICE == "anthropic" and FORMATTING_ANTHROPIC_API_KEY and FORMATTING_LLM_MODEL:
+    try:
+        formatting_anthropic_client = Anthropic(api_key=FORMATTING_ANTHROPIC_API_KEY)
+        logger.info(f"Formatting-specific Anthropic client initialized with model: {FORMATTING_LLM_MODEL}")
+    except Exception as e:
+        logger.warning(f"Failed to initialize formatting-specific Anthropic client: {e}")
+        formatting_anthropic_client = None
+elif FORMATTING_LLM_SERVICE == "gemini" and FORMATTING_GEMINI_API_KEY and FORMATTING_LLM_MODEL:
+    try:
+        genai.configure(api_key=FORMATTING_GEMINI_API_KEY)
+        formatting_gemini_model = genai.GenerativeModel(FORMATTING_LLM_MODEL)
+        logger.info(f"Formatting-specific Gemini model initialized: {FORMATTING_LLM_MODEL}")
+    except Exception as e:
+        logger.warning(f"Failed to initialize formatting-specific Gemini model: {e}")
+        formatting_gemini_model = None
+elif FORMATTING_LLM_SERVICE == "ollama" and FORMATTING_OLLAMA_API_BASE and FORMATTING_LLM_MODEL:
+    try:
+        formatting_ollama_client = ollama.Client(host=FORMATTING_OLLAMA_API_BASE)
+        logger.info(f"Formatting-specific Ollama client initialized at {FORMATTING_OLLAMA_API_BASE} with model: {FORMATTING_LLM_MODEL}")
+    except Exception as e:
+        logger.warning(f"Failed to initialize formatting-specific Ollama client: {e}")
+        formatting_ollama_client = None
+elif FORMATTING_LLM_SERVICE:
+    logger.info(f"Formatting-specific LLM service '{FORMATTING_LLM_SERVICE}' configured but not fully initialized. Will fall back to standard reformatting.")
+else:
+    logger.info("No formatting-specific LLM service configured. Will use standard reformatting.")
 
 
 # --- Helper function to sanitize filename ---
@@ -95,6 +140,16 @@ def ensure_storage_paths():
         except Exception as e:
             logger.error(f"Error creating/configuring directory {path}: {e}")
             raise RuntimeError(f"Failed to setup storage directory {path}: {e}")
+    
+    # Ensure app images subdirectory exists
+    if APP_IMAGES_PATH:
+        try:
+            os.makedirs(APP_IMAGES_PATH, exist_ok=True)
+            os.chmod(APP_IMAGES_PATH, 0o755)
+            logger.info(f"App images directory ensured: {APP_IMAGES_PATH}")
+        except Exception as e:
+            logger.error(f"Error creating/configuring app images directory {APP_IMAGES_PATH}: {e}")
+            raise RuntimeError(f"Failed to setup app images directory {APP_IMAGES_PATH}: {e}")
 
 # Ensure storage paths with error handling
 try:
@@ -102,6 +157,107 @@ try:
 except Exception as e:
     logger.critical(f"Failed to initialize storage paths: {e}")
     sys.exit(1)
+
+
+# --- PDF text vs scan detection and page rendering ---
+def pdf_has_text(pdf_bytes: bytes, max_pages_to_check: int = 5) -> bool:
+    """Return True if the PDF has extractable text on at least one of the first few pages."""
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        try:
+            n = min(max_pages_to_check, len(doc))
+            for i in range(n):
+                page = doc[i]
+                text = page.get_text().strip()
+                if len(text) > 50:  # meaningful text
+                    return True
+            return False
+        finally:
+            doc.close()
+    except Exception as e:
+        logger.warning(f"pdf_has_text failed: {e}, treating as scanned.")
+        return False
+
+
+def pdf_to_page_images(pdf_bytes: bytes, dpi: int = 200) -> List[np.ndarray]:
+    """Render PDF pages to RGB numpy arrays (H, W, 3) for OCR. Uses pdf2image (poppler)."""
+    try:
+        pil_images = pdf2image_convert_from_bytes(pdf_bytes, dpi=dpi)
+        return [np.array(img) for img in pil_images]
+    except Exception as e:
+        logger.error(f"pdf_to_page_images failed: {e}")
+        raise
+
+
+def extract_pdf_images(
+    pdf_bytes: bytes,
+    sanitized_title: str,
+    app_images_path: str,
+) -> List[List[str]]:
+    """
+    Extract embedded images from the PDF and save to app_images_path.
+    Returns images_per_page: list of list of saved filenames (basename only).
+    """
+    if not app_images_path:
+        return []
+    images_per_page: List[List[str]] = []
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        try:
+            for page_num in range(len(doc)):
+                page = doc[page_num]
+                xref_list = page.get_images(full=True)
+                filenames: List[str] = []
+                for img_idx, xref in enumerate(xref_list):
+                    try:
+                        base_xref = xref[0]
+                        img_info = doc.extract_image(base_xref)
+                        img_bytes = img_info.get("image")
+                        ext = (img_info.get("ext") or "png").lower()
+                        if ext not in ("png", "jpg", "jpeg", "gif", "webp"):
+                            ext = "png"
+                        name = f"{sanitized_title}_p{page_num}_i{img_idx}.{ext}"
+                        out_path = os.path.join(app_images_path, name)
+                        with open(out_path, "wb") as f:
+                            f.write(img_bytes)
+                        filenames.append(name)
+                    except Exception as e:
+                        logger.warning(f"Failed to extract image xref={xref} on page {page_num}: {e}")
+                images_per_page.append(filenames)
+        finally:
+            doc.close()
+    except Exception as e:
+        logger.error(f"extract_pdf_images failed: {e}")
+        return []
+    return images_per_page
+
+
+def inject_image_links_into_markdown(
+    raw_md: str,
+    images_per_page: List[List[str]],
+    app_images_path: str,
+    page_separator: str = "\n\n---\n\n",
+) -> str:
+    """Append markdown image links for each page's extracted images. Preserves page separator."""
+    if not images_per_page or not app_images_path:
+        return raw_md
+    parts = raw_md.split(page_separator)
+    # Align by page index; if we have more image pages than text segments, extend parts
+    while len(parts) < len(images_per_page):
+        parts.append("")
+    # Trim if more segments than pages (e.g. extra --- at end)
+    parts = parts[: len(images_per_page)]
+    injected = []
+    for i, (seg, img_names) in enumerate(zip(parts, images_per_page)):
+        block = seg.rstrip()
+        if img_names:
+            links = "\n\n".join(
+                f"![]({app_images_path}/{name})" for name in img_names
+            )
+            block = f"{block}\n\n{links}" if block else links
+        injected.append(block)
+    return page_separator.join(injected)
+
 
 # --- Updated ProcessResponse model for async initiation ---
 class ProcessResponse(BaseModel):
@@ -141,19 +297,46 @@ def reformat_markdown_with_ollama(md_text):
 
     reformatted_chunks = []
     
-    # Enhanced System Prompt for Ollama
-    system_prompt = """You are a meticulous and precise Markdown reformatting tool. Your ONLY task is to reformat the given Markdown text to improve its readability and ensure consistent, standard Markdown syntax.
+    # Enhanced System Prompt for Ollama with focus on paragraph breaks, headings, lists, and readability
+    system_prompt = """You are an expert in Markdown formatting and text organization. Your task is to reformat the given Markdown text to significantly improve its readability, consistency, and structural organization.
 
 **CRITICAL INSTRUCTIONS - ADHERE STRICTLY:**
-1.  **NO CONTENT ALTERATION:** You MUST preserve ALL original text content VERBATIM. This includes all words, sentences, paragraphs, headings, list items, code within code blocks, table cell content, etc. Do NOT summarize, expand, rephrase, or change the meaning of ANY content.
-2.  **EXACT IMAGE LINK PRESERVATION:** Image links (e.g., `![](path/to/image.png)` or `![alt text](path/to/image.png)`) MUST be preserved EXACTLY as they appear in the input. Do not modify paths, alt text, or the link syntax in any way.
-3.  **STANDARD MARKDOWN SYNTAX:** Ensure all output uses standard, common Markdown syntax. If you encounter malformed or non-standard syntax in the input, correct it to standard Markdown while preserving the original intent and content.
-4.  **CONSISTENT FORMATTING:** Apply consistent formatting for lists (e.g., use '-' or '*' consistently for unordered lists, and '1.' for ordered lists), code blocks (ensure proper triple backticks and language specifiers if present), and blockquotes.
-5.  **HEADING LEVELS:** Maintain the original heading levels (e.g., `#`, `##`, `###`). Do not change the semantic structure indicated by headings.
-6.  **OUTPUT ONLY MARKDOWN:** Your entire output MUST be ONLY the reformatted Markdown text. Do NOT include any conversational text, apologies, explanations, or any text before or after the Markdown content. **Specifically, do NOT wrap the entire output in a Markdown code block (e.g., using ```markdown ... ``` or ``` ... ```).**
-7.  **WHITESPACE MANAGEMENT:** Normalize excessive blank lines between paragraphs and elements. Ensure appropriate single blank lines for separation around block elements like headings, lists, code blocks, and paragraphs for readability. Do not add excessive newlines.
-8.  **TABLES:** If Markdown tables are present, ensure they are correctly formatted using standard Markdown table syntax (pipes and hyphens). Preserve all table content.
-9.  **HTML TAGS:** If any raw HTML tags are present in the input Markdown, preserve them as they are. Do not attempt to convert them to Markdown or remove them, unless they are clearly malformed and breaking standard Markdown rendering.
+
+1. **CONTENT PRESERVATION:** You MUST preserve ALL original text content VERBATIM. This includes all words, sentences, paragraphs, headings, list items, code within code blocks, table cell content, etc. Do NOT summarize, expand, rephrase, or change the meaning of ANY content.
+
+2. **INTELLIGENT PARAGRAPH BREAKS:** 
+   - Break long paragraphs into shorter, more digestible paragraphs when appropriate
+   - Respect semantic boundaries - break at natural thought transitions
+   - Ensure paragraphs are well-sized (typically 3-5 sentences, but adjust based on content)
+   - Maintain logical flow between paragraphs
+
+3. **PROPER HEADING HIERARCHY:**
+   - Analyze and maintain or improve the heading structure (#, ##, ###, etc.)
+   - Ensure headings accurately reflect the content hierarchy
+   - Add appropriate spacing before and after headings
+   - Use consistent heading styles throughout
+
+4. **CONSISTENT LIST FORMATTING:**
+   - Standardize list markers (use '-' consistently for unordered lists, '1.' for ordered lists)
+   - Ensure proper indentation for nested lists
+   - Add appropriate spacing around lists
+   - Maintain list item alignment and structure
+
+5. **OVERALL READABILITY:**
+   - Improve sentence flow and clarity where appropriate (without changing meaning)
+   - Ensure appropriate spacing between sections and elements
+   - Normalize excessive blank lines (typically one blank line between paragraphs)
+   - Improve visual structure while preserving all content
+
+6. **EXACT IMAGE LINK PRESERVATION:** Image links (e.g., `![](path/to/image.png)` or `![alt text](path/to/image.png)`) MUST be preserved EXACTLY as they appear in the input. Do not modify paths, alt text, or the link syntax in any way.
+
+7. **STANDARD MARKDOWN SYNTAX:** Ensure all output uses standard, common Markdown syntax. If you encounter malformed or non-standard syntax in the input, correct it to standard Markdown while preserving the original intent and content.
+
+8. **TABLES:** If Markdown tables are present, ensure they are correctly formatted using standard Markdown table syntax (pipes and hyphens). Preserve all table content.
+
+9. **CODE BLOCKS:** Preserve code blocks and inline code exactly as they appear. Ensure proper triple backticks and language specifiers if present.
+
+10. **OUTPUT FORMAT:** Your entire output MUST be ONLY the reformatted Markdown text. Do NOT include any conversational text, apologies, explanations, or any text before or after the Markdown content. **Specifically, do NOT wrap the entire output in a Markdown code block (e.g., using ```markdown ... ``` or ``` ... ```).**
 
 Reformat the following Markdown text according to these strict instructions:
 """
@@ -299,7 +482,7 @@ def reformat_markdown_with_gemini(md_text: str) -> str:
 
     try:
         # Initialize the Gemini model
-        # You can choose different models like 'gemini-1.5-flash-latest' for speed/cost
+        # You can choose different models like 'gemini-2.5-flash' for speed/cost
         # or 'gemini-1.0-pro' / 'gemini-1.5-pro-latest' for potentially higher quality.
         model = genai.GenerativeModel(GEMINI_REFORMAT_MODEL_NAME)
         logger.info(f"Google Gemini model '{GEMINI_REFORMAT_MODEL_NAME}' initialized for reformatting.")
@@ -308,10 +491,10 @@ def reformat_markdown_with_gemini(md_text: str) -> str:
         return md_text
 
     # Approximate tokens per character (this is a rough estimate for Gemini)
-    # Gemini models have larger context windows, e.g., gemini-1.5-flash has 1M tokens.
+    # Gemini models have larger context windows (e.g. gemini-2.5-flash).
     # However, processing very large single chunks can be slow or hit other limits.
     # Let's use a generous chunk character size, e.g., 100k characters.
-    # Max input tokens for gemini-1.5-flash is 1,048,576.
+    # Large context; aim for chunks well under the limit.
     # Let's aim for chunks well under this, e.g., ~200k characters.
     # 1 token ~ 4 chars. So 200k chars ~ 50k tokens.
     MAX_CHUNK_CHARS_GEMINI = 200000 # Roughly 200,000 characters per chunk
@@ -324,39 +507,56 @@ def reformat_markdown_with_gemini(md_text: str) -> str:
     reformatted_chunks = []
     system_instruction = """
     [Persona]
-    You are an intelligent Markdown reformatting agent, powered by Gemini. You function as an expert technical editor, specializing in transforming disorganized Markdown into clean, professional, and structurally coherent documents.
+    You are an expert in Markdown formatting and text organization, powered by Gemini. You function as an expert technical editor, specializing in transforming disorganized Markdown into clean, professional, and structurally coherent documents with optimal readability.
 
     [Core Task]
-    Your task is to analyze the provided Markdown and reformat it for optimal readability and structural hierarchy, following the rules and examples below.
+    Your task is to analyze the provided Markdown and reformat it for optimal readability, structural hierarchy, and text organization, following the rules below.
 
     ---
 
     [Guiding Principles & Rules]
 
     Strict Content Preservation:
+    - All original text, headings, lists, code blocks (```), inline code (`), tables, and image links MUST be preserved exactly as they are.
+    - Do NOT summarize, expand, rephrase, or change the meaning of ANY content.
 
-    - All original text, headings, lists, code blocks (```), inline code (      ), tables, and image links (e.g., `) MUST be preserved exactly as they are.
+    Intelligent Paragraph Breaks:
+    - Break long paragraphs into shorter, more digestible paragraphs when appropriate
+    - Respect semantic boundaries - break at natural thought transitions
+    - Ensure paragraphs are well-sized (typically 3-5 sentences, but adjust based on content)
+    - Maintain logical flow between paragraphs
 
     Hierarchical Structuring:
+    - Analyze the heading levels (#, ##, ###, etc.) to understand the document's outline
+    - Ensure headings accurately reflect the content hierarchy
+    - Insert appropriate blank lines to create clear visual separation between sections and elements
+    - Use consistent heading styles throughout
 
-    - Analyze the heading levels (#, ##, ###, etc.) to understand the document's outline.
-    - Insert appropriate blank lines to create clear visual separation between sections and elements, reinforcing the heading hierarchy. For example, a new ## heading should have a blank line before it.
-    - Ensure nested lists are correctly indented.
+    Consistent List Formatting:
+    - Standardize list markers (use '-' consistently for unordered lists, '1.' for ordered lists)
+    - Ensure proper indentation for nested lists
+    - Add appropriate spacing around lists
+    - Maintain list item alignment and structure
+
+    Overall Readability:
+    - Improve sentence flow and clarity where appropriate (without changing meaning)
+    - Ensure appropriate spacing between sections and elements
+    - Normalize excessive blank lines (typically one blank line between paragraphs)
+    - Improve visual structure while preserving all content
 
     Syntax Correction and Consistency:
-
-    - Correct any malformed Markdown syntax (e.g., incorrect list formatting, inconsistent heading styles).
-    - Standardize unordered list bullets (e.g., use - for all).
+    - Correct any malformed Markdown syntax (e.g., incorrect list formatting, inconsistent heading styles)
+    - Ensure standard Markdown syntax is used throughout
 
     Special Element Handling:
-    - Ensure tables and mathematical formulas (LaTeX) are complete and correctly formatted.
+    - Ensure tables and mathematical formulas (LaTeX) are complete and correctly formatted
+    - Preserve code blocks and inline code exactly as they appear
+    - Pay close attention to image links like ![](path/to/image.png) or ![alt text](path/to/image.png) and ensure they are preserved exactly as they appear in the input
 
     Output Format:
-
-    - CRITICAL: Output ONLY the reformatted Markdown text.
-    - Do NOT include any explanations, greetings, or apologies.
-    - Do NOT wrap the final output in a markdown ...  block.
-    - Pay close attention to image links like ![](path/to/image.png) or ![alt text](path/to/image.png) and ensure they are preserved exactly as they appear in the input.
+    - CRITICAL: Output ONLY the reformatted Markdown text
+    - Do NOT include any explanations, greetings, or apologies
+    - Do NOT wrap the final output in a markdown code block (```markdown ... ``` or ``` ... ```)
 
 
 Reformat this markdown:
@@ -425,6 +625,86 @@ Reformat this markdown:
     return combined_text
 
 
+# --- Text-only PDF extraction (no OCR) ---
+def process_text_pdf(pdf_bytes: bytes) -> str:
+    """Extract text from a PDF with an embedded text layer and return markdown-like content."""
+    parts = []
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        try:
+            for i in range(len(doc)):
+                page = doc[i]
+                text = page.get_text()
+                if text.strip():
+                    # Normalize whitespace; separate paragraphs by blank lines
+                    blocks = [b.strip() for b in text.split("\n\n") if b.strip()]
+                    parts.append("\n\n".join(blocks))
+            return "\n\n---\n\n".join(parts) if parts else ""
+        finally:
+            doc.close()
+    except Exception as e:
+        logger.error(f"process_text_pdf failed: {e}")
+        raise
+
+
+# --- PaddleOCR singleton and scanned-PDF pipeline ---
+_paddle_ocr_instance: Optional[PaddleOCR] = None
+
+
+def get_paddle_ocr(use_gpu: bool = True) -> PaddleOCR:
+    """Lazy-initialize and return a single PaddleOCR instance (GPU)."""
+    global _paddle_ocr_instance
+    if _paddle_ocr_instance is None:
+        _paddle_ocr_instance = PaddleOCR(
+            use_angle_cls=True,
+            lang=PDF_OCR_LANG,
+            use_gpu=use_gpu,
+            show_log=False,
+        )
+    return _paddle_ocr_instance
+
+
+def _ocr_results_to_markdown_page(lines_with_boxes: List[Tuple[List, Tuple[str, float]]]) -> str:
+    """Convert one page's OCR result (list of (box, (text, conf))) into paragraph markdown."""
+    if not lines_with_boxes:
+        return ""
+    # Sort by vertical position (y of centroid), then x
+    def sort_key(item):
+        box, (_text, _conf) = item
+        pts = np.array(box)
+        y = float(pts[:, 1].mean())
+        x = float(pts[:, 0].mean())
+        return (y, x)
+    sorted_items = sorted(lines_with_boxes, key=sort_key)
+    # Group into paragraphs by vertical gap (e.g. > 1.5 * typical line height)
+    texts = [text for _box, (text, _conf) in sorted_items if text and text.strip()]
+    if not texts:
+        return ""
+    return "\n\n".join(texts)
+
+
+def process_scanned_pdf_with_paddleocr(pdf_bytes: bytes) -> str:
+    """Render PDF to images, run PaddleOCR on each page, return combined markdown."""
+    dpi = PDF_PAGE_DPI
+    images = pdf_to_page_images(pdf_bytes, dpi=dpi)
+    if not images:
+        return ""
+    use_gpu = PDF_OCR_ENGINE == "paddle"
+    ocr_engine = get_paddle_ocr(use_gpu=use_gpu)
+    page_markdowns = []
+    for i, img in enumerate(images):
+        try:
+            result = ocr_engine.ocr(img, cls=True)
+            if not result or not result[0]:
+                page_markdowns.append("")
+                continue
+            page_markdowns.append(_ocr_results_to_markdown_page(result[0]))
+        except Exception as e:
+            logger.warning(f"PaddleOCR failed for page {i + 1}: {e}")
+            page_markdowns.append("")
+    return "\n\n---\n\n".join(page_markdowns)
+
+
 # --- Background task function for PDF processing ---
 async def perform_pdf_processing(job_id: str, temp_pdf_path: str, sanitized_title: str):
     """
@@ -441,77 +721,47 @@ async def perform_pdf_processing(job_id: str, temp_pdf_path: str, sanitized_titl
     try:
         # Read PDF bytes
         logger.info(f"Job {job_id}: Reading PDF bytes from {temp_pdf_path}...")
-        reader = FileBasedDataReader("")
-        pdf_bytes = reader.read(temp_pdf_path)
+        with open(temp_pdf_path, "rb") as f:
+            pdf_bytes = f.read()
         logger.info(f"Job {job_id}: PDF bytes read successfully.")
 
-        # Configure CUDA if available
-        logger.info(f"Job {job_id}: Checking CUDA availability...")
-        if torch.cuda.is_available():
-            torch.backends.cuda.matmul.allow_tf32 = False
-            torch.backends.cudnn.allow_tf32 = False
-            torch.backends.cudnn.benchmark = True
-            torch.backends.cudnn.enabled = True
-            torch.set_default_dtype(torch.float32)
-            torch.set_default_tensor_type(torch.cuda.FloatTensor)
-            logger.info(f"Job {job_id}: CUDA available and configured.")
+        # Text vs scan: route to text extraction or PaddleOCR
+        if PDF_OCR_ENGINE == "text-only":
+            has_text = True
+        elif PDF_OCR_ENGINE == "none":
+            has_text = True  # treat as text-only path, no OCR
         else:
-            logger.warning(f"Job {job_id}: CUDA not available. Using CPU.")
-        logger.info(f"Job {job_id}: CUDA setup complete.")
+            has_text = pdf_has_text(pdf_bytes)
 
+        if has_text:
+            logger.info(f"Job {job_id}: PDF has text layer; using text extraction (no OCR).")
+            raw_md_text_from_pipe = process_text_pdf(pdf_bytes)
+        else:
+            logger.info(f"Job {job_id}: PDF appears scanned; using PaddleOCR.")
+            raw_md_text_from_pipe = process_scanned_pdf_with_paddleocr(pdf_bytes)
 
-        # Initialize and run OCR pipeline
-        # Use autocast only if CUDA is available
-        context_manager = autocast(dtype=torch.float16) if torch.cuda.is_available() else nullcontext()
-
-        logger.info(f"Job {job_id}: Initializing OCRPipe...")
-        with context_manager:
-            model_list = [] # Configure models if needed
-            image_writer = FileBasedDataWriter(IMAGES_PATH)
-            pipe = OCRPipe(pdf_bytes, model_list, image_writer)
-            logger.info(f"Job {job_id}: OCRPipe initialized.")
-
-            logger.info(f"Job {job_id}: Running pipe_classify...")
-            pipe.pipe_classify()
-            logger.info(f"Job {job_id}: pipe_classify complete.")
-
-            logger.info(f"Job {job_id}: Running pipe_analyze...")
-            pipe.pipe_analyze()
-            logger.info(f"Job {job_id}: pipe_analyze complete.")
-
-            logger.info(f"Job {job_id}: Running pipe_parse...")
-            pipe.pipe_parse()
-            logger.info(f"Job {job_id}: pipe_parse complete.")
-
-            # Generate markdown content
-            logger.info(f"Job {job_id}: Running pipe_mk_markdown...")
-            md_content = pipe.pipe_mk_markdown(
-                IMAGES_PATH, # Pass the image directory path
-                drop_mode=DropMode.NONE,
-                md_make_mode=MakeMode.MM_MD
+        # Extract embedded images and inject markdown image links per page
+        images_per_page = extract_pdf_images(pdf_bytes, sanitized_title, APP_IMAGES_PATH or "")
+        total_images = sum(len(imgs) for imgs in images_per_page)
+        if total_images > 0:
+            logger.info(f"Job {job_id}: Extracted {total_images} images from PDF.")
+            raw_md_text_from_pipe = inject_image_links_into_markdown(
+                raw_md_text_from_pipe,
+                images_per_page,
+                APP_IMAGES_PATH or "",
+                page_separator="\n\n---\n\n",
             )
-            logger.info(f"Job {job_id}: pipe_mk_markdown complete. Initial markdown generated.")
 
-        # Ensure md_content is a string
-        if isinstance(md_content, list):
-            raw_md_text_from_pipe = "\n".join(md_content)
-        elif isinstance(md_content, str):
-            raw_md_text_from_pipe = md_content
-        else:
-            logger.error(f"Job {job_id}: Unexpected markdown content type: {type(md_content)}")
-            raw_md_text_from_pipe = "" # Default to empty string on unexpected type
-        
-        logger.info(f"Job {job_id}: Raw markdown content from pipe. Length: {len(raw_md_text_from_pipe)} chars.")
+        logger.info(f"Job {job_id}: Raw markdown content. Length: {len(raw_md_text_from_pipe)} chars.")
 
-        # --- TEMPORARY DEBUGGING: Save raw markdown from magic_pdf (before page merging) ---
-        raw_markdown_path = os.path.join(MARKDOWN_PATH, f"{sanitized_title}_raw_magic_pdf.md")
+        # Save raw markdown (pre-merge) for debugging
+        raw_markdown_path = os.path.join(MARKDOWN_PATH, f"{sanitized_title}_raw.md")
         try:
             with open(raw_markdown_path, 'w', encoding='utf-8') as raw_f:
                 raw_f.write(raw_md_text_from_pipe)
-            logger.info(f"Job {job_id}: Saved raw markdown (pre-merge) from magic_pdf to {raw_markdown_path}")
+            logger.info(f"Job {job_id}: Saved raw markdown (pre-merge) to {raw_markdown_path}")
         except Exception as e_raw_save:
             logger.error(f"Job {job_id}: Failed to save raw markdown (pre-merge): {e_raw_save}")
-        # --- END TEMPORARY DEBUGGING ---
 
         # --- MERGE PAGES TO MAKE THEM LONGER ---
         # Define how many original "pages" (sections separated by '---') to merge into one.
@@ -558,9 +808,14 @@ async def perform_pdf_processing(job_id: str, temp_pdf_path: str, sanitized_titl
         logger.info(f"Job {job_id}: Markdown reformatting process chosen. Result length: {len(reformatted_md_text)} chars.")
 
         # --- NEW: Globally rewrite image paths in markdown to be web-accessible ---
-        if IMAGES_PATH and isinstance(reformatted_md_text, str): # Ensure IMAGES_PATH is set and text is a string
-            logger.info(f"Job {job_id}: Globally replacing '{IMAGES_PATH}' with '/images' in markdown content.")
-            reformatted_md_text = reformatted_md_text.replace(IMAGES_PATH, "/images")
+        # Replace app images path with /images/app/ for authenticated access
+        if APP_IMAGES_PATH and isinstance(reformatted_md_text, str): # Ensure APP_IMAGES_PATH is set and text is a string
+            logger.info(f"Job {job_id}: Globally replacing '{APP_IMAGES_PATH}' with '/images/app' in markdown content.")
+            reformatted_md_text = reformatted_md_text.replace(APP_IMAGES_PATH, "/images/app")
+            # Also handle case where IMAGES_PATH might be in the path (for backward compatibility)
+            if IMAGES_PATH and IMAGES_PATH != APP_IMAGES_PATH:
+                logger.info(f"Job {job_id}: Also replacing '{IMAGES_PATH}' with '/images/app' in markdown content.")
+                reformatted_md_text = reformatted_md_text.replace(IMAGES_PATH, "/images/app")
             logger.info(f"Job {job_id}: Global image path replacement complete.")
         # --- END OF NEW IMAGE PATH REWRITING ---
 
@@ -683,4 +938,5 @@ if __name__ == "__main__":
         logger.warning("BACKEND_CALLBACK_URL environment variable is not set. Callbacks will not be sent.")
 
 
-    uvicorn.run(app, host="0.0.0.0", port=8502)
+    port = int(os.getenv("PORT", "8502"))
+    uvicorn.run(app, host="0.0.0.0", port=port)

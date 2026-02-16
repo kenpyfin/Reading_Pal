@@ -4,16 +4,19 @@ import './NotePane.css'; // Ensure this CSS file is imported
 import logger from '../utils/logger'; // Import logger
 
 // NotePane no longer uses forwardRef as the ref is not passed from BookView for its root
-const NotePane = ({ // Removed ref from props
+const NotePane = ({
   bookId,
   selectedBookText,
   selectedScrollPercentage,
-  selectedGlobalCharOffset, // Make sure this prop is received
-  currentPage, // ADDED: Current page number from BookView
-  currentPageContent, // ADDED: Raw markdown content of the current page from BookView
-  onNewNoteSaved, // ACCEPT THE NEW PROP
-  isMobileContext, // New prop for mobile overlay context
-  onClosePane // New prop to handle closing the pane in mobile overlay
+  selectedGlobalCharOffset,
+  currentPage,
+  currentPageContent,
+  onNewNoteSaved,
+  isMobileContext,
+  onClosePane,
+  mode = 'both', // 'note' | 'llm' | 'both' - which section(s) to render
+  embedInModal = false, // when true, omit h2 and mobile header (modal provides title/close)
+  onClose, // optional; used when embedInModal to close the modal
 }) => {
   const [newNoteContent, setNewNoteContent] = useState('');
   const [isPageNoteMode, setIsPageNoteMode] = useState(true);
@@ -141,9 +144,13 @@ const NotePane = ({ // Removed ref from props
     }
   };
 
+  const showContext = mode === 'note' || mode === 'llm' || mode === 'both';
+  const showLLM = mode === 'llm' || mode === 'both';
+  const showNoteForm = mode === 'note' || mode === 'both';
+
   return (
     <div className="note-pane">
-      {isMobileContext && (
+      {!embedInModal && isMobileContext && (
         <div className="note-pane-mobile-header">
           <h2>Notes &amp; LLM Insights</h2>
           <button onClick={onClosePane} className="close-pane-button" aria-label="Close notes panel">
@@ -151,88 +158,92 @@ const NotePane = ({ // Removed ref from props
           </button>
         </div>
       )}
-      {!isMobileContext && <h2>Notes &amp; LLM Insights</h2>}
+      {!embedInModal && !isMobileContext && <h2>Notes &amp; LLM Insights</h2>}
 
-      {/* ADDED: Dedicated area for displaying selected text or page context */}
-      <div className="note-context-selection">
-        <label htmlFor="page-note-mode-toggle">
-          <input
-            type="checkbox"
-            id="page-note-mode-toggle"
-            checked={isPageNoteMode}
-            onChange={(e) => setIsPageNoteMode(e.target.checked)}
-          />
-          Note for current page (Page {currentPage || 'N/A'})
-        </label>
-      </div>
-
-      {isPageNoteMode ? (
-        <div className="selected-text-display page-context-display">
-          <h4>Context:</h4>
-          <p>Current Page: {currentPage || 'N/A'}</p>
-          {/* Optionally, you could show a snippet of currentPageContent here, but the request was to show page number */}
-        </div>
-      ) : (
-        selectedBookText && (
-          <div
-            className="selected-text-display clickable-selection"
-            title="Click to jump to this location in the book"
-          >
-            <h4>Selected Text from Book:</h4>
-            <blockquote>
-              {selectedBookText}
-            </blockquote>
-            {(selectedScrollPercentage !== null || selectedGlobalCharOffset !== null) && (
-              <p className="location-info">
-                This text is linked to the current location in the book.
-              </p>
-            )}
+      {showContext && (
+        <>
+          <div className="note-context-selection">
+            <label htmlFor="page-note-mode-toggle">
+              <input
+                type="checkbox"
+                id="page-note-mode-toggle"
+                checked={isPageNoteMode}
+                onChange={(e) => setIsPageNoteMode(e.target.checked)}
+              />
+              Note for current page (Page {currentPage || 'N/A'})
+            </label>
           </div>
-        )
+
+          {isPageNoteMode ? (
+            <div className="selected-text-display page-context-display">
+              <h4>Context:</h4>
+              <p>Current Page: {currentPage || 'N/A'}</p>
+            </div>
+          ) : (
+            selectedBookText && (
+              <div
+                className="selected-text-display clickable-selection"
+                title="Click to jump to this location in the book"
+              >
+                <h4>Selected Text from Book:</h4>
+                <blockquote>
+                  {selectedBookText}
+                </blockquote>
+                {(selectedScrollPercentage !== null || selectedGlobalCharOffset !== null) && (
+                  <p className="location-info">
+                    This text is linked to the current location in the book.
+                  </p>
+                )}
+              </div>
+            )
+          )}
+        </>
       )}
 
-      {/* LLM Reading Assistance Section - MOVED HERE */}
-      <div className="llm-interaction">
-        <h3>LLM Reading Assistance</h3>
-        <textarea
+      {showLLM && (
+        <div className="llm-interaction">
+          <h3>LLM Reading Assistance</h3>
+          <textarea
             value={llmQuestion}
             onChange={(e) => setLlmQuestion(e.target.value)}
             placeholder="Ask a question about the book content or the selected text above..."
             rows="3"
-        />
-        <button onClick={handleAskLLM} disabled={llmLoading || !bookId || !llmQuestion.trim()}>
+          />
+          <button onClick={handleAskLLM} disabled={llmLoading || !bookId || !llmQuestion.trim()}>
             {llmLoading ? 'Asking...' : 'Ask LLM'}
-        </button>
-        {llmError && <p className="error-message">{llmError}</p>}
-        {llmAskResponse && (
+          </button>
+          {llmError && <p className="error-message">{llmError}</p>}
+          {llmAskResponse && (
             <div className="llm-response">
-                <h4>LLM Response:</h4>
-                <p>{llmAskResponse}</p>
-                <button 
-                  onClick={handleAddLlmResponseToNote} 
-                  className="button-add-to-note"
-                  style={{ marginTop: '10px' }}
-                >
-                  Add to Current Note
-                </button>
+              <h4>LLM Response:</h4>
+              <p>{llmAskResponse}</p>
+              <button
+                onClick={handleAddLlmResponseToNote}
+                className="button-add-to-note"
+                style={{ marginTop: '10px' }}
+              >
+                Add to Current Note
+              </button>
             </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
 
-      {/* Add New Note Section - NOW AFTER LLM */}
-      <div className="new-note-form">
-        <h3>Add New Note</h3>
-        <textarea
-          value={newNoteContent}
-          onChange={(e) => setNewNoteContent(e.target.value)}
-          placeholder="Write your note here, referencing the selected text above if any..."
-          rows="4"
-        />
-        <button onClick={handleSaveNote} disabled={!newNoteContent.trim()}>
-          Save Note
-        </button>
-        {error && <p className="error-message">{error}</p>}
-      </div>
+      {showNoteForm && (
+        <div className="new-note-form">
+          <h3>Add New Note</h3>
+          <textarea
+            value={newNoteContent}
+            onChange={(e) => setNewNoteContent(e.target.value)}
+            placeholder="Write your note here, referencing the selected text above if any..."
+            rows="4"
+          />
+          <button onClick={handleSaveNote} disabled={!newNoteContent.trim()}>
+            Save Note
+          </button>
+          {error && <p className="error-message">{error}</p>}
+        </div>
+      )}
     </div>
   );
 }; // Removed forwardRef closing

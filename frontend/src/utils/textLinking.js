@@ -69,6 +69,7 @@ export function scrollToOffsetWithHighlight(container, offset, rawPageContent, h
     let currentRenderedOffset = 0;
     let targetNode = null;
     let targetOffsetInNode = 0;
+    let textNode;
 
     while ((textNode = walker.nextNode())) {
       const nodeLength = textNode.textContent.length;

@@ -78,6 +78,7 @@ class ReadingGuideSection(BaseModel):
     """Represents a single section in a structured reading guide with enhanced linking."""
     section_title: str = Field(..., description="Header matching original document structure")
     rewritten_content: str = Field(..., description="Condensed/rewritten version of the section")
+    key_takeaway: Optional[str] = Field(None, description="One-sentence main idea for quick absorption")
     original_start_offset: int = Field(..., description="Character offset in original markdown where this section starts (legacy, use primary_link instead)")
     original_end_offset: int = Field(..., description="Character offset in original markdown where this section ends (legacy, use primary_link instead)")
     original_text_preview: Optional[str] = Field(None, description="Short preview of original text for reference (legacy, use primary_link instead)")
