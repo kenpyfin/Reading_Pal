@@ -3,7 +3,7 @@ print("DEBUG: Executing backend/services/llm_service.py module")
 import os
 from dotenv import load_dotenv
 import logging
-from typing import Optional, Dict, Any, List, List
+from typing import Optional, Dict, Any, List
 # Import client libraries for different LLM providers
 from anthropic import Anthropic # Assuming Anthropic is used
 from ollama import AsyncClient # Use AsyncClient for better FastAPI integration
@@ -14,6 +14,7 @@ import requests
 import json # Import json for DeepSeek requests
 import re # Import re for regular expressions
 import time
+import base64
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -27,6 +28,15 @@ logger.info(f"DEBUG: LLM_MODEL from os.getenv: '{os.getenv('LLM_MODEL')}'")
 LLM_SERVICE = os.getenv("LLM_SERVICE", "ollama")
 LLM_MODEL = os.getenv("LLM_MODEL", "deepseek-r1:14b")
 ollama_env_base_url = os.getenv("OLLAMA_BASE_URL")
+
+# Dedicated guide generation model/config (defaults to Gemini Flash for cost/latency).
+GUIDE_LLM_SERVICE = os.getenv("GUIDE_LLM_SERVICE", "gemini")
+GUIDE_LLM_MODEL = os.getenv("GUIDE_LLM_MODEL", "gemini-2.0-flash")
+GUIDE_LLM_GEMINI_API_KEY = os.getenv("GUIDE_LLM_GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
+
+# Gemini image generation model (uses generateContent, same endpoint as LLM).
+# Options: gemini-2.5-flash-image, gemini-3.1-flash-image-preview, gemini-3-pro-image-preview
+GRAPH_LLM_IMAGE_MODEL = os.getenv("GRAPH_LLM_IMAGE_MODEL", "gemini-2.5-flash-image")
 
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
@@ -46,6 +56,7 @@ anthropic_client = None
 deepseek_config = None # For requests, this might just be the API key/URL
 gemini_model = None # Store the GenerativeModel instance
 ollama_client = None
+guide_gemini_model = None
 
 # Initialize formatting-specific LLM clients
 formatting_anthropic_client = None
@@ -109,6 +120,16 @@ elif LLM_SERVICE == "gemini":
     else:
         logger.warning("GEMINI_API_KEY not set. Gemini LLM service disabled.")
 
+# Optional dedicated guide model (currently only Gemini is supported as separate model target).
+if GUIDE_LLM_SERVICE == "gemini" and GUIDE_LLM_GEMINI_API_KEY:
+    try:
+        genai.configure(api_key=GUIDE_LLM_GEMINI_API_KEY)
+        guide_gemini_model = genai.GenerativeModel(model_name=GUIDE_LLM_MODEL)
+        logger.info(f"Guide Gemini model initialized: {GUIDE_LLM_MODEL}")
+    except Exception as e:
+        logger.warning(f"Failed to initialize guide Gemini model '{GUIDE_LLM_MODEL}': {e}")
+        guide_gemini_model = None
+
 
 else:
     logger.warning(f"Unknown or unsupported LLM_SERVICE configured: {LLM_SERVICE}. LLM features may not work.")
@@ -144,12 +165,13 @@ else:
 
 class LLMService:
     # Corrected the default value for deepseek from 'config' to None
-    def __init__(self, anthropic=None, deepseek=None, gemini=None, ollama=None, 
+    def __init__(self, anthropic=None, deepseek=None, gemini=None, ollama=None, guide_gemini=None,
                  formatting_anthropic=None, formatting_gemini=None, formatting_ollama=None):
         self.anthropic_client = anthropic
         self.deepseek_config = deepseek # Store config dict for requests
         self.gemini_model = gemini # Store the GenerativeModel instance
         self.ollama_client = ollama
+        self.guide_gemini_model = guide_gemini
         self.service_name = LLM_SERVICE
         self.model_name = LLM_MODEL
         # Formatting-specific clients
@@ -669,6 +691,250 @@ Return ONLY valid JSON, no other text."""
             logger.error(f"Error calling {self.service_name} LLM 'generate_structured_reading_guide' method: {e}", exc_info=True)
             return {"sections": [], "document_structure_map": {}}
 
+    def _select_guide_model(self):
+        """Prefer dedicated guide model when configured, fall back to main model."""
+        return self.guide_gemini_model or self.gemini_model
+
+    def _normalize_json_response(self, response_text: str) -> Optional[Dict[str, Any]]:
+        """Extract first JSON object from an LLM response."""
+        if not response_text:
+            return None
+        json_str = self._remove_think_tags(response_text).strip()
+        if json_str.startswith("```"):
+            first_newline = json_str.find("\n")
+            if first_newline != -1:
+                json_str = json_str[first_newline + 1:]
+            if json_str.endswith("```"):
+                json_str = json_str[:-3].rstrip()
+        try:
+            decoder = json.JSONDecoder()
+            data, _ = decoder.raw_decode(json_str.strip())
+            return data if isinstance(data, dict) else None
+        except Exception:
+            return None
+
+    async def _generate_guide_json(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        max_output_tokens: int = 8192,
+    ) -> Optional[Dict[str, Any]]:
+        """Run a guide-generation LLM call and parse JSON object."""
+        model = self._select_guide_model()
+        if not model:
+            logger.warning("No guide Gemini model available.")
+            return None
+        try:
+            response = await model.generate_content_async(
+                contents=[{"role": "user", "parts": [f"{system_prompt}\n\n{user_prompt}"]}],
+                generation_config={"max_output_tokens": max_output_tokens},
+            )
+            response_text = response.text if response and response.text else ""
+            parsed = self._normalize_json_response(response_text)
+            if not parsed:
+                logger.warning(f"Guide JSON parse failed. Raw response: {response_text[:800]}")
+            return parsed
+        except Exception as e:
+            logger.error(f"Guide LLM call failed: {e}", exc_info=True)
+            return None
+
+    async def generate_whole_book_reading_roadmap(
+        self,
+        heading_nodes: List[Dict[str, Any]],
+        book_title: str,
+        full_markdown: str,
+    ) -> List[Dict[str, Any]]:
+        """
+        Two-pass semantic roadmap generation:
+        1) Segment and filter non-book content.
+        2) Generate a card per semantic segment.
+        """
+        if not heading_nodes:
+            return []
+
+        id_to_node = {n["id"]: n for n in heading_nodes}
+        section_lines = []
+        for n in heading_nodes:
+            snippet = (n.get("snippet") or "")[:700]
+            section_lines.append(
+                f'[{n["id"]}] level={n.get("level", 1)} title="{n.get("title", "")}"\n'
+                f"snippet: {snippet}"
+            )
+        sections_block = "\n\n".join(section_lines)
+
+        segmentation_system = (
+            "You are an expert editor. Create semantic segments for a learning roadmap from section outlines. "
+            "Filter out front-matter and non-book-content when appropriate."
+        )
+        segmentation_user = (
+            f'BOOK: "{book_title}"\n\n'
+            "INPUT SECTIONS:\n"
+            f"{sections_block}\n\n"
+            "Return JSON only in this shape:\n"
+            '{\n'
+            '  "segments": [\n'
+            '    {\n'
+            '      "id": "seg1",\n'
+            '      "title": "Semantic concept title",\n'
+            '      "is_book_content": true,\n'
+            '      "source_section_ids": ["s1","s2"],\n'
+            '      "why": "short reason"\n'
+            "    }\n"
+            "  ]\n"
+            "}\n"
+            "Rules: preserve source order, include all substantive sections, avoid tiny segments, avoid oversized segments."
+        )
+        seg_data = await self._generate_guide_json(segmentation_system, segmentation_user, max_output_tokens=12288)
+        raw_segments = seg_data.get("segments", []) if seg_data else []
+
+        valid_segments: List[Dict[str, Any]] = []
+        for i, seg in enumerate(raw_segments):
+            if not isinstance(seg, dict):
+                continue
+            source_ids = [sid for sid in (seg.get("source_section_ids") or []) if sid in id_to_node]
+            if not source_ids:
+                continue
+            if seg.get("is_book_content") is False:
+                continue
+            # Split overly large segments by section count.
+            if len(source_ids) > 8:
+                for j in range(0, len(source_ids), 6):
+                    chunk = source_ids[j:j + 6]
+                    valid_segments.append({
+                        "id": f'{seg.get("id") or f"seg{i+1}"}.p{j//6 + 1}',
+                        "title": seg.get("title") or f"Segment {i + 1}",
+                        "source_section_ids": chunk,
+                    })
+            else:
+                valid_segments.append({
+                    "id": seg.get("id") or f"seg{i + 1}",
+                    "title": seg.get("title") or f"Segment {i + 1}",
+                    "source_section_ids": source_ids,
+                })
+
+        if not valid_segments:
+            # Safe fallback: derive one segment per heading node
+            valid_segments = [
+                {"id": f"seg{i+1}", "title": n.get("title", f"Section {i+1}"), "source_section_ids": [n["id"]]}
+                for i, n in enumerate(heading_nodes)
+            ]
+
+        cards: List[Dict[str, Any]] = []
+        for idx, seg in enumerate(valid_segments):
+            nodes = [id_to_node[sid] for sid in seg["source_section_ids"] if sid in id_to_node]
+            if not nodes:
+                continue
+            start_offset = min(n["start_offset"] for n in nodes)
+            end_offset = max(n["end_offset"] for n in nodes)
+            source_text = full_markdown[start_offset:end_offset]
+            source_text = source_text[:6000]
+
+            card_system = (
+                "You are a close-reading mentor. Generate concise semantic study cards from source text."
+            )
+            card_user = (
+                f'BOOK: "{book_title}"\n'
+                f'SEGMENT TITLE: "{seg.get("title", f"Segment {idx+1}")}"\n'
+                f"SOURCE TEXT:\n{source_text}\n\n"
+                "Return JSON only:\n"
+                '{\n'
+                '  "title": "card title",\n'
+                '  "key_idea": "1-2 sentences",\n'
+                '  "thought_process": ["step 1", "step 2", "step 3"],\n'
+                '  "reading_summary": "1-2 sentence quick absorption for this segment",\n'
+                '  "reading_bullets": ["bullet 1", "bullet 2", "bullet 3"],\n'
+                '  "quote": "verbatim 1-3 sentence quote from source",\n'
+                '  "reference_paragraph": "a fuller 4-8 sentence paragraph-style excerpt from source that contains the quote context"\n'
+                "}\n"
+                "Keep each card substantial but not overloaded."
+            )
+            card_data = await self._generate_guide_json(card_system, card_user, max_output_tokens=4096)
+            if not card_data:
+                card_data = {
+                    "title": seg.get("title", f"Segment {idx + 1}"),
+                    "key_idea": (source_text[:260] + "...") if len(source_text) > 260 else source_text,
+                    "thought_process": [],
+                    "reading_summary": (source_text[:220] + "...") if len(source_text) > 220 else source_text,
+                    "reading_bullets": [],
+                    "quote": "",
+                    "reference_paragraph": source_text[:900],
+                }
+
+            thought_process = card_data.get("thought_process") or []
+            if not isinstance(thought_process, list):
+                thought_process = []
+            thought_process = [str(step).strip() for step in thought_process if str(step).strip()][:5]
+
+            reading_bullets = card_data.get("reading_bullets") or []
+            if not isinstance(reading_bullets, list):
+                reading_bullets = []
+            reading_bullets = [str(step).strip() for step in reading_bullets if str(step).strip()][:5]
+
+            takeaway = card_data.get("key_idea")
+
+            cards.append({
+                "id": seg.get("id") or f"seg{idx + 1}",
+                "title": card_data.get("title") or seg.get("title") or f"Segment {idx + 1}",
+                "takeaway": takeaway,
+                "thought_process": thought_process,
+                "reading_summary": (card_data.get("reading_summary") or "").strip() or None,
+                "reading_bullets": reading_bullets,
+                "key_quote": card_data.get("quote"),
+                "preview_text": card_data.get("reference_paragraph") or card_data.get("quote") or "",
+                "start_offset": start_offset,
+                "end_offset": end_offset,
+                "level": 1,
+                "children": [],
+                "key_term": None,
+                "enriched": True,
+            })
+        return cards
+
+    async def generate_graph_image_bytes(
+        self,
+        card_title: str,
+        key_idea: str,
+        source_excerpt: str,
+    ) -> Optional[bytes]:
+        """
+        Best-effort Gemini image generation for a concept graph.
+        Returns image bytes (PNG/JPEG) or None.
+        """
+        api_key = GUIDE_LLM_GEMINI_API_KEY or os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            logger.warning("Graph generation skipped: Gemini API key is missing.")
+            return None
+
+        prompt = (
+            "Create a clean, minimal concept graph diagram (not decorative art). "
+            "Use nodes and arrows that explain the relationship between ideas.\n\n"
+            f"Title: {card_title}\n"
+            f"Key idea: {key_idea}\n"
+            f"Source excerpt: {source_excerpt[:1000]}"
+        )
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{GRAPH_LLM_IMAGE_MODEL}:generateContent?key={api_key}"
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"responseModalities": ["TEXT", "IMAGE"]},
+        }
+        try:
+            resp = requests.post(url, json=payload, timeout=60)
+            resp.raise_for_status()
+            data = resp.json()
+            candidates = data.get("candidates") or []
+            if not candidates:
+                logger.warning(f"Graph generation returned no candidates: {str(data)[:400]}")
+                return None
+            parts = candidates[0].get("content", {}).get("parts") or []
+            for part in parts:
+                inline = part.get("inlineData")
+                if inline and inline.get("data"):
+                    return base64.b64decode(inline["data"])
+            logger.warning(f"Graph generation: no image in response parts: {str(parts)[:400]}")
+        except Exception as e:
+            logger.error(f"Graph image generation failed: {e}", exc_info=True)
+            return None
+
 
 # Instantiate the service as a singleton
 llm_service = LLMService(
@@ -676,6 +942,7 @@ llm_service = LLMService(
     deepseek=deepseek_config, # Pass the config dict
     gemini=gemini_model, # Pass the GenerativeModel instance
     ollama=ollama_client, # Pass the AsyncClient instance
+    guide_gemini=guide_gemini_model,
     formatting_anthropic=formatting_anthropic_client,
     formatting_gemini=formatting_gemini_model,
     formatting_ollama=formatting_ollama_client

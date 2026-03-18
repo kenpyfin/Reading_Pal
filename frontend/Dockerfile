@@ -1,5 +1,5 @@
-# Use an official Node.js runtime as a parent image
-FROM node:18-alpine as builder
+# Use Node 20 for better OpenSSL 3 compatibility (avoids ERR_SSL_CIPHER_OPERATION_FAILED)
+FROM node:20-alpine as builder
 
 # Accept build argument for image secret
 ARG REACT_APP_IMAGE_SECRET
@@ -23,7 +23,7 @@ RUN rm -rf node_modules/.cache && npm run build
 # --- MODIFICATION END ---
 
 # --- Runtime stage ---
-FROM node:18-alpine
+FROM node:20-alpine
 
 # Set a default for FRONTEND_PORT, can be overridden at runtime
 # (e.g., by Docker Compose from .env file)

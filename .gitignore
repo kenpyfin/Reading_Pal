@@ -4,7 +4,6 @@
 .pdr.md
 pdf_service/storage/*
 pdf_service/models/*
-pdf_service/magic-pdf.standalone.json
 node_modules/*
 pdf_service/GPU_IN_DOCKER.md
 pdf_service/scripts/download_models.py
@@ -28,3 +27,5 @@ pdf_service/scripts/download_models.py
 package-lock.json
 package.json
 migrate_images.sh
+
+node_modules/*

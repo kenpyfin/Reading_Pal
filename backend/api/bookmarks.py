@@ -22,7 +22,7 @@ def calculate_line_number_from_offset(content: str, offset: int) -> int:
     return content[:offset].count('\n') + 1
 
 
-def calculate_page_boundaries(markdown: str, target_chars_per_page: int = 25000) -> List[dict]:
+def calculate_page_boundaries(markdown: str, target_chars_per_page: int = 10000) -> List[dict]:
     """Calculate page boundaries similar to frontend logic."""
     boundaries = []
     current_offset = 0

@@ -99,16 +99,21 @@ async def get_book(book_id: str, user_id: Optional[str] = None):
         logger.error(f"Error fetching book {book_id} with user_id {user_id}: {e}", exc_info=True)
         return None
 
-async def get_books(filter: Optional[dict] = None, projection: Optional[dict] = None):
-    """Retrieves all books with optional filter and projection."""
+async def get_books(filter: Optional[dict] = None, projection: Optional[dict] = None, skip: int = 0, limit: int = 100):
+    """Retrieves books with optional filter, projection, and pagination."""
     database = get_database()
     if database is None:
         logger.error("Database not initialized for get_books.")
         return [] # Return empty list on error
     try:
         # Use the provided filter, or an empty dictionary if no filter is provided
-        books_cursor = database.books.find(filter or {}, projection)
-        books_list = await books_cursor.to_list(length=1000) # Adjust length as needed
+        cursor = database.books.find(filter or {}, projection)
+        if skip > 0:
+            cursor = cursor.skip(skip)
+        if limit > 0:
+            cursor = cursor.limit(limit)
+        
+        books_list = await cursor.to_list(length=limit if limit > 0 else 1000)
         return books_list # Returns list of dicts
     except Exception as e:
         logger.error(f"Error fetching all books: {e}", exc_info=True)
@@ -804,3 +809,178 @@ async def get_reading_guides_for_book(
     except Exception as e:
         logger.error(f"Error in get_reading_guides_for_book for book {book_id}: {e}", exc_info=True)
         return guides
+
+
+# --- Reading Guide (Whole-Book Roadmap) Database Operations ---
+def get_reading_guides_roadmap_collection():
+    """Collection for whole-book reading roadmaps (one doc per book per user)."""
+    database = get_database()
+    if database is None:
+        logger.error("Database not initialized for reading_guides.")
+        raise ConnectionError("Database not initialized for reading guide roadmap operations.")
+    return database["reading_guides"]
+
+
+def get_reading_guide_progress_collection():
+    """Collection for per-user progress on roadmap items."""
+    database = get_database()
+    if database is None:
+        logger.error("Database not initialized for reading_guide_progress.")
+        raise ConnectionError("Database not initialized for reading guide progress operations.")
+    return database["reading_guide_progress"]
+
+
+async def upsert_reading_guide(
+    book_id: str, user_id: str, items: List[Dict]
+) -> Optional['ReadingGuideInDB']:
+    """Create or update a whole-book reading guide for a book and user."""
+    collection = get_reading_guides_roadmap_collection()
+    now = datetime.utcnow()
+    try:
+        book_obj_id = ObjectId(book_id)
+    except Exception:
+        logger.error(f"Invalid book_id format for ObjectId in upsert_reading_guide: {book_id}")
+        return None
+
+    query = {"book_id": book_obj_id, "user_id": user_id}
+    update = {
+        "$set": {
+            "items": items,
+            "updated_at": now,
+        },
+        "$setOnInsert": {"book_id": book_obj_id, "user_id": user_id, "created_at": now},
+    }
+    try:
+        result_doc = await collection.find_one_and_update(
+            query, update, upsert=True, return_document=True
+        )
+        if result_doc:
+            from backend.models.reading_guide import ReadingGuideInDB
+            return ReadingGuideInDB.model_validate(result_doc)
+        return None
+    except Exception as e:
+        logger.error(f"Error in upsert_reading_guide for book {book_id}: {e}", exc_info=True)
+        return None
+
+
+async def get_reading_guide(book_id: str, user_id: str) -> Optional['ReadingGuideInDB']:
+    """Get the whole-book reading guide for a book and user."""
+    collection = get_reading_guides_roadmap_collection()
+    try:
+        book_obj_id = ObjectId(book_id)
+    except Exception:
+        logger.error(f"Invalid book_id format for ObjectId in get_reading_guide: {book_id}")
+        return None
+
+    try:
+        document = await collection.find_one({"book_id": book_obj_id, "user_id": user_id})
+        if document:
+            from backend.models.reading_guide import ReadingGuideInDB
+            return ReadingGuideInDB.model_validate(document)
+        return None
+    except Exception as e:
+        logger.error(f"Error in get_reading_guide for book {book_id}: {e}", exc_info=True)
+        return None
+
+
+async def get_reading_guide_progress(book_id: str, user_id: str) -> List[str]:
+    """Get list of completed item IDs for a book and user."""
+    collection = get_reading_guide_progress_collection()
+    try:
+        book_obj_id = ObjectId(book_id)
+    except Exception:
+        logger.error(f"Invalid book_id format for ObjectId in get_reading_guide_progress: {book_id}")
+        return []
+
+    try:
+        doc = await collection.find_one({"book_id": book_obj_id, "user_id": user_id})
+        if doc and "completed_ids" in doc:
+            return list(doc["completed_ids"]) if doc["completed_ids"] else []
+        return []
+    except Exception as e:
+        logger.error(f"Error in get_reading_guide_progress for book {book_id}: {e}", exc_info=True)
+        return []
+
+
+async def update_reading_guide_progress(
+    book_id: str, user_id: str, item_id: str, completed: bool
+) -> List[str]:
+    """Add or remove an item_id from completed set. Returns updated completed_ids."""
+    collection = get_reading_guide_progress_collection()
+    now = datetime.utcnow()
+    try:
+        book_obj_id = ObjectId(book_id)
+    except Exception:
+        logger.error(f"Invalid book_id format for ObjectId in update_reading_guide_progress: {book_id}")
+        return []
+
+    query = {"book_id": book_obj_id, "user_id": user_id}
+    if completed:
+        update = {
+            "$addToSet": {"completed_ids": item_id},
+            "$set": {"updated_at": now},
+            "$setOnInsert": {"book_id": book_obj_id, "user_id": user_id, "created_at": now},
+        }
+    else:
+        update = {
+            "$pull": {"completed_ids": item_id},
+            "$set": {"updated_at": now},
+            "$setOnInsert": {"book_id": book_obj_id, "user_id": user_id, "created_at": now},
+        }
+
+    try:
+        result_doc = await collection.find_one_and_update(
+            query, update, upsert=True, return_document=True
+        )
+        if result_doc and "completed_ids" in result_doc:
+            return list(result_doc["completed_ids"]) if result_doc["completed_ids"] else []
+        return []
+    except Exception as e:
+        logger.error(f"Error in update_reading_guide_progress for book {book_id}: {e}", exc_info=True)
+        return []
+
+
+async def update_reading_guide_items(
+    book_id: str, user_id: str, items: List[Dict], enriched: bool
+) -> bool:
+    """
+    Update the items and enriched flag of a reading guide.
+    Used by the enrich endpoint to save enriched sub-points.
+
+    Args:
+        book_id: Book ID (string)
+        user_id: User ID (string)
+        items: List of item dicts (serialized ReadingGuideItem objects)
+        enriched: Whether the entire guide is now enriched
+
+    Returns:
+        True if update succeeded, False otherwise.
+    """
+    collection = get_reading_guides_roadmap_collection()
+    now = datetime.utcnow()
+    try:
+        book_obj_id = ObjectId(book_id)
+    except Exception:
+        logger.error(f"Invalid book_id format for ObjectId in update_reading_guide_items: {book_id}")
+        return False
+
+    query = {"book_id": book_obj_id, "user_id": user_id}
+    update = {
+        "$set": {
+            "items": items,
+            "enriched": enriched,
+            "updated_at": now,
+        }
+    }
+
+    try:
+        result = await collection.update_one(query, update)
+        if result.matched_count > 0:
+            logger.info(f"Updated reading guide for book {book_id}: enriched={enriched}, items count={len(items)}")
+            return True
+        else:
+            logger.warning(f"No reading guide found to update for book {book_id} and user {user_id}")
+            return False
+    except Exception as e:
+        logger.error(f"Error in update_reading_guide_items for book {book_id}: {e}", exc_info=True)
+        return False

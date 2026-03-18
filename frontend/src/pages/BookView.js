@@ -12,14 +12,6 @@ import { getPageForOffset } from '../utils/textLinking'; // Import text linking 
 
 const APPROX_CHARS_PER_PAGE = 25000; // Approximate target characters per page
 
-// Function to escape regex special characters
-function escapeRegExp(string) {
-  if (typeof string !== 'string') {
-    return '';
-  }
-  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // $& means the whole matched string
-}
-
 // Helper to decode HTML entities (basic version)
 function decodeHtmlEntities(text) {
   if (typeof text !== 'string' || !text) return ''; // Handle empty or non-string input
@@ -161,6 +153,41 @@ function calculatePageBoundaries(markdown, targetCharsPerPage) {
   // This means a page might be slightly larger than targetCharsPerPage if it prevents a tiny next page.
   const MIN_PAGE_CHARS = targetCharsPerPage * 0.5; // Page should be at least 50% of target
 
+  const adjustBoundarySafely = (pageStart, proposedEnd) => {
+    let safeEnd = proposedEnd;
+    const segment = markdown.substring(pageStart, safeEnd);
+
+    // Avoid splitting in the middle of fenced code blocks.
+    const fenceMatches = segment.match(/```/g);
+    const fenceCount = fenceMatches ? fenceMatches.length : 0;
+    if (fenceCount % 2 === 1) {
+      const nextFence = markdown.indexOf("```", safeEnd);
+      if (nextFence !== -1 && nextFence - safeEnd <= targetCharsPerPage * 0.6) {
+        const nextNewline = markdown.indexOf("\n", nextFence + 3);
+        safeEnd = nextNewline !== -1 ? nextNewline + 1 : Math.min(nextFence + 3, totalLength);
+      } else {
+        const lastFence = segment.lastIndexOf("```");
+        if (lastFence > 0) {
+          safeEnd = pageStart + lastFence;
+        }
+      }
+    }
+
+    // Avoid splitting within an HTML tag.
+    const tail = markdown.substring(pageStart, safeEnd);
+    const lastOpen = tail.lastIndexOf("<");
+    const lastClose = tail.lastIndexOf(">");
+    if (lastOpen > lastClose) {
+      safeEnd = pageStart + lastOpen;
+    }
+
+    // Keep the adjusted page from being too tiny.
+    if (safeEnd - pageStart < MIN_PAGE_CHARS && proposedEnd - pageStart >= MIN_PAGE_CHARS) {
+      safeEnd = proposedEnd;
+    }
+    return Math.max(pageStart + 1, Math.min(totalLength, safeEnd));
+  };
+
   while (currentOffset < totalLength) {
     const pageStart = currentOffset;
     let potentialEnd = Math.min(pageStart + targetCharsPerPage, totalLength);
@@ -214,6 +241,7 @@ function calculatePageBoundaries(markdown, targetCharsPerPage) {
     // Ensure actualEnd does not exceed totalLength
     actualEnd = Math.min(actualEnd, totalLength);
 
+    actualEnd = adjustBoundarySafely(pageStart, actualEnd);
     boundaries.push({ start: pageStart, end: actualEnd });
     currentOffset = actualEnd;
 
@@ -318,6 +346,10 @@ function BookView() {
 
   // Show floating "Back to Reading Guide" when user navigated from guide via "View in original text"
   const [showBackToGuide, setShowBackToGuide] = useState(false);
+  const navigatingFromGuideTextLinkRef = useRef(false);
+
+  // Guide scroll to restore when clicking "Back to Reading Guide" (saved when leaving via "View in original text")
+  const [guideScrollToRestoreOnBack, setGuideScrollToRestoreOnBack] = useState(null);
 
   // Remember guide scroll position per page so we can restore when returning or changing page
   const [guideScrollPositionByPage, setGuideScrollPositionByPage] = useState({});
@@ -326,16 +358,19 @@ function BookView() {
   // Remember book (original) pane scroll per page when switching to guide so we can restore when switching back
   const [bookScrollPositionByPage, setBookScrollPositionByPage] = useState({});
 
-  // --- NEW State for Page-Specific Reading Guide ---
-  const [currentPageGuide, setCurrentPageGuide] = useState(null); // Stores the guide content string
+  // Whole-book reading roadmap state
+  const [readingRoadmap, setReadingRoadmap] = useState(null);
   const [guideLoading, setGuideLoading] = useState(false);
   const [guideError, setGuideError] = useState(null);
-  const [hasGuideForCurrentPage, setHasGuideForCurrentPage] = useState(false);
+  const [hasRoadmap, setHasRoadmap] = useState(false);
   const [isGeneratingGuide, setIsGeneratingGuide] = useState(false);
-  // --- END NEW State for Page-Specific Reading Guide ---
+  const [completedRoadmapIds, setCompletedRoadmapIds] = useState([]);
+  const [graphLoadingById, setGraphLoadingById] = useState({});
 
   // --- State for Reading Guide Search/Highlight ---
   const [guideSearchText, setGuideSearchText] = useState(null); // Text to search and highlight from reading guide
+  const [guideSearchGlobalOffset, setGuideSearchGlobalOffset] = useState(null); // Stable offset target for guide highlight fallback
+  const [guideSearchEndOffset, setGuideSearchEndOffset] = useState(null); // Stable end offset for exact quote highlight
   const guideSearchHighlightRef = useRef(null); // Ref for the highlighted element to scroll to
   // --- END State for Reading Guide Search/Highlight ---
 
@@ -556,9 +591,10 @@ function BookView() {
       fetchBookmarks();
       // setCurrentPage(1); // This is now handled by the useState initializer
       // setPageInput('1'); // pageInput updates based on currentPage effect
-      setCurrentPageGuide(null); // Clear page-specific guide for new book
+      setReadingRoadmap(null);
       setGuideError(null);
-      setHasGuideForCurrentPage(false);
+      setHasRoadmap(false);
+      setCompletedRoadmapIds([]);
     }
   }, [bookId]);
 
@@ -577,66 +613,46 @@ function BookView() {
     }
   }, [bookId]);
 
-  // --- NEW: Function to fetch page-specific reading guide ---
-  const fetchPageGuide = useCallback(async (pageNumberToFetch) => {
-    if (!bookId || !pageNumberToFetch) return;
-    logger.debug(`[BookView - fetchPageGuide] Fetching guide for page ${pageNumberToFetch}`);
+  const fetchReadingRoadmap = useCallback(async () => {
+    if (!bookId) return;
     setGuideLoading(true);
     setGuideError(null);
-    setCurrentPageGuide(null); // Clear previous guide
-    setHasGuideForCurrentPage(false);
-
     try {
       const token = localStorage.getItem('authToken');
-      if (!token) {
-        throw new Error("Authentication token not found.");
-      }
-      const response = await fetch(`/api/books/${bookId}/pages/${pageNumberToFetch}/reading-guide`, {
-        headers: { 'Authorization': `Bearer ${token}` },
-      });
-      if (!response.ok) {
-        if (response.status === 404) {
-          logger.info(`[BookView - fetchPageGuide] No guide found for page ${pageNumberToFetch}.`);
-          setCurrentPageGuide(null);
-          setHasGuideForCurrentPage(false);
-          // No error state needed for 404, just means no guide exists
-        } else {
-          const errorData = await response.json().catch(() => ({ detail: `HTTP error ${response.status}` }));
-          throw new Error(errorData.detail);
-        }
+      if (!token) throw new Error("Authentication token not found.");
+
+      const [guideResp, progressResp] = await Promise.all([
+        fetch(`/api/books/${bookId}/reading-guide`, {
+          headers: { 'Authorization': `Bearer ${token}` },
+        }),
+        fetch(`/api/books/${bookId}/reading-guide/progress`, {
+          headers: { 'Authorization': `Bearer ${token}` },
+        }),
+      ]);
+
+      if (guideResp.ok) {
+        const data = await guideResp.json();
+        setReadingRoadmap(data);
+        setHasRoadmap(!!(data && data.items && data.items.length > 0));
+      } else if (guideResp.status === 404) {
+        setReadingRoadmap(null);
+        setHasRoadmap(false);
       } else {
-        const data = await response.json();
-        if (data) {
-          // Handle both structured guide (with sections) and simple text guide (backward compatibility)
-          if (data.sections && Array.isArray(data.sections) && data.sections.length > 0) {
-            // Structured guide
-            setCurrentPageGuide({
-              sections: data.sections,
-              document_structure_map: data.document_structure_map || {},
-              content: data.content || "" // Keep content for backward compatibility
-            });
-            setHasGuideForCurrentPage(true);
-            logger.info(`[BookView - fetchPageGuide] Successfully fetched structured guide with ${data.sections.length} sections for page ${pageNumberToFetch}.`);
-          } else if (data.content) {
-            // Simple text guide (backward compatibility)
-            setCurrentPageGuide(data.content);
-            setHasGuideForCurrentPage(true);
-            logger.info(`[BookView - fetchPageGuide] Successfully fetched simple text guide for page ${pageNumberToFetch}.`);
-          } else {
-            setCurrentPageGuide(null);
-            setHasGuideForCurrentPage(false); 
-            logger.info(`[BookView - fetchPageGuide] Guide endpoint returned OK but no content for page ${pageNumberToFetch}.`);
-          }
-        } else {
-          setCurrentPageGuide(null);
-          setHasGuideForCurrentPage(false);
-        }
+        const e = await guideResp.json().catch(() => ({ detail: `HTTP ${guideResp.status}` }));
+        throw new Error(e.detail || "Failed to load roadmap");
+      }
+
+      if (progressResp.ok) {
+        const progressData = await progressResp.json();
+        setCompletedRoadmapIds(progressData.completed_ids || []);
+      } else {
+        setCompletedRoadmapIds([]);
       }
     } catch (err) {
-      logger.error(`[BookView - fetchPageGuide] Failed to fetch guide for page ${pageNumberToFetch}:`, err);
+      logger.error("[BookView - fetchReadingRoadmap] Failed:", err);
       setGuideError(err.message);
-      setCurrentPageGuide(null);
-      setHasGuideForCurrentPage(false);
+      setReadingRoadmap(null);
+      setHasRoadmap(false);
     } finally {
       setGuideLoading(false);
     }
@@ -669,10 +685,9 @@ function BookView() {
     }
   }, [bookId]);
 
-  // --- NEW: Function to generate/regenerate page-specific reading guide ---
-  const handleGeneratePageGuide = async () => {
-    if (!bookId || !currentPage) return;
-    logger.info(`[BookView - handleGeneratePageGuide] Generating guide for current page: ${currentPage}`);
+  const handleGenerateRoadmap = async () => {
+    if (!bookId) return;
+    logger.info(`[BookView - handleGenerateRoadmap] Generating roadmap for book: ${bookId}`);
     setIsGeneratingGuide(true);
     setGuideError(null);
 
@@ -681,46 +696,82 @@ function BookView() {
       if (!token) {
         throw new Error("Authentication token not found.");
       }
-      const response = await fetch(`/api/books/${bookId}/pages/${currentPage}/reading-guide`, {
+      const response = await fetch(`/api/books/${bookId}/reading-guide`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ guide_type: 'summary' }),
       });
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ detail: `HTTP error ${response.status}` }));
         throw new Error(errorData.detail);
       }
       const data = await response.json();
-      if (data) {
-        // Handle both structured guide (with sections) and simple text guide (backward compatibility)
-        if (data.sections && Array.isArray(data.sections) && data.sections.length > 0) {
-          // Structured guide
-          setCurrentPageGuide({
-            sections: data.sections,
-            document_structure_map: data.document_structure_map || {},
-            content: data.content || "" // Keep content for backward compatibility
-          });
-          setHasGuideForCurrentPage(true);
-          logger.info(`[BookView - handleGeneratePageGuide] Successfully generated structured guide with ${data.sections.length} sections for page ${currentPage}.`);
-        } else if (data.content) {
-          // Simple text guide (backward compatibility)
-          setCurrentPageGuide(data.content);
-          setHasGuideForCurrentPage(true);
-          logger.info(`[BookView - handleGeneratePageGuide] Successfully generated simple text guide for page ${currentPage}.`);
-        } else {
-          throw new Error("Generated guide content was not received correctly.");
-        }
-      } else {
-        throw new Error("Generated guide content was not received correctly.");
-      }
+      setReadingRoadmap(data || null);
+      setHasRoadmap(!!(data && data.items && data.items.length > 0));
+      await fetchReadingRoadmap();
     } catch (err) {
-      logger.error(`[BookView - handleGeneratePageGuide] Failed to generate guide for page ${currentPage}:`, err);
+      logger.error(`[BookView - handleGenerateRoadmap] Failed to generate roadmap:`, err);
       setGuideError(err.message);
     } finally {
       setIsGeneratingGuide(false);
+    }
+  };
+
+  const handleToggleRoadmapProgress = async (itemId, completed) => {
+    if (!bookId || !itemId) return;
+    try {
+      const token = localStorage.getItem('authToken');
+      if (!token) throw new Error("Authentication token not found.");
+      const response = await fetch(`/api/books/${bookId}/reading-guide/progress`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ item_id: itemId, completed }),
+      });
+      if (!response.ok) return;
+      const data = await response.json();
+      setCompletedRoadmapIds(data.completed_ids || []);
+    } catch (err) {
+      logger.error("[BookView - handleToggleRoadmapProgress] Failed:", err);
+    }
+  };
+
+  const handleGenerateCardGraph = async (cardId) => {
+    if (!bookId || !cardId) return;
+    setGraphLoadingById((prev) => ({ ...prev, [cardId]: true }));
+    try {
+      const token = localStorage.getItem('authToken');
+      if (!token) throw new Error("Authentication token not found.");
+      const response = await fetch(`/api/books/${bookId}/reading-guide/cards/${encodeURIComponent(cardId)}/graph`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+        throw new Error(errorData.detail || "Failed to generate graph");
+      }
+      const data = await response.json();
+      const graphUrl = data.graph_image_url;
+      if (graphUrl) {
+        const setGraph = (nodes) => (nodes || []).map((n) => ({
+          ...n,
+          graph_image_url: n.id === cardId ? graphUrl : n.graph_image_url,
+          children: setGraph(n.children),
+        }));
+        setReadingRoadmap((prev) => {
+          if (!prev) return prev;
+          return { ...prev, items: setGraph(prev.items) };
+        });
+      }
+    } catch (err) {
+      logger.error("[BookView - handleGenerateCardGraph] Failed:", err);
+      setGuideError(err.message);
+    } finally {
+      setGraphLoadingById((prev) => ({ ...prev, [cardId]: false }));
     }
   };
 
@@ -748,88 +799,104 @@ function BookView() {
   // --- END NEW Handler ---
 
   // --- NEW: Enhanced handler for TextLink objects with smooth scrolling and highlighting ---
-  const handleGuideTextLink = useCallback((textLink, highlightMode = 'smooth') => {
+  const handleGuideTextLink = useCallback((textLink) => {
     if (!textLink || typeof textLink !== 'object') {
       logger.warn('[BookView - handleGuideTextLink] Invalid textLink provided');
       return;
     }
 
-    const { start_offset, end_offset, preview_text, context_before, context_after } = textLink;
-    
-    logger.info(`[BookView - handleGuideTextLink] Navigating to offset ${start_offset} with preview: "${preview_text?.substring(0, 50)}..."`);
-    
+    const { start_offset, end_offset, preview_text, key_quote } = textLink;
+    let navigationOffset = start_offset;
+
+    // Some guide ranges begin at a chunk boundary that can include trailing text
+    // from the previous sentence. Nudge navigation forward by one sentence when possible.
+    if (fullMarkdownContent && typeof start_offset === 'number' && start_offset >= 0 && start_offset < fullMarkdownContent.length) {
+      const lookahead = fullMarkdownContent.slice(start_offset, start_offset + 320);
+      const sentenceBoundary = lookahead.match(/[.!?]\s+/);
+      if (sentenceBoundary && typeof sentenceBoundary.index === 'number') {
+        const candidateOffset = start_offset + sentenceBoundary.index + sentenceBoundary[0].length;
+        if (candidateOffset > start_offset && candidateOffset < fullMarkdownContent.length) {
+          navigationOffset = candidateOffset;
+        }
+      }
+    }
+
+    // Prefer quote highlight text first, then infer from source offset, then fall back to preview.
+    let textToHighlight = key_quote ? String(key_quote).replace(/\s+/g, ' ').trim() : null;
+    if (!textToHighlight && fullMarkdownContent && start_offset >= 0 && start_offset < fullMarkdownContent.length) {
+      // Keep extraction bounded and normalize whitespace so regex search stays stable.
+      const fromOffset = fullMarkdownContent.slice(start_offset, start_offset + 500);
+      const firstSentenceMatch = fromOffset.match(/^[^.!?]*[.!?]?/);
+      textToHighlight = firstSentenceMatch ? firstSentenceMatch[0].trim() : null;
+      if (textToHighlight) {
+        textToHighlight = textToHighlight.replace(/\s+/g, ' ').trim();
+      }
+    }
+    if (!textToHighlight && preview_text) {
+      const m = preview_text.trim().match(/^[^.!?]*[.!?]?/);
+      textToHighlight = m ? m[0].trim() : preview_text.trim();
+      textToHighlight = textToHighlight.replace(/\s+/g, ' ').trim();
+    }
+    if (textToHighlight) setGuideSearchText(textToHighlight);
+    setGuideSearchGlobalOffset(
+      typeof navigationOffset === 'number' && !isNaN(navigationOffset) ? navigationOffset : null
+    );
+    const hasUsableExactRange =
+      typeof start_offset === 'number' &&
+      !isNaN(start_offset) &&
+      typeof end_offset === 'number' &&
+      !isNaN(end_offset) &&
+      end_offset > start_offset &&
+      (end_offset - start_offset) <= 600;
+    setGuideSearchEndOffset(hasUsableExactRange ? end_offset : null);
+
+    logger.info(`[BookView - handleGuideTextLink] Navigating to offset ${navigationOffset} (raw: ${start_offset}) with preview: "${preview_text?.substring(0, 50)}..."`);
+
     // 1. Navigate to correct page if needed
     if (pageBoundaries && pageBoundaries.length > 0) {
-      const pageInfo = getPageForOffset(start_offset, pageBoundaries);
-      
+      const pageInfo = getPageForOffset(navigationOffset, pageBoundaries);
+
       if (pageInfo && pageInfo.pageNumber !== currentPage) {
-        logger.info(`[BookView - handleGuideTextLink] Switching to page ${pageInfo.pageNumber} for offset ${start_offset}`);
+        logger.info(`[BookView - handleGuideTextLink] Switching to page ${pageInfo.pageNumber} for offset ${navigationOffset}`);
         isProgrammaticScroll.current = true;
         setCurrentPage(pageInfo.pageNumber);
         refreshImageUrls();
-        // Store pending link to execute after page loads
         setPendingScrollOffsetInPage(pageInfo.offsetInPage);
-        setScrollToGlobalOffset(start_offset);
+        setScrollToGlobalOffset(navigationOffset);
         setTimeout(() => {
           isProgrammaticScroll.current = false;
         }, 300);
         return;
       }
     }
-    
-    // 2. Scroll to exact offset with highlighting
-    if (start_offset !== null && start_offset !== undefined && !isNaN(start_offset)) {
-      setScrollToGlobalOffset(start_offset);
-      
-      // If we have preview text, also set it for highlighting
-      if (preview_text) {
-        setGuideSearchText(preview_text.trim());
-      }
-    }
-    
-  }, [currentPage, pageBoundaries, refreshImageUrls]);
 
-  // --- Handler for searching and highlighting text from reading guide (legacy support) ---
-  const handleGuideTextSearch = (searchText, globalOffset) => {
-    logger.info(`[BookView - handleGuideTextSearch] Searching for text: "${searchText?.substring(0, 50)}..." with offset: ${globalOffset}`);
-    
-    if (!searchText || searchText.trim().length === 0) {
-      logger.warn(`[BookView - handleGuideTextSearch] Empty search text provided`);
-      // Fall back to offset-based navigation if no search text
-      if (globalOffset !== null && globalOffset !== undefined && !isNaN(globalOffset)) {
-        handleStructureItemClick(globalOffset);
-      }
+    // 2. Same page: scroll to exact offset
+    if (navigationOffset != null && !isNaN(navigationOffset)) {
+      setScrollToGlobalOffset(navigationOffset);
+    }
+  }, [currentPage, pageBoundaries, refreshImageUrls, fullMarkdownContent]);
+
+  // Effect to fetch whole-book roadmap when entering guide mode
+  useEffect(() => {
+    if (bookId && viewMode === 'guide') {
+      fetchReadingRoadmap();
+    } else if (viewMode !== 'guide') {
+      setGuideError(null);
+    }
+  }, [bookId, fetchReadingRoadmap, viewMode]);
+
+  // Clear floating "Back to Guide" only when user manually navigates pages, NOT when page changed due to "View in original text"
+  const prevPageRef = useRef(currentPage);
+  useEffect(() => {
+    if (navigatingFromGuideTextLinkRef.current) {
+      navigatingFromGuideTextLinkRef.current = false;
+      prevPageRef.current = currentPage;
       return;
     }
-
-    // Clean the search text - remove extra whitespace and normalize
-    const cleanSearchText = searchText.trim().replace(/\s+/g, ' ');
-    
-    // Set the search text to trigger highlighting
-    setGuideSearchText(cleanSearchText);
-    
-    // Also set scroll offset as fallback
-    if (globalOffset !== null && globalOffset !== undefined && !isNaN(globalOffset)) {
-      setScrollToGlobalOffset(globalOffset);
+    if (prevPageRef.current !== currentPage) {
+      setShowBackToGuide(false);
+      prevPageRef.current = currentPage;
     }
-    
-  };
-  // --- END NEW Handler ---
-
-  // Effect to fetch page guide when currentPage or bookId changes, if pane is visible
-  useEffect(() => {
-    if (bookId && currentPage && viewMode === 'guide') {
-      fetchPageGuide(currentPage);
-    } else if (viewMode !== 'guide') {
-      setCurrentPageGuide(null);
-      setGuideError(null);
-      setHasGuideForCurrentPage(false);
-    }
-  }, [bookId, currentPage, fetchPageGuide, viewMode]);
-
-  // Clear floating "Back to Guide" when user navigates to a different page (guide scroll is remembered per page)
-  useEffect(() => {
-    setShowBackToGuide(false);
   }, [currentPage]);
 
   // Persist reading guide scroll position as user scrolls (debounced) so it is remembered per page
@@ -855,6 +922,13 @@ function BookView() {
       cleanup();
     };
   }, [viewMode, currentPage]);
+
+  // Clear guideScrollToRestoreOnBack when leaving guide (user switched to original), so next guide visit uses per-page scroll
+  useEffect(() => {
+    if (viewMode === 'original' && guideScrollToRestoreOnBack != null) {
+      setGuideScrollToRestoreOnBack(null);
+    }
+  }, [viewMode]);
 
   // Restore book (original) pane scroll when switching from Guide back to Original
   useEffect(() => {
@@ -1082,7 +1156,25 @@ function BookView() {
       // Add guide search highlight if search text is provided
       // Note: If the text is on a different page, scrollToGlobalOffset will handle navigation
       // and this effect will re-run with the correct page content
-      if (guideSearchText && guideSearchText.trim().length > 0) {
+      if (
+        guideSearchGlobalOffset !== null &&
+        guideSearchGlobalOffset !== undefined &&
+        guideSearchEndOffset !== null &&
+        guideSearchEndOffset !== undefined &&
+        guideSearchEndOffset > guideSearchGlobalOffset
+      ) {
+        const exactStart = guideSearchGlobalOffset - pageStartGlobalOffset;
+        const exactEnd = guideSearchEndOffset - pageStartGlobalOffset;
+        if (exactStart >= 0 && exactStart < plainPageText.length) {
+          highlights.push({
+            start: exactStart,
+            end: Math.min(exactEnd, plainPageText.length),
+            type: 'guide-search',
+            text: plainPageText.substring(exactStart, Math.min(exactEnd, plainPageText.length)),
+          });
+          logger.info(`[BookView - Page Content Effect] Applied exact guide highlight ${exactStart}-${Math.min(exactEnd, plainPageText.length)} on page ${validCurrentPage}`);
+        }
+      } else if (guideSearchText && guideSearchText.trim().length > 0) {
         const cleanSearchText = guideSearchText.trim().replace(/\s+/g, ' ');
         // Try to find the search text in the current page
         // Use case-insensitive search and handle variations in whitespace
@@ -1107,8 +1199,9 @@ function BookView() {
         if (searchMatches.length > 0) {
           // If we have a global offset, try to find the match closest to it
           let bestMatch = searchMatches[0];
-          if (scrollToGlobalOffset !== null && scrollToGlobalOffset !== undefined) {
-            const expectedOffsetInPage = scrollToGlobalOffset - pageStartGlobalOffset;
+          const expectedGlobalOffset = (guideSearchGlobalOffset ?? scrollToGlobalOffset);
+          if (expectedGlobalOffset !== null && expectedGlobalOffset !== undefined) {
+            const expectedOffsetInPage = expectedGlobalOffset - pageStartGlobalOffset;
             // Only consider matches that are reasonably close to the expected offset (within 500 chars)
             const closeMatches = searchMatches.filter(m => Math.abs(m.start - expectedOffsetInPage) < 500);
             if (closeMatches.length > 0) {
@@ -1128,12 +1221,27 @@ function BookView() {
           logger.info(`[BookView - Page Content Effect] Found guide search text at position ${bestMatch.start} in page ${validCurrentPage} (${searchMatches.length} total matches)`);
         } else {
           // If not found on current page, check if we're waiting for page navigation
-          if (scrollToGlobalOffset !== null && scrollToGlobalOffset !== undefined) {
-            const expectedOffsetInPage = scrollToGlobalOffset - pageStartGlobalOffset;
+          const expectedGlobalOffset = (guideSearchGlobalOffset ?? scrollToGlobalOffset);
+          if (expectedGlobalOffset !== null && expectedGlobalOffset !== undefined) {
+            const expectedOffsetInPage = expectedGlobalOffset - pageStartGlobalOffset;
             if (expectedOffsetInPage < 0 || expectedOffsetInPage >= plainPageText.length) {
               logger.info(`[BookView - Page Content Effect] Guide search text not on current page ${validCurrentPage}, waiting for navigation to correct page`);
             } else {
-              logger.warn(`[BookView - Page Content Effect] Guide search text not found in page ${validCurrentPage} at expected location: "${cleanSearchText.substring(0, 50)}"`);
+              // Fallback: use expected offset to highlight the first sentence-sized chunk.
+              const safeStart = Math.max(0, Math.min(expectedOffsetInPage, plainPageText.length - 1));
+              const tail = plainPageText.slice(safeStart, safeStart + 240);
+              const sentenceEnd = tail.match(/[.!?](\s|$)/);
+              const fallbackLen = sentenceEnd && typeof sentenceEnd.index === 'number'
+                ? Math.max(20, sentenceEnd.index + 1)
+                : Math.max(20, Math.min(120, tail.length));
+              const safeEnd = Math.max(safeStart + 1, Math.min(plainPageText.length, safeStart + fallbackLen));
+              highlights.push({
+                start: safeStart,
+                end: safeEnd,
+                type: 'guide-search',
+                text: plainPageText.substring(safeStart, safeEnd)
+              });
+              logger.info(`[BookView - Page Content Effect] Guide-search text fallback highlight at ${safeStart}-${safeEnd} on page ${validCurrentPage}`);
             }
           } else {
             logger.warn(`[BookView - Page Content Effect] Guide search text not found in page ${validCurrentPage}: "${cleanSearchText.substring(0, 50)}"`);
@@ -1164,7 +1272,13 @@ function BookView() {
           if (highlight.type === 'note') {
             const textToHighlight = plainPageText.substring(highlight.start, Math.min(highlight.end, plainPageText.length));
             if (textToHighlight) {
-              highlightedText += `<mark class="note-highlight" data-note-id="${highlight.id}">${textToHighlight}</mark>`;
+              const escapedText = textToHighlight
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+              highlightedText += `<mark class="note-highlight" data-note-id="${highlight.id}">${escapedText}</mark>`;
             }
           } else if (highlight.type === 'guide-search') {
             const textToHighlight = plainPageText.substring(highlight.start, Math.min(highlight.end, plainPageText.length));
@@ -1190,11 +1304,6 @@ function BookView() {
         setHighlightedPageContent(highlightedText);
       } else {
         setHighlightedPageContent(plainPageText);
-      }
-      
-      // Clear guide search when page changes (unless it's a programmatic page change for search)
-      if (guideSearchText && scrollToGlobalOffset === null) {
-        setGuideSearchText(null);
       }
       
       if (bookPaneContainerRef.current && viewMode === 'original') {
@@ -1232,7 +1341,7 @@ function BookView() {
       setCurrentPageContent('');
       setHighlightedPageContent('');
     }
-  }, [fullMarkdownContent, currentPage, notes, pendingScrollOffsetInPage, pendingScrollToPercentage, guideSearchText, scrollToGlobalOffset, viewMode]);
+  }, [fullMarkdownContent, currentPage, notes, pendingScrollOffsetInPage, pendingScrollToPercentage, guideSearchText, guideSearchGlobalOffset, guideSearchEndOffset, scrollToGlobalOffset, viewMode]);
 
 
   // Effect to apply initial scroll once content is ready
@@ -1532,9 +1641,9 @@ function BookView() {
 
   // Effect for scrolling to a note when scrollToGlobalOffset changes
   useEffect(() => {
-    if (scrollToGlobalOffset === null || !fullMarkdownContent || pageBoundaries.length === 0) { // Check pageBoundaries
+    if (viewMode !== 'original' || scrollToGlobalOffset === null || !fullMarkdownContent || pageBoundaries.length === 0) { // Check pageBoundaries
       if (scrollToGlobalOffset !== null) {
-        logger.debug(`[ScrollToNoteEffect] Aborting: scrollToGlobalOffset=${scrollToGlobalOffset}, fullMarkdownContent=${!!fullMarkdownContent}, pageBoundaries.length=${pageBoundaries.length}`);
+        logger.debug(`[ScrollToNoteEffect] Aborting: viewMode=${viewMode}, scrollToGlobalOffset=${scrollToGlobalOffset}, fullMarkdownContent=${!!fullMarkdownContent}, pageBoundaries.length=${pageBoundaries.length}`);
       }
       return;
     }
@@ -1668,7 +1777,15 @@ function BookView() {
               
               const highlightRange = document.createRange();
               highlightRange.setStart(textNode, startOffsetInNodeRendered);
-              highlightRange.setEnd(textNode, Math.min(nodeRenderedLength, startOffsetInNodeRendered + 5)); 
+              const remainingNodeText = nodeTextContent.slice(startOffsetInNodeRendered);
+              const sentenceEndMatch = remainingNodeText.match(/[.!?](\s|$)/);
+              let highlightLen = 80;
+              if (sentenceEndMatch && typeof sentenceEndMatch.index === 'number') {
+                highlightLen = Math.max(20, sentenceEndMatch.index + 1);
+              } else {
+                highlightLen = Math.max(20, Math.min(120, remainingNodeText.length));
+              }
+              highlightRange.setEnd(textNode, Math.min(nodeRenderedLength, startOffsetInNodeRendered + highlightLen));
 
               const highlightSpan = document.createElement('span');
               highlightSpan.className = 'highlighted-note-scroll-target'; 
@@ -1741,10 +1858,13 @@ function BookView() {
         setScrollToGlobalOffset(null);
     }
 
-  }, [scrollToGlobalOffset, fullMarkdownContent, currentPage, currentPageContent, pageBoundaries]); // Added pageBoundaries
+  }, [scrollToGlobalOffset, fullMarkdownContent, currentPage, currentPageContent, pageBoundaries, viewMode]); // Added pageBoundaries
 
 
   useEffect(() => {
+    if (viewMode !== 'original') {
+      return;
+    }
     // This effect handles scrolling when a page changes due to a note click (scrollToGlobalOffset)
     // pendingScrollOffsetInPage is the RAW character offset within the NEWLY loaded currentPageContent
     if (pendingScrollOffsetInPage !== null && bookPaneContainerRef.current && (currentPageContent.length > 0 || pendingScrollOffsetInPage === 0) && pageBoundaries.length > 0) {
@@ -1846,11 +1966,11 @@ function BookView() {
         setTimeout(() => { isProgrammaticScroll.current = false; }, 300);
         setPendingScrollOffsetInPage(null);
     }
-  }, [currentPageContent, pendingScrollOffsetInPage, pageBoundaries, currentPage]); // Added pageBoundaries, currentPage for setBookScrollPositionByPage
+  }, [currentPageContent, pendingScrollOffsetInPage, pageBoundaries, currentPage, viewMode]); // Added pageBoundaries, currentPage for setBookScrollPositionByPage
 
   // Effect to scroll to guide search highlight after content is rendered
   useEffect(() => {
-    if (guideSearchText && bookPaneContainerRef.current && highlightedPageContent) {
+    if ((guideSearchText || guideSearchGlobalOffset !== null) && bookPaneContainerRef.current && highlightedPageContent) {
       // Small delay to ensure DOM is updated with highlighted content
       const scrollTimeout = setTimeout(() => {
         const highlightElement = bookPaneContainerRef.current?.querySelector('.guide-search-highlight');
@@ -1866,7 +1986,18 @@ function BookView() {
       
       return () => clearTimeout(scrollTimeout);
     }
-  }, [guideSearchText, highlightedPageContent]);
+  }, [guideSearchText, guideSearchGlobalOffset, highlightedPageContent]);
+
+  // Keep guide highlight around long enough to be visible, then clear it.
+  useEffect(() => {
+    if (!guideSearchText && guideSearchGlobalOffset === null) return undefined;
+    const cleanupTimer = setTimeout(() => {
+      setGuideSearchText(null);
+      setGuideSearchGlobalOffset(null);
+      setGuideSearchEndOffset(null);
+    }, 8000);
+    return () => clearTimeout(cleanupTimer);
+  }, [guideSearchText, guideSearchGlobalOffset]);
 
   useEffect(() => {
     // This effect applies scrolling when a pendingScrollToPercentage is set,
@@ -2406,27 +2537,32 @@ function BookView() {
             <div className="book-pane-container" ref={bookPaneContainerRef}>
               {viewMode === 'guide' ? (
                 <ReadingGuidePane
-                  guideContent={currentPageGuide}
-                  onGenerateGuide={handleGeneratePageGuide}
+                  roadmap={readingRoadmap}
+                  completedIds={completedRoadmapIds}
+                  onGenerateRoadmap={handleGenerateRoadmap}
+                  onToggleProgress={handleToggleRoadmapProgress}
                   isLoading={guideLoading}
                   error={guideError}
                   isVisible={true}
-                  hasGuideForCurrentPage={hasGuideForCurrentPage}
+                  hasRoadmap={hasRoadmap}
                   isGenerating={isGeneratingGuide}
-                  onStructureItemClick={handleStructureItemClick}
-                  onGuideTextSearch={handleGuideTextSearch}
                   onGuideTextLink={(textLink) => {
-                    if (guideScrollContainerRef.current) setGuideScrollPositionByPage(prev => ({ ...prev, [currentPage]: guideScrollContainerRef.current.scrollTop }));
+                    const scrollTop = guideScrollContainerRef.current?.scrollTop ?? 0;
+                    setGuideScrollPositionByPage(prev => ({ ...prev, [currentPage]: scrollTop }));
+                    setGuideScrollToRestoreOnBack(scrollTop);
+                    navigatingFromGuideTextLinkRef.current = true;
                     setShowBackToGuide(true);
                     setViewMode('original');
                     handleGuideTextLink(textLink);
                   }}
+                  onGenerateGraph={handleGenerateCardGraph}
+                  graphLoadingById={graphLoadingById}
                   onSwitchToOriginal={() => {
                     if (guideScrollContainerRef.current) setGuideScrollPositionByPage(prev => ({ ...prev, [currentPage]: guideScrollContainerRef.current.scrollTop }));
                     setViewMode('original');
                   }}
                   scrollContainerRef={guideScrollContainerRef}
-                  scrollPositionToRestore={guideScrollPositionByPage[currentPage] ?? 0}
+                  scrollPositionToRestore={guideScrollToRestoreOnBack ?? guideScrollPositionByPage[currentPage] ?? 0}
                   embedInMainArea={true}
                 />
               ) : (

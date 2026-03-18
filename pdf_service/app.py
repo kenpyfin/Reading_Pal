@@ -652,15 +652,23 @@ _paddle_ocr_instance: Optional[PaddleOCR] = None
 
 
 def get_paddle_ocr(use_gpu: bool = True) -> PaddleOCR:
-    """Lazy-initialize and return a single PaddleOCR instance (GPU)."""
+    """Lazy-initialize and return a single PaddleOCR instance (GPU or CPU)."""
     global _paddle_ocr_instance
     if _paddle_ocr_instance is None:
-        _paddle_ocr_instance = PaddleOCR(
-            use_angle_cls=True,
-            lang=PDF_OCR_LANG,
-            use_gpu=use_gpu,
-            show_log=False,
-        )
+        # PaddleOCR 3.x uses device instead of use_gpu; show_log was removed.
+        device = "gpu:0" if use_gpu else "cpu"
+        base_kwargs: dict = {
+            "lang": PDF_OCR_LANG,
+            "device": device,
+        }
+        # use_angle_cls may be unsupported in some 3.x releases; omit if it causes errors
+        try:
+            _paddle_ocr_instance = PaddleOCR(use_angle_cls=True, **base_kwargs)
+        except ValueError as exc:
+            if "Unknown argument: use_angle_cls" in str(exc):
+                _paddle_ocr_instance = PaddleOCR(**base_kwargs)
+            else:
+                raise
     return _paddle_ocr_instance
 
 

@@ -18,6 +18,11 @@ function BookList() {
   const [deletingId, setDeletingId] = useState(null);
   const [renamingId, setRenamingId] = useState(null); // New state for rename operation
   const [hoveredBookId, setHoveredBookId] = useState(null); // New state for hover
+  
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalBooks, setTotalBooks] = useState(0);
+  const PAGE_SIZE = 10;
 
   // --- Style definitions for buttons and actions container ---
   const actionsContainerBaseStyle = {
@@ -120,7 +125,8 @@ function BookList() {
       console.log("[BookList.js SRC CONSOLE.LOG] Request headers being sent to /api/books/:", JSON.stringify(requestHeaders));
 
       try {
-          const response = await fetch('/api/books/', {
+          const skip = (currentPage - 1) * PAGE_SIZE;
+          const response = await fetch(`/api/books/?skip=${skip}&limit=${PAGE_SIZE}`, {
               headers: requestHeaders
           });
           if (!response.ok) {
@@ -135,6 +141,13 @@ function BookList() {
               }
               throw new Error(`HTTP error! status: ${response.status} - ${detail}`);
           }
+          
+          // Get total count from header
+          const totalCount = response.headers.get('X-Total-Count');
+          if (totalCount !== null) {
+              setTotalBooks(parseInt(totalCount, 10));
+          }
+
           const data = await response.json();
           console.log(`[BookList.js SRC CONSOLE.LOG] Successfully fetched ${data.length} books.`);
           const activeBooks = data.filter(book => book.status !== 'failed');
@@ -171,7 +184,7 @@ function BookList() {
     setLoading(true); // Set loading true only on initial mount fetch
     setError(null);
     fetchBooks();
-  }, []);
+  }, [currentPage]); // Re-fetch when page changes
 
   useEffect(() => {
       const pollableBooks = books.filter(book =>
@@ -429,15 +442,59 @@ function BookList() {
           ))}
         </ul>
       )}
-      <div className="upload-link-container" style={{ marginTop: '25px' }}>
+      <div className="pagination-container" style={{ 
+          marginTop: '25px', 
+          display: 'flex', 
+          alignItems: 'center', 
+          gap: '15px' 
+      }}>
+          <button 
+              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+              disabled={currentPage === 1}
+              style={{
+                  ...baseButtonStyle,
+                  opacity: currentPage === 1 ? 0.5 : 1,
+                  cursor: currentPage === 1 ? 'not-allowed' : 'pointer'
+              }}
+          >
+              Previous
+          </button>
+          
+          <span style={{ fontSize: '14px', color: '#666' }}>
+              Page <strong>{currentPage}</strong> of <strong>{Math.ceil(totalBooks / PAGE_SIZE) || 1}</strong>
+          </span>
+
+          <button 
+              onClick={() => setCurrentPage(p => p + 1)}
+              disabled={currentPage * PAGE_SIZE >= totalBooks}
+              style={{
+                  ...baseButtonStyle,
+                  opacity: currentPage * PAGE_SIZE >= totalBooks ? 0.5 : 1,
+                  cursor: currentPage * PAGE_SIZE >= totalBooks ? 'not-allowed' : 'pointer'
+              }}
+          >
+              Next
+          </button>
+          
+          <span style={{ fontSize: '12px', color: '#999', marginLeft: 'auto' }}>
+              Total: {totalBooks} books
+          </span>
+      </div>
+
+      <div className="upload-link-container" style={{ marginTop: '25px', borderTop: '1px solid #eee', paddingTop: '20px' }}>
          <Link to="/upload" style={{
              display: 'inline-block',
              padding: '10px 15px',
              backgroundColor: '#007bff',
              color: 'white',
              textDecoration: 'none',
-             borderRadius: '4px'
-         }}>Upload a New PDF</Link>
+             borderRadius: '4px',
+             fontWeight: '500',
+             transition: 'background-color 0.2s'
+         }}
+         onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#0056b3'}
+         onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#007bff'}
+         >Upload a New PDF</Link>
       </div>
     </div>
   );

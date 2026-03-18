@@ -50,6 +50,57 @@ class TextLink(BaseModel):
     context_before: Optional[str] = Field(None, description="50 characters of text before the link for context")
     context_after: Optional[str] = Field(None, description="50 characters of text after the link for context")
 
+
+class ReadingGuideItem(BaseModel):
+    """A single item in the whole-book reading roadmap (tree node)."""
+    id: str = Field(..., description="Unique ID for progress tracking (UUID or slug)")
+    title: str = Field(..., description="Section title from document")
+    takeaway: Optional[str] = Field(None, description="Short description or key takeaway from LLM")
+    thought_process: Optional[List[str]] = Field(None, description="Reasoning steps for understanding this section")
+    reading_summary: Optional[str] = Field(None, description="Quick 1-2 sentence absorption summary for this section")
+    reading_bullets: Optional[List[str]] = Field(None, description="Short bullet points for quick reading absorption")
+    start_offset: int = Field(..., description="Character offset in original markdown where this section starts")
+    end_offset: int = Field(..., description="Character offset in original markdown where this section ends")
+    level: int = Field(..., description="Heading level: 1=part, 2=chapter, 3=section, etc.")
+    children: Optional[List["ReadingGuideItem"]] = Field(None, description="Nested items for mindmap hierarchy")
+    preview_text: Optional[str] = Field(None, description="Actual book excerpt for search/highlight (from source content)")
+    key_term: Optional[str] = Field(None, description="Key term for focused highlight (e.g. from critical_definitions)")
+    enriched: Optional[bool] = Field(False, description="True if this item has been enriched with grounded sub-points")
+    key_quote: Optional[str] = Field(None, description="Direct quote or paraphrase from source text (for enriched sub-points)")
+    graph_image_url: Optional[str] = Field(None, description="Signed URL to generated concept graph image")
+    graph_status: Optional[str] = Field(None, description="Graph generation status: idle|generating|ready|failed")
+    graph_prompt: Optional[str] = Field(None, description="Prompt used to generate concept graph")
+
+
+class ReadingGuide(BaseModel):
+    """Whole-book reading roadmap generated from document structure + LLM enrichment."""
+    book_id: PyObjectId = Field(alias="book_id")
+    user_id: str = Field(...)
+    items: List[ReadingGuideItem] = Field(default_factory=list, description="Root-level items (tree)")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    enriched: Optional[bool] = Field(False, description="True if all top-level items have been enriched with grounded sub-points")
+
+    class Config:
+        populate_by_name = True
+        arbitrary_types_allowed = True
+
+
+class ReadingGuideInDB(ReadingGuide):
+    """ReadingGuide as stored in MongoDB with _id."""
+    id: PyObjectId = Field(default_factory=PyObjectId, alias="_id")
+
+
+class ReadingGuideProgressUpdate(BaseModel):
+    """Request body for toggling item completion."""
+    item_id: str = Field(..., description="ID of the roadmap item")
+    completed: bool = Field(..., description="True to mark as read, False to unmark")
+
+
+# Resolve forward reference for ReadingGuideItem children
+ReadingGuideItem.model_rebuild()
+
+
 class KeyConcept(BaseModel):
     """Represents a key concept or main idea with links to original text."""
     concept: str = Field(..., description="The key concept or main idea")

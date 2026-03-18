@@ -12,13 +12,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # App dependencies
 COPY requirements.txt ./
+# Install PaddlePaddle GPU 3.x first so paddleocr does not pull CPU paddle from PyPI.
+# PaddleX/PaddleOCR 3.x require set_optimization_level (Paddle 3.0+). cu126 works with CUDA 12.4 base.
+RUN pip install --no-cache-dir paddlepaddle-gpu==3.0.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu126/
 RUN pip install --no-cache-dir \
     fastapi==0.104.1 python-multipart==0.0.6 uvicorn==0.24.0 python-dotenv \
     requests ollama google-generativeai anthropic \
     pymupdf pdf2image paddleocr
-
-# PaddlePaddle GPU for CUDA 12 (must match base image CUDA)
-RUN pip install --no-cache-dir paddlepaddle-gpu
 
 RUN mkdir -p /app/models
 ENV HOME=/app

@@ -64,7 +64,7 @@ graph LR
     *   A standalone FastAPI service.
     *   Receives PDF files via a `/process-pdf` endpoint (`UploadFile`).
     *   Saves the uploaded PDF temporarily to `PDF_STORAGE_PATH`.
-    *   Uses the `magic_pdf` library (`OCRPipe`) to process the PDF, extract text, and identify images.
+    *   Uses PyMuPDF for text extraction from digital PDFs and PaddleOCR for scanned PDFs.
     *   Extracts images and saves them to the configured `IMAGES_PATH`.
     *   Generates initial Markdown content and then reformats it using a configured LLM (Gemini preferred, fallback to Ollama).
     *   **Rewrites image paths within the Markdown content to be web-accessible (e.g., `/images/image_name.png`) before saving.**
@@ -90,7 +90,7 @@ graph LR
     1.  User uploads PDF via Frontend.
     2.  Frontend sends PDF file to Backend API (`POST /upload-pdf`).
     3.  **Backend forwards the PDF file to the PDF Service's `/process-pdf` endpoint. PDF Service immediately returns a `job_id` and "pending" status. Backend creates a book record in MongoDB with this `job_id` and status.**
-    4.  PDF Service processes the file asynchronously: saves it temporarily, uses `magic_pdf`, extracts/saves images, generates Markdown, reformats Markdown (rewriting image paths to be web-relative like `/images/...`), saves the final Markdown to a file, and cleans up the temporary input file.
+    4.  PDF Service processes the file asynchronously: saves it temporarily, routes through PyMuPDF/PaddleOCR as needed, extracts/saves images, generates Markdown, reformats Markdown (rewriting image paths to be web-relative like `/images/...`), saves the final Markdown to a file, and cleans up the temporary input file.
     5.  **Upon completion/failure, PDF Service sends a callback (POST request) to the Backend's configured callback URL (e.g., `/api/books/callback`) containing the `job_id`, final `status`, and `file_path` (path to the saved markdown file, if successful).**
     6.  **Backend receives the callback, updates the corresponding book record in MongoDB with the new status and the markdown filename (derived from `file_path`).**
     7.  The Frontend UI (book list) reflects the updated status (e.g., 'completed' or 'failed').
@@ -114,7 +114,7 @@ graph LR
 
 *   **Frontend:** React, HTML, CSS/JavaScript, **Nginx (for serving static files and proxying API)**
 *   **Backend:** Python (e.g., FastAPI or Flask), Requests library, PyMongo (MongoDB driver), **Relies on Nginx for static file serving**, **File system access for managing markdown and image files (reading, renaming, deleting via volume mounts).**
-*   **PDF Service:** Python (FastAPI), `magic_pdf`, LLM client library (Anthropic or Ollama)
+*   **PDF Service:** Python (FastAPI), PyMuPDF, PaddleOCR, LLM client library (Anthropic or Ollama)
 *   **Database:** MongoDB
 *   **Configuration:** `.env` files
 

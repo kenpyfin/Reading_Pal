@@ -1,152 +1,169 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import rehypeRaw from 'rehype-raw';
-import remarkMath from 'remark-math';
-import rehypeKatex from 'rehype-katex';
-import 'katex/dist/katex.min.css'; // Import KaTeX CSS
 import './ReadingGuidePane.css';
-import logger from '../utils/logger';
 
-// Component to handle authenticated image loading for app images
-const AuthenticatedImage = ({ src, style, alt }) => {
-  const [imageUrl, setImageUrl] = useState(null);
-  const [error, setError] = useState(false);
-
-  useEffect(() => {
-    const loadImage = async () => {
-      try {
-        const token = localStorage.getItem('authToken');
-        if (!token) {
-          console.warn('[AuthenticatedImage] No authToken found');
-          setError(true);
-          return;
-        }
-
-        // Fetch image with Authorization header
-        const response = await fetch(src, {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        });
-
-        if (!response.ok) {
-          console.error(`[AuthenticatedImage] Failed to load image: ${response.status}`);
-          setError(true);
-          return;
-        }
-
-        // Convert response to blob URL
-        const blob = await response.blob();
-        const url = URL.createObjectURL(blob);
-        setImageUrl(url);
-
-        // Cleanup function
-        return () => {
-          URL.revokeObjectURL(url);
-        };
-      } catch (err) {
-        console.error('[AuthenticatedImage] Error loading image:', err);
-        setError(true);
-      }
-    };
-
-    loadImage();
-  }, [src]);
-
-  if (error) {
-    return <div style={style}>Failed to load image</div>;
-  }
-
-  if (!imageUrl) {
-    return <div style={style}>Loading image...</div>;
-  }
-
-  return <img src={imageUrl} alt={alt} style={style} />;
-};
-
-// Simple tooltip component for link previews
-const LinkPreviewTooltip = ({ textLink, children }) => {
-  const [showTooltip, setShowTooltip] = useState(false);
-  const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
-  const linkRef = useRef(null);
-
-  const handleMouseEnter = (e) => {
-    if (textLink && textLink.preview_text) {
-      const rect = e.currentTarget.getBoundingClientRect();
-      const centerX = rect.left + rect.width / 2;
-      const padding = 16;
-      const maxHalfWidth = 200; // tooltip max-width is 400px in CSS
-      const minX = padding + maxHalfWidth;
-      const maxX = typeof window !== 'undefined' ? window.innerWidth - padding - maxHalfWidth : centerX;
-      const clampedX = Math.max(minX, Math.min(centerX, maxX));
-      setTooltipPosition({
-        x: clampedX,
-        y: rect.top - 10
-      });
-      setShowTooltip(true);
+function countItems(items) {
+  let count = 0;
+  const walk = (nodes) => {
+    if (!nodes || !Array.isArray(nodes)) return;
+    for (const n of nodes) {
+      count += 1;
+      walk(n.children);
     }
   };
+  walk(items);
+  return count;
+}
 
-  const handleMouseLeave = () => {
-    setShowTooltip(false);
+function RoadmapCard({
+  item,
+  completedIds,
+  onToggleProgress,
+  onGuideTextLink,
+  onGenerateGraph,
+  graphLoadingById,
+  onOpenGraphImage,
+  depth = 0,
+}) {
+  const [expanded, setExpanded] = useState(depth < 2);
+  const hasChildren = item.children && item.children.length > 0;
+  const isCompleted = completedIds.includes(item.id);
+  const isGraphLoading = !!graphLoadingById[item.id];
+
+  const handleViewOriginal = () => {
+    if (!onGuideTextLink) return;
+    onGuideTextLink({
+      start_offset: item.start_offset,
+      end_offset: item.end_offset,
+      preview_text: item.preview_text || item.key_quote || item.title,
+      key_quote: item.key_quote || null,
+      context_before: null,
+      context_after: null,
+    });
   };
 
   return (
-    <span
-      ref={linkRef}
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
-      style={{ position: 'relative', display: 'inline-block' }}
-    >
-      {children}
-      {showTooltip && textLink && textLink.preview_text && (
-        <div
-          className="link-preview-tooltip"
-          style={{
-            position: 'fixed',
-            left: `${tooltipPosition.x}px`,
-            top: `${tooltipPosition.y}px`,
-            transform: 'translate(-50%, -100%)',
-            zIndex: 10000,
-          }}
-        >
-          <div className="tooltip-content">
-            {textLink.context_before && (
-              <div className="tooltip-context-before">{textLink.context_before}...</div>
-            )}
-            <div className="tooltip-preview">{textLink.preview_text}</div>
-            {textLink.context_after && (
-              <div className="tooltip-context-after">...{textLink.context_after}</div>
-            )}
-          </div>
-          <div className="tooltip-arrow"></div>
+    <div className="guide-section roadmap-card" style={{ marginLeft: depth * 14 }}>
+      <div className="roadmap-card-header">
+        <div className="roadmap-left">
+          {hasChildren ? (
+            <button className="roadmap-expand-btn" onClick={() => setExpanded((v) => !v)} type="button">
+              {expanded ? '−' : '+'}
+            </button>
+          ) : (
+            <span className="roadmap-expand-spacer" />
+          )}
+          <label className="roadmap-checkbox-label">
+            <input
+              type="checkbox"
+              checked={isCompleted}
+              onChange={(e) => onToggleProgress(item.id, e.target.checked)}
+            />
+          </label>
+          <h4 className="guide-section-title roadmap-title">{item.title}</h4>
+        </div>
+      </div>
+
+      {item.takeaway && (
+        <div className="guide-section-content">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.takeaway}</ReactMarkdown>
         </div>
       )}
-    </span>
+      {item.reading_summary && (
+        <div className="roadmap-reading">
+          <h5 className="roadmap-subtitle">Reading</h5>
+          <p className="roadmap-reading-summary">{item.reading_summary}</p>
+          {Array.isArray(item.reading_bullets) && item.reading_bullets.length > 0 && (
+            <ul className="roadmap-reading-bullets">
+              {item.reading_bullets.map((bullet, idx) => (
+                <li key={`${item.id}-reading-${idx}`}>{bullet}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+      {Array.isArray(item.thought_process) && item.thought_process.length > 0 && (
+        <details className="roadmap-thought-process">
+          <summary>Thought process</summary>
+          <ul>
+            {item.thought_process.map((step, idx) => (
+              <li key={`${item.id}-thought-${idx}`}>{step}</li>
+            ))}
+          </ul>
+        </details>
+      )}
+      {item.key_quote && <blockquote className="roadmap-quote">"{item.key_quote}"</blockquote>}
+
+      <div className="roadmap-card-actions">
+        <button className="guide-section-link" type="button" onClick={handleViewOriginal}>
+          View in original text
+        </button>
+        <button
+          className="guide-section-link secondary"
+          type="button"
+          disabled={isGraphLoading}
+          onClick={() => onGenerateGraph(item.id)}
+        >
+          {isGraphLoading ? 'Generating graph...' : 'Generate Graph'}
+        </button>
+      </div>
+
+      {item.graph_image_url && (
+        <div className="roadmap-graph-wrap">
+          <button
+            type="button"
+            className="roadmap-graph-preview-btn"
+            onClick={() => onOpenGraphImage(item.graph_image_url, item.title)}
+            aria-label={`Open larger graph for ${item.title}`}
+          >
+            <img src={item.graph_image_url} alt={`Concept graph for ${item.title}`} className="roadmap-graph-image" />
+          </button>
+        </div>
+      )}
+
+      {hasChildren && expanded && (
+        <div className="roadmap-children">
+          {item.children.map((child) => (
+            <RoadmapCard
+              key={child.id}
+              item={child}
+              completedIds={completedIds}
+              onToggleProgress={onToggleProgress}
+              onGuideTextLink={onGuideTextLink}
+              onGenerateGraph={onGenerateGraph}
+              graphLoadingById={graphLoadingById}
+              onOpenGraphImage={onOpenGraphImage}
+              depth={depth + 1}
+            />
+          ))}
+        </div>
+      )}
+    </div>
   );
-};
+}
 
 const ReadingGuidePane = ({
-  guideContent,
-  onGenerateGuide,
+  roadmap,
+  completedIds = [],
+  onGenerateRoadmap,
+  onToggleProgress,
+  onGuideTextLink,
+  onGenerateGraph,
+  graphLoadingById = {},
   isLoading,
+  isGenerating,
   error,
   onClose,
   isVisible,
-  hasGuideForCurrentPage,
-  isGenerating,
-  onStructureItemClick,
-  onGuideTextSearch,
-  onGuideTextLink,
   onSwitchToOriginal,
-  scrollContainerRef, // Ref for the scrollable content div (parent can read/restore scroll)
-  scrollPositionToRestore = 0, // Restore this scroll position when mounted (e.g. returning from original view)
+  scrollContainerRef,
+  scrollPositionToRestore = 0,
   embedInMainArea = false,
 }) => {
-  const readingGuidePaneRef = useRef(null);
+  const paneRef = useRef(null);
+  const [selectedGraphImage, setSelectedGraphImage] = useState(null);
 
-  // Restore scroll position when returning to guide view or when guide content changes (e.g. page change)
   useEffect(() => {
     if (scrollPositionToRestore > 0 && scrollContainerRef?.current) {
       const el = scrollContainerRef.current;
@@ -155,75 +172,31 @@ const ReadingGuidePane = ({
       });
       return () => cancelAnimationFrame(raf);
     }
-  }, [scrollPositionToRestore, scrollContainerRef, guideContent]);
+  }, [scrollPositionToRestore, scrollContainerRef, roadmap]);
 
-  if (!embedInMainArea && !isVisible) {
-    return null;
-  }
-
-  const handleGenerateClick = () => {
-    logger.debug('[ReadingGuidePane] Generate/Regenerate button clicked.');
-    if (onGenerateGuide) {
-      onGenerateGuide();
-    }
-  };
-
-  // Function to transform image URIs from Markdown into accessible paths with authentication
-  const transformUri = (uri) => {
-    if (!uri) return uri;
-
-    // Check for absolute URLs (http, https, data URIs) - these should be used as-is.
-    if (/^(https?:|data:)/i.test(uri)) {
-      return uri;
-    }
-
-    let transformedUri = uri;
-
-    // If the URI already starts with /images/, it's correctly formatted.
-    if (uri.startsWith('/images/')) {
-      transformedUri = uri;
-    }
-    // Check if this is an absolute filesystem path that contains /images/app/ or /images/public/
-    // Extract just the /images/... portion
-    else if (uri.includes('/images/app/')) {
-      const imagesAppIndex = uri.indexOf('/images/app/');
-      transformedUri = uri.substring(imagesAppIndex);
-    }
-    else if (uri.includes('/images/public/')) {
-      const imagesPublicIndex = uri.indexOf('/images/public/');
-      transformedUri = uri.substring(imagesPublicIndex);
-    }
-    // If the URI starts with a single slash (but not '/images/'),
-    // prepend /images to make it web-accessible
-    else if (uri.startsWith('/')) {
-      transformedUri = `/images${uri}`;
-    }
-    // For relative paths, prepend /images/
-    else {
-      transformedUri = `/images/${uri}`;
-    }
-
-    // For app images, transform to API endpoint with secret key
-    if (transformedUri.startsWith('/images/app/')) {
-      // Transform to API endpoint and add secret
-      const apiPath = transformedUri.replace('/images/app/', '/api/books/images/app/');
-      // Get secret from environment (REACT_APP_IMAGE_SECRET must be set)
-      const secret = process.env.REACT_APP_IMAGE_SECRET || '';
-      if (secret) {
-        const separator = apiPath.includes('?') ? '&' : '?';
-        transformedUri = `${apiPath}${separator}secret=${encodeURIComponent(secret)}`;
-      } else {
-        transformedUri = apiPath;
+  useEffect(() => {
+    const onEsc = (event) => {
+      if (event.key === 'Escape') {
+        setSelectedGraphImage(null);
       }
+    };
+    if (selectedGraphImage) {
+      document.addEventListener('keydown', onEsc);
     }
+    return () => {
+      document.removeEventListener('keydown', onEsc);
+    };
+  }, [selectedGraphImage]);
 
-    return transformedUri;
-  };
+  if (!embedInMainArea && !isVisible) return null;
+
+  const totalItems = roadmap?.items ? countItems(roadmap.items) : 0;
+  const progressPct = totalItems > 0 ? Math.round((completedIds.length / totalItems) * 100) : 0;
 
   return (
-    <div className={`reading-guide-pane ${isVisible ? 'visible' : ''} ${embedInMainArea ? 'reading-guide-pane-embed' : ''}`} ref={readingGuidePaneRef}>
+    <div className={`reading-guide-pane ${isVisible ? 'visible' : ''} ${embedInMainArea ? 'reading-guide-pane-embed' : ''}`} ref={paneRef}>
       <div className="reading-guide-header">
-        <h3>Reading Guide (Current Page)</h3>
+        <h3>Reading Roadmap</h3>
         <div className="reading-guide-header-actions">
           {embedInMainArea && onSwitchToOriginal && (
             <button onClick={onSwitchToOriginal} className="switch-to-original-btn" aria-label="Switch to original text">
@@ -239,139 +212,71 @@ const ReadingGuidePane = ({
       </div>
 
       <div className="reading-guide-actions">
-        <button
-          onClick={handleGenerateClick}
-          disabled={isLoading || isGenerating}
-          className="generate-guide-btn"
-        >
-          {isGenerating ? 'Generating...' : (hasGuideForCurrentPage ? 'Regenerate Guide' : 'Generate Guide')}
+        <button onClick={onGenerateRoadmap} disabled={isLoading || isGenerating} className="generate-guide-btn">
+          {isGenerating ? 'Generating...' : (roadmap ? 'Regenerate Roadmap' : 'Generate Roadmap')}
         </button>
-      </div>
-      <div className="reading-guide-content" ref={scrollContainerRef}>
-        {isLoading && <p>Loading guide...</p>}
-        {error && <p className="error-message">Error: {error}</p>}
-        {!isLoading && !error && !guideContent && !hasGuideForCurrentPage && (
-          <p>No guide available for this page. Click "Generate Guide" to create one.</p>
-        )}
-        {!isLoading && !error && !guideContent && hasGuideForCurrentPage && (
-          // This case might occur if a guide exists but content is empty string
-          <p>Guide for this page is empty or not yet loaded. Try regenerating.</p>
-        )}
-        {!isLoading && !error && guideContent && (
-          <div className="guide-text-content">
-            {/* Check if guideContent is structured (has sections) or simple text */}
-            {guideContent.sections && Array.isArray(guideContent.sections) && guideContent.sections.length > 0 ? (
-              // Structured guide with sections
-              <div className="structured-guide">
-                {guideContent.sections.map((section, index) => (
-                  <div key={index} className="guide-section">
-                    <h4 className="guide-section-title">{section.section_title || `Section ${index + 1}`}</h4>
-                    {section.key_takeaway && (
-                      <p className="guide-section-key-takeaway">{section.key_takeaway}</p>
-                    )}
-                    <div className="guide-section-content">
-                      <ReactMarkdown
-                        children={section.rewritten_content}
-                        remarkPlugins={[remarkGfm, remarkMath]}
-                        rehypePlugins={[rehypeRaw, rehypeKatex]}
-                        transformImageUri={transformUri}
-                        transformLinkUri={transformUri}
-                      />
-                    </div>
-                    {/* Enhanced linking: Use primary_link if available, fallback to legacy offsets */}
-                    {(section.primary_link || (section.original_start_offset !== undefined && section.original_start_offset !== null)) && (
-                      <LinkPreviewTooltip textLink={section.primary_link}>
-                        <button
-                          className="guide-section-link"
-                          onClick={() => {
-                            // Prefer new TextLink structure
-                            if (section.primary_link && onGuideTextLink) {
-                              onGuideTextLink(section.primary_link);
-                            } else if (onGuideTextSearch) {
-                              // Fallback to legacy search function
-                              const searchText = section.original_text_preview || section.rewritten_content;
-                              const offset = typeof section.original_start_offset === 'number' 
-                                ? section.original_start_offset 
-                                : parseInt(section.original_start_offset, 10);
-                              if (searchText && !isNaN(offset)) {
-                                onGuideTextSearch(searchText, offset);
-                              } else if (!isNaN(offset)) {
-                                // Fallback to offset-only navigation if no preview text
-                                if (onStructureItemClick) {
-                                  onStructureItemClick(offset);
-                                }
-                              } else {
-                                console.warn(`[ReadingGuidePane] Invalid offset for section: ${section.original_start_offset}`);
-                              }
-                            } else if (onStructureItemClick) {
-                              // Fallback to offset-only navigation
-                              const offset = typeof section.original_start_offset === 'number' 
-                                ? section.original_start_offset 
-                                : parseInt(section.original_start_offset, 10);
-                              if (!isNaN(offset)) {
-                                onStructureItemClick(offset);
-                              }
-                            }
-                          }}
-                          onKeyDown={(e) => {
-                            // Keyboard navigation: Enter or Space to activate
-                            if (e.key === 'Enter' || e.key === ' ') {
-                              e.preventDefault();
-                              // Prefer new TextLink structure
-                              if (section.primary_link && onGuideTextLink) {
-                                onGuideTextLink(section.primary_link);
-                              } else if (onGuideTextSearch) {
-                                const searchText = section.original_text_preview || section.rewritten_content;
-                                const offset = typeof section.original_start_offset === 'number' 
-                                  ? section.original_start_offset 
-                                  : parseInt(section.original_start_offset, 10);
-                                if (searchText && !isNaN(offset)) {
-                                  onGuideTextSearch(searchText, offset);
-                                } else if (!isNaN(offset) && onStructureItemClick) {
-                                  onStructureItemClick(offset);
-                                }
-                              } else if (onStructureItemClick) {
-                                const offset = typeof section.original_start_offset === 'number' 
-                                  ? section.original_start_offset 
-                                  : parseInt(section.original_start_offset, 10);
-                                if (!isNaN(offset)) {
-                                  onStructureItemClick(offset);
-                                }
-                              }
-                            }
-                          }}
-                          title={section.primary_link 
-                            ? `View in original text: "${section.primary_link.preview_text.substring(0, 100)}..."`
-                            : `Search and highlight in original text: "${(section.original_text_preview || section.rewritten_content || '').substring(0, 50)}..."`
-                          }
-                          aria-label="Link to original text. Press Enter or Space to activate."
-                          tabIndex={0}
-                        >
-                          <span className="link-icon" aria-hidden="true">🔗</span> View in original text
-                        </button>
-                      </LinkPreviewTooltip>
-                    )}
-                    {section.original_text_preview && (
-                      <div className="guide-section-preview">
-                        <small>Original preview: {section.original_text_preview}</small>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              // Simple text guide (backward compatibility)
-              <ReactMarkdown
-                children={typeof guideContent === 'string' ? guideContent : guideContent.content || ''}
-                remarkPlugins={[remarkGfm, remarkMath]}
-                rehypePlugins={[rehypeRaw, rehypeKatex]}
-                transformImageUri={transformUri}
-                transformLinkUri={transformUri}
-              />
-            )}
+        {totalItems > 0 && (
+          <div className="reading-guide-progress">
+            <span className="progress-text">{completedIds.length} / {totalItems} completed ({progressPct}%)</span>
+            <div className="progress-bar" role="progressbar" aria-valuenow={completedIds.length} aria-valuemin={0} aria-valuemax={totalItems}>
+              <div className="progress-bar-fill" style={{ width: `${progressPct}%` }} />
+            </div>
           </div>
         )}
       </div>
+
+      <div className="reading-guide-content" ref={scrollContainerRef}>
+        {isLoading && <p>Loading roadmap...</p>}
+        {error && <p className="error-message">Error: {error}</p>}
+        {!isLoading && !error && !roadmap && <p>No roadmap generated yet. Click "Generate Roadmap".</p>}
+        {!isLoading && !error && roadmap?.items?.length > 0 && (
+          <div className="structured-guide roadmap-tree">
+            {roadmap.items.map((item) => (
+              <RoadmapCard
+                key={item.id}
+                item={item}
+                completedIds={completedIds}
+                onToggleProgress={onToggleProgress}
+                onGuideTextLink={onGuideTextLink}
+                onGenerateGraph={onGenerateGraph}
+                graphLoadingById={graphLoadingById}
+                onOpenGraphImage={(url, title) => setSelectedGraphImage({ url, title })}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+
+      {selectedGraphImage && (
+        <div className="roadmap-modal-backdrop" role="presentation" onClick={() => setSelectedGraphImage(null)}>
+          <div
+            className="roadmap-image-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Large concept graph preview"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="roadmap-image-modal-header">
+              <h4>{selectedGraphImage.title}</h4>
+              <button
+                type="button"
+                className="roadmap-modal-close"
+                onClick={() => setSelectedGraphImage(null)}
+                aria-label="Close details"
+              >
+                &times;
+              </button>
+            </div>
+            <div className="roadmap-image-modal-body">
+              <img
+                src={selectedGraphImage.url}
+                alt={`Large concept graph for ${selectedGraphImage.title}`}
+                className="roadmap-graph-image-large"
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
