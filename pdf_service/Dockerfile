@@ -17,7 +17,7 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir paddlepaddle-gpu==3.0.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu126/
 RUN pip install --no-cache-dir \
     fastapi==0.104.1 python-multipart==0.0.6 uvicorn==0.24.0 python-dotenv \
-    requests ollama google-generativeai anthropic \
+    requests ollama google-genai anthropic \
     pymupdf pdf2image paddleocr
 
 RUN mkdir -p /app/models

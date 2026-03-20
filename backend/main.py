@@ -38,6 +38,7 @@ app.add_middleware(
     allow_credentials=True, # Important for cookies
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Total-Count"],  # Book list pagination total; readable from fetch() cross-origin
 )
 
 # Get environment variables

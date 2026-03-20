@@ -4,7 +4,7 @@ uvicorn==0.24.0
 python-dotenv
 requests
 ollama
-google-generativeai
+google-genai>=1.0.0
 anthropic
 # PDF rendering and text extraction
 pymupdf

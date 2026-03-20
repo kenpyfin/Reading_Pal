@@ -7,8 +7,8 @@ from typing import Optional, Dict, Any, List
 # Import client libraries for different LLM providers
 from anthropic import Anthropic # Assuming Anthropic is used
 from ollama import AsyncClient # Use AsyncClient for better FastAPI integration
-# Assuming google-generativeai is used for Gemini
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 # Assuming requests is used for DeepSeek (adjust if a specific client library is available)
 import requests
 import json # Import json for DeepSeek requests
@@ -54,13 +54,13 @@ FORMATTING_OLLAMA_BASE_URL = os.getenv("FORMATTING_OLLAMA_BASE_URL") or os.geten
 # Keep these outside the class for singleton pattern
 anthropic_client = None
 deepseek_config = None # For requests, this might just be the API key/URL
-gemini_model = None # Store the GenerativeModel instance
+gemini_client = None
 ollama_client = None
-guide_gemini_model = None
+guide_gemini_client = None
 
 # Initialize formatting-specific LLM clients
 formatting_anthropic_client = None
-formatting_gemini_model = None
+formatting_gemini_client = None
 formatting_ollama_client = None
 
 # --- Use the dedicated variable for Ollama initialization ---
@@ -102,37 +102,25 @@ elif LLM_SERVICE == "deepseek":
 elif LLM_SERVICE == "gemini":
     if GEMINI_API_KEY:
         try:
-            genai.configure(api_key=GEMINI_API_KEY)
-            # Initialize the model, not the client itself
-            # Check if the model exists (synchronous check during init)
-            try:
-                # Use the configured model name
-                gemini_model = genai.GenerativeModel(model_name=LLM_MODEL)
-                # A simple test call might be needed to confirm connectivity/model existence
-                # For now, rely on error handling during actual calls.
-                logger.info(f"Gemini client initialized with model: {LLM_MODEL}.")
-            except Exception as e:
-                 logger.error(f"Failed to initialize Gemini model '{LLM_MODEL}': {e}")
-                 gemini_model = None
+            gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+            logger.info(f"Gemini client initialized with model: {LLM_MODEL}.")
         except Exception as e:
             logger.error(f"Failed to configure Gemini client: {e}")
-            gemini_model = None
+            gemini_client = None
     else:
         logger.warning("GEMINI_API_KEY not set. Gemini LLM service disabled.")
+
+else:
+    logger.warning(f"Unknown or unsupported LLM_SERVICE configured: {LLM_SERVICE}. LLM features may not work.")
 
 # Optional dedicated guide model (currently only Gemini is supported as separate model target).
 if GUIDE_LLM_SERVICE == "gemini" and GUIDE_LLM_GEMINI_API_KEY:
     try:
-        genai.configure(api_key=GUIDE_LLM_GEMINI_API_KEY)
-        guide_gemini_model = genai.GenerativeModel(model_name=GUIDE_LLM_MODEL)
-        logger.info(f"Guide Gemini model initialized: {GUIDE_LLM_MODEL}")
+        guide_gemini_client = genai.Client(api_key=GUIDE_LLM_GEMINI_API_KEY)
+        logger.info(f"Guide Gemini client initialized: {GUIDE_LLM_MODEL}")
     except Exception as e:
-        logger.warning(f"Failed to initialize guide Gemini model '{GUIDE_LLM_MODEL}': {e}")
-        guide_gemini_model = None
-
-
-else:
-    logger.warning(f"Unknown or unsupported LLM_SERVICE configured: {LLM_SERVICE}. LLM features may not work.")
+        logger.warning(f"Failed to initialize guide Gemini client '{GUIDE_LLM_MODEL}': {e}")
+        guide_gemini_client = None
 
 # Initialize formatting-specific LLM clients
 if FORMATTING_LLM_SERVICE == "anthropic" and FORMATTING_ANTHROPIC_API_KEY and FORMATTING_LLM_MODEL:
@@ -144,12 +132,11 @@ if FORMATTING_LLM_SERVICE == "anthropic" and FORMATTING_ANTHROPIC_API_KEY and FO
         formatting_anthropic_client = None
 elif FORMATTING_LLM_SERVICE == "gemini" and FORMATTING_GEMINI_API_KEY and FORMATTING_LLM_MODEL:
     try:
-        genai.configure(api_key=FORMATTING_GEMINI_API_KEY)
-        formatting_gemini_model = genai.GenerativeModel(FORMATTING_LLM_MODEL)
-        logger.info(f"Formatting-specific Gemini model initialized: {FORMATTING_LLM_MODEL}")
+        formatting_gemini_client = genai.Client(api_key=FORMATTING_GEMINI_API_KEY)
+        logger.info(f"Formatting-specific Gemini client initialized: {FORMATTING_LLM_MODEL}")
     except Exception as e:
-        logger.warning(f"Failed to initialize formatting-specific Gemini model: {e}")
-        formatting_gemini_model = None
+        logger.warning(f"Failed to initialize formatting-specific Gemini client: {e}")
+        formatting_gemini_client = None
 elif FORMATTING_LLM_SERVICE == "ollama" and FORMATTING_OLLAMA_BASE_URL and FORMATTING_LLM_MODEL:
     try:
         formatting_ollama_client = AsyncClient(host=FORMATTING_OLLAMA_BASE_URL)
@@ -165,18 +152,19 @@ else:
 
 class LLMService:
     # Corrected the default value for deepseek from 'config' to None
-    def __init__(self, anthropic=None, deepseek=None, gemini=None, ollama=None, guide_gemini=None,
-                 formatting_anthropic=None, formatting_gemini=None, formatting_ollama=None):
+    def __init__(self, anthropic=None, deepseek=None, gemini_client=None, ollama=None, guide_gemini_client=None,
+                 formatting_anthropic=None, formatting_gemini_client=None, formatting_ollama=None):
         self.anthropic_client = anthropic
         self.deepseek_config = deepseek # Store config dict for requests
-        self.gemini_model = gemini # Store the GenerativeModel instance
+        self.gemini_client = gemini_client
         self.ollama_client = ollama
-        self.guide_gemini_model = guide_gemini
+        self.guide_gemini_client = guide_gemini_client
+        self.guide_model_name = GUIDE_LLM_MODEL
         self.service_name = LLM_SERVICE
         self.model_name = LLM_MODEL
         # Formatting-specific clients
         self.formatting_anthropic_client = formatting_anthropic
-        self.formatting_gemini_model = formatting_gemini
+        self.formatting_gemini_client = formatting_gemini_client
         self.formatting_ollama_client = formatting_ollama
         self.formatting_service_name = FORMATTING_LLM_SERVICE
         self.formatting_model_name = FORMATTING_LLM_MODEL
@@ -234,12 +222,10 @@ class LLMService:
                  response_text = response['message']['content'] if response and 'message' in response else "No response from LLM."
                  return self._remove_think_tags(response_text)
 
-            elif self.service_name == "gemini" and self.gemini_model:
-                 # ... (Gemini async client call using full_prompt)
-                 response = await self.gemini_model.generate_content_async(
-                     contents=[
-                         {"role": "user", "parts": [full_prompt]}
-                     ]
+            elif self.service_name == "gemini" and self.gemini_client:
+                 response = await self.gemini_client.aio.models.generate_content(
+                     model=self.model_name,
+                     contents=full_prompt,
                  )
                  response_text = response.text if response and response.text else "No response from LLM."
                  return self._remove_think_tags(response_text)
@@ -322,12 +308,10 @@ class LLMService:
                  response_text = response['message']['content'] if response and 'message' in response else "No summary from LLM."
                  return self._remove_think_tags(response_text)
 
-            elif self.service_name == "gemini" and self.gemini_model:
-                 # Gemini async client call
-                 response = await self.gemini_model.generate_content_async(
-                     contents=[
-                         {"role": "user", "parts": [prompt]}
-                     ]
+            elif self.service_name == "gemini" and self.gemini_client:
+                 response = await self.gemini_client.aio.models.generate_content(
+                     model=self.model_name,
+                     contents=prompt,
                  )
                  response_text = response.text if response and response.text else "No summary from LLM."
                  return self._remove_think_tags(response_text)
@@ -433,7 +417,7 @@ Reformat the following markdown:
         # Determine which LLM to use
         use_formatting = use_formatting_llm and self.formatting_service_name and (
             (self.formatting_service_name == "anthropic" and self.formatting_anthropic_client) or
-            (self.formatting_service_name == "gemini" and self.formatting_gemini_model) or
+            (self.formatting_service_name == "gemini" and self.formatting_gemini_client) or
             (self.formatting_service_name == "ollama" and self.formatting_ollama_client)
         )
         
@@ -458,8 +442,11 @@ Reformat the following markdown:
                 response_text = message.content[0].text if message.content else ""
                 return self._remove_think_tags(response_text)
             
-            elif use_formatting and self.formatting_service_name == "gemini" and self.formatting_gemini_model:
-                response = await self.formatting_gemini_model.generate_content_async(full_prompt)
+            elif use_formatting and self.formatting_service_name == "gemini" and self.formatting_gemini_client:
+                response = await self.formatting_gemini_client.aio.models.generate_content(
+                    model=self.formatting_model_name,
+                    contents=full_prompt,
+                )
                 response_text = response.text if response and response.text else ""
                 return self._remove_think_tags(response_text)
             
@@ -490,8 +477,11 @@ Reformat the following markdown:
                 response_text = response['message']['content'] if response and 'message' in response else ""
                 return self._remove_think_tags(response_text)
 
-            elif self.service_name == "gemini" and self.gemini_model:
-                response = await self.gemini_model.generate_content_async(full_prompt)
+            elif self.service_name == "gemini" and self.gemini_client:
+                response = await self.gemini_client.aio.models.generate_content(
+                    model=self.model_name,
+                    contents=full_prompt,
+                )
                 response_text = response.text if response and response.text else ""
                 return self._remove_think_tags(response_text)
 
@@ -587,11 +577,11 @@ Return ONLY valid JSON, no other text."""
                 )
                 response_text = response['message']['content'] if response and 'message' in response else ""
             
-            elif self.service_name == "gemini" and self.gemini_model:
-                response = await self.gemini_model.generate_content_async(
-                    contents=[
-                        {"role": "user", "parts": [f"{system_prompt}\n\n{user_prompt}"]}
-                    ]
+            elif self.service_name == "gemini" and self.gemini_client:
+                response = await self.gemini_client.aio.models.generate_content(
+                    model=self.model_name,
+                    contents=user_prompt,
+                    config=types.GenerateContentConfig(system_instruction=system_prompt),
                 )
                 response_text = response.text if response and response.text else ""
             
@@ -691,9 +681,13 @@ Return ONLY valid JSON, no other text."""
             logger.error(f"Error calling {self.service_name} LLM 'generate_structured_reading_guide' method: {e}", exc_info=True)
             return {"sections": [], "document_structure_map": {}}
 
-    def _select_guide_model(self):
-        """Prefer dedicated guide model when configured, fall back to main model."""
-        return self.guide_gemini_model or self.gemini_model
+    def _select_guide_gemini(self):
+        """Prefer dedicated guide client/model when configured, fall back to main Gemini."""
+        if self.guide_gemini_client:
+            return self.guide_gemini_client, self.guide_model_name
+        if self.service_name == "gemini" and self.gemini_client:
+            return self.gemini_client, self.model_name
+        return None, None
 
     def _normalize_json_response(self, response_text: str) -> Optional[Dict[str, Any]]:
         """Extract first JSON object from an LLM response."""
@@ -720,14 +714,18 @@ Return ONLY valid JSON, no other text."""
         max_output_tokens: int = 8192,
     ) -> Optional[Dict[str, Any]]:
         """Run a guide-generation LLM call and parse JSON object."""
-        model = self._select_guide_model()
-        if not model:
-            logger.warning("No guide Gemini model available.")
+        client, model_name = self._select_guide_gemini()
+        if not client or not model_name:
+            logger.warning("No guide Gemini client available.")
             return None
         try:
-            response = await model.generate_content_async(
-                contents=[{"role": "user", "parts": [f"{system_prompt}\n\n{user_prompt}"]}],
-                generation_config={"max_output_tokens": max_output_tokens},
+            response = await client.aio.models.generate_content(
+                model=model_name,
+                contents=user_prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_prompt,
+                    max_output_tokens=max_output_tokens,
+                ),
             )
             response_text = response.text if response and response.text else ""
             parsed = self._normalize_json_response(response_text)
@@ -940,16 +938,16 @@ Return ONLY valid JSON, no other text."""
 llm_service = LLMService(
     anthropic=anthropic_client,
     deepseek=deepseek_config, # Pass the config dict
-    gemini=gemini_model, # Pass the GenerativeModel instance
+    gemini_client=gemini_client,
     ollama=ollama_client, # Pass the AsyncClient instance
-    guide_gemini=guide_gemini_model,
+    guide_gemini_client=guide_gemini_client,
     formatting_anthropic=formatting_anthropic_client,
-    formatting_gemini=formatting_gemini_model,
+    formatting_gemini_client=formatting_gemini_client,
     formatting_ollama=formatting_ollama_client
 )
 
 # --- Add a check to see if any LLM service was successfully initialized ---
-if not (llm_service.anthropic_client or llm_service.deepseek_config or llm_service.gemini_model or llm_service.ollama_client):
+if not (llm_service.anthropic_client or llm_service.deepseek_config or llm_service.gemini_client or llm_service.ollama_client):
     logger.critical(f"No LLM service client was successfully initialized based on configuration (LLM_SERVICE='{LLM_SERVICE}'). LLM features will not work.")
 else:
     logger.info(f"LLM service initialized using: {LLM_SERVICE}")

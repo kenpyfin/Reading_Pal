@@ -119,6 +119,18 @@ async def get_books(filter: Optional[dict] = None, projection: Optional[dict] = 
         logger.error(f"Error fetching all books: {e}", exc_info=True)
         return []
 
+async def count_books(filter: Optional[dict] = None) -> int:
+    """Returns the number of books matching the optional filter."""
+    database = get_database()
+    if database is None:
+        logger.error("Database not initialized for count_books.")
+        return 0
+    try:
+        return await database.books.count_documents(filter or {})
+    except Exception as e:
+        logger.error(f"Error counting books: {e}", exc_info=True)
+        return 0
+
 async def get_book_by_job_id(job_id: str):
     """Finds a book document by its processing job_id."""
     database = get_database()

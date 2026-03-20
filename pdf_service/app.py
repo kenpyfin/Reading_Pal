@@ -14,7 +14,7 @@ import re
 import ollama # Import the ollama library
 import asyncio # Import asyncio for background tasks
 import requests # Import requests for making HTTP calls in background task
-import google.generativeai as genai # ADD THIS LINE
+from google import genai
 from anthropic import Anthropic # Import Anthropic for formatting-specific LLM
 
 # Initialize FastAPI app
@@ -62,14 +62,15 @@ GEMINI_API_KEY_REFORMAT = os.getenv("GEMINI_API_KEY") # Use the general GEMINI_A
 # Get Gemini Reformat Model Name (used if Gemini API key is present)
 GEMINI_REFORMAT_MODEL_NAME = os.getenv("GEMINI_REFORMAT_MODEL", "gemini-2.5-flash")
 
-# Configure Gemini API if key is present
+# Gemini client for markdown reformat (google-genai SDK)
+gemini_reformat_client = None
 if GEMINI_API_KEY_REFORMAT:
     try:
-        genai.configure(api_key=GEMINI_API_KEY_REFORMAT)
-        logger.info(f"Google Gemini API configured successfully (using GEMINI_API_KEY for reformatting). Will use model: {GEMINI_REFORMAT_MODEL_NAME} for reformatting if chosen.")
+        gemini_reformat_client = genai.Client(api_key=GEMINI_API_KEY_REFORMAT)
+        logger.info(f"Google Gemini client ready (GEMINI_API_KEY for reformatting). Model: {GEMINI_REFORMAT_MODEL_NAME}.")
     except Exception as e:
-        logger.warning(f"Failed to configure Google Gemini API (using GEMINI_API_KEY for reformatting): {e}. Gemini reformatting will not be available.")
-        GEMINI_API_KEY_REFORMAT = None # Ensure it's None if configuration fails
+        logger.warning(f"Failed to initialize Gemini client for reformatting: {e}. Gemini reformatting will not be available.")
+        GEMINI_API_KEY_REFORMAT = None
 else:
     logger.info("GEMINI_API_KEY not found (used for reformatting). Google Gemini reformatting will not be available.")
 
@@ -82,7 +83,7 @@ FORMATTING_OLLAMA_API_BASE = os.getenv("FORMATTING_OLLAMA_API_BASE") or os.geten
 
 # Initialize formatting-specific LLM clients
 formatting_anthropic_client = None
-formatting_gemini_model = None
+formatting_gemini_client = None
 formatting_ollama_client = None
 
 if FORMATTING_LLM_SERVICE == "anthropic" and FORMATTING_ANTHROPIC_API_KEY and FORMATTING_LLM_MODEL:
@@ -94,12 +95,11 @@ if FORMATTING_LLM_SERVICE == "anthropic" and FORMATTING_ANTHROPIC_API_KEY and FO
         formatting_anthropic_client = None
 elif FORMATTING_LLM_SERVICE == "gemini" and FORMATTING_GEMINI_API_KEY and FORMATTING_LLM_MODEL:
     try:
-        genai.configure(api_key=FORMATTING_GEMINI_API_KEY)
-        formatting_gemini_model = genai.GenerativeModel(FORMATTING_LLM_MODEL)
-        logger.info(f"Formatting-specific Gemini model initialized: {FORMATTING_LLM_MODEL}")
+        formatting_gemini_client = genai.Client(api_key=FORMATTING_GEMINI_API_KEY)
+        logger.info(f"Formatting-specific Gemini client initialized: {FORMATTING_LLM_MODEL}")
     except Exception as e:
-        logger.warning(f"Failed to initialize formatting-specific Gemini model: {e}")
-        formatting_gemini_model = None
+        logger.warning(f"Failed to initialize formatting-specific Gemini client: {e}")
+        formatting_gemini_client = None
 elif FORMATTING_LLM_SERVICE == "ollama" and FORMATTING_OLLAMA_API_BASE and FORMATTING_LLM_MODEL:
     try:
         formatting_ollama_client = ollama.Client(host=FORMATTING_OLLAMA_API_BASE)
@@ -480,14 +480,8 @@ def reformat_markdown_with_gemini(md_text: str) -> str:
         logger.warning("GEMINI_API_KEY not set (used for reformatting) or configuration failed. Skipping Gemini markdown reformatting.")
         return md_text
 
-    try:
-        # Initialize the Gemini model
-        # You can choose different models like 'gemini-2.5-flash' for speed/cost
-        # or 'gemini-1.0-pro' / 'gemini-1.5-pro-latest' for potentially higher quality.
-        model = genai.GenerativeModel(GEMINI_REFORMAT_MODEL_NAME)
-        logger.info(f"Google Gemini model '{GEMINI_REFORMAT_MODEL_NAME}' initialized for reformatting.")
-    except Exception as e:
-        logger.error(f"Failed to initialize Google Gemini model '{GEMINI_REFORMAT_MODEL_NAME}': {e}. Skipping markdown reformatting.")
+    if not gemini_reformat_client:
+        logger.warning("Gemini reformat client not available. Skipping markdown reformatting.")
         return md_text
 
     # Approximate tokens per character (this is a rough estimate for Gemini)
@@ -585,10 +579,9 @@ Reformat this markdown:
             # Construct the prompt for Gemini
             full_prompt = system_instruction + "\n\n" + chunk
             
-            response = model.generate_content(
-                full_prompt,
-                # generation_config=generation_config, # If using custom config
-                # safety_settings=safety_settings, # If using custom safety settings
+            response = gemini_reformat_client.models.generate_content(
+                model=GEMINI_REFORMAT_MODEL_NAME,
+                contents=full_prompt,
             )
             
             reformatted_chunk_raw = response.text

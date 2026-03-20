@@ -24,9 +24,10 @@ from backend.models.book import Book
 from backend.db.mongodb import (
     save_book,
     get_book,
-    get_books, 
-    get_book_by_job_id, 
-    update_book, 
+    get_books,
+    count_books,
+    get_book_by_job_id,
+    update_book,
     delete_book_record, # Add delete_book_record
     get_database
 )
@@ -259,9 +260,16 @@ async def upload_pdf(
 
 
 @router.get("/", response_model=List[Book], response_model_by_alias=False)
-async def list_books(current_user_id: str = Depends(get_current_user_id)):
+async def list_books(
+    response: Response,
+    current_user_id: str = Depends(get_current_user_id),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+):
     """
     Retrieves a list of books for the current user, excluding those with 'failed' status.
+    Supports pagination via skip/limit. Total count for the current filter is returned in
+    the X-Total-Count response header (for the book list UI).
     Setting response_model_by_alias=False ensures that if the Book model
     has a field named 'id' (e.g., id: SomeType = Field(alias='_id')),
     the output JSON key will be 'id', not '_id'.
@@ -284,9 +292,17 @@ async def list_books(current_user_id: str = Depends(get_current_user_id)):
             "processing_error": 1
         }
 
-        # Filter books by the current user_id and status
-        books_docs = await get_books(filter={"user_id": current_user_id, "status": {"$ne": "failed"}}, projection=projection)
-        logger.info(f"Fetched {len(books_docs)} book documents from DB for user {current_user_id} (excluding failed).")
+        book_filter = {"user_id": current_user_id, "status": {"$ne": "failed"}}
+        total = await count_books(book_filter)
+        response.headers["X-Total-Count"] = str(total)
+
+        books_docs = await get_books(
+            filter=book_filter, projection=projection, skip=skip, limit=limit
+        )
+        logger.info(
+            f"Fetched {len(books_docs)} book documents from DB for user {current_user_id} "
+            f"(excluding failed, skip={skip}, limit={limit}, total={total})."
+        )
 
         # The list_books function currently constructs dictionaries with an "id" key.
         # When response_model=List[Book] and response_model_by_alias=False are used:
@@ -631,9 +647,9 @@ class ReadingGuideGenerateBody(BaseModel):
     guide_type: Optional[str] = Field(default="summary", description="summary, comprehensive, or quick_reference")
 
 
-# Define APPROX_CHARS_PER_PAGE, must match frontend's BookView.js
+# Define APPROX_CHARS_PER_PAGE, must match frontend's BookView.js (APPROX_CHARS_PER_PAGE)
 # This is crucial for consistency.
-APPROX_CHARS_PER_PAGE_FOR_GUIDE = 25000 # Based on BookView.js current value
+APPROX_CHARS_PER_PAGE_FOR_GUIDE = 8000
 
 def _calculate_page_boundaries(markdown: str, target_chars_per_page: int) -> List[Dict[str, int]]:
     """

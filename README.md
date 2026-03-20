@@ -13,7 +13,7 @@ This repository contains the code for the Reading Pal application, a tool for re
 ### Prerequisites
 
 *   Docker and Docker Compose
-*   Python 3.9+
+*   Python 3.10+ (backend Docker image uses 3.12)
 *   Node.js and npm/yarn
 *   **MongoDB:** The application requires a running MongoDB instance. By default, the `docker-compose.yml` is configured to connect to a MongoDB instance running on your host machine at `mongodb://host.docker.internal:27017/`.
     *   `host.docker.internal` is a special DNS name that resolves to the internal IP address used by the host from within a Docker container. This works on Docker Desktop (Mac/Windows) and recent versions of Docker Engine on Linux. If you are on an older Linux setup, you might need to find your host's IP address and use that instead.

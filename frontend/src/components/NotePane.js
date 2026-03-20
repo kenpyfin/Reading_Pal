@@ -55,8 +55,6 @@ const NotePane = ({
   }, [selectedBookText]);
 
   const handleSaveNote = async () => {
-    if (!newNoteContent.trim()) return;
-
     let noteData = {
       book_id: bookId,
       content: newNoteContent.trim(),
@@ -238,7 +236,7 @@ const NotePane = ({
             placeholder="Write your note here, referencing the selected text above if any..."
             rows="4"
           />
-          <button onClick={handleSaveNote} disabled={!newNoteContent.trim()}>
+          <button onClick={handleSaveNote}>
             Save Note
           </button>
           {error && <p className="error-message">{error}</p>}

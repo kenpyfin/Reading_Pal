@@ -16,7 +16,8 @@ import {
   setStoredReadingViewMode,
 } from '../utils/storage';
 
-const APPROX_CHARS_PER_PAGE = 25000; // Approximate target characters per page
+// Virtual "pages" when splitting full markdown for reading (smaller = less text per page, more page numbers).
+const APPROX_CHARS_PER_PAGE = 8000;
 
 // Helper to decode HTML entities (basic version)
 function decodeHtmlEntities(text) {

@@ -1,5 +1,9 @@
 # Repository Guidelines
 
+## Development journal
+
+- **`DEVELOPMENT_JOURNAL.md`** (repo root) records meaningful implementations and decisions. Read it when planning or changing features; append a dated entry after non-trivial work (see `.cursor/rules/development-journal.mdc`).
+
 ## Project Structure & Module Organization
 - `backend/`: FastAPI API (`main.py`), routers in `api/`, persistence in `db/`, shared logic in `services/`, Pydantic models under `models/`.
 - `frontend/`: React app (`src/components`, `src/pages`, `src/utils`) with static assets in `public/` and Docker build in `frontend/Dockerfile`.
