@@ -1,6 +1,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { getAuthHeaders } from '../utils/authRequest';
 
 // --- ADD THIS LINE ---
 console.log("[BookList.js SRC MODULE LEVEL] BookList.js module loaded"); 
@@ -83,9 +84,8 @@ function BookList() {
   // Function to fetch the list of books from the backend
   const fetchBooks = async () => {
       console.log("[BookList.js SRC CONSOLE.LOG] Fetching books list from backend...");
-      const rawToken = localStorage.getItem('authToken'); // Retrieve the token
-
-      if (!rawToken) {
+      const authHeaders = getAuthHeaders();
+      if (!authHeaders) {
           console.error("[BookList.js SRC CONSOLE.ERROR] No auth token found (rawToken is falsy). User might not be logged in.");
           setError("Authentication token not found. Please log in.");
           setLoading(false); // Stop loading as we can't proceed
@@ -94,33 +94,10 @@ function BookList() {
           return;
       }
 
-      // Sanitize token: remove potential leading/trailing whitespace and newlines
-      // which might cause issues with header formation or parsing.
-      let token = rawToken.trim().replace(/(\r\n|\n|\r)/gm, "");
-
-      // Explicitly check for string "null" or "undefined" which might be stored in localStorage
-      if (!token || token === "null" || token === "undefined") {
-          console.error(`[BookList.js SRC CONSOLE.ERROR] Auth token is invalid after sanitization or is a problematic string. Sanitized token value: '${token}'. User might not be logged in or token is invalid.`);
-          setError("Authentication token is invalid. Please log in again.");
-          setLoading(false);
-          return;
-      }
-      
-      console.log(`[BookList.js SRC CONSOLE.LOG] Attempting to use sanitized auth token (first 20 chars): '${token.substring(0, 20)}...'`);
-
       const requestHeaders = {
-          'Content-Type': 'application/json'
-          // Authorization header will be added below
+          'Content-Type': 'application/json',
+          ...authHeaders,
       };
-
-      if (token) {
-          requestHeaders['Authorization'] = `Bearer ${token}`;
-      } else {
-          console.error("[BookList.js SRC CONSOLE.ERROR] Critical error: Token became null or empty just before setting Authorization header. Aborting fetch.");
-          setError("Authentication error. Please log in again.");
-          setLoading(false);
-          return;
-      }
 
       console.log("[BookList.js SRC CONSOLE.LOG] Request headers being sent to /api/books/:", JSON.stringify(requestHeaders));
 
@@ -237,17 +214,10 @@ function BookList() {
     setDeletingId(bookId);
     setError(null); // Clear previous errors
 
-    const rawToken = localStorage.getItem('authToken');
-    if (!rawToken) {
+    const authHeaders = getAuthHeaders();
+    if (!authHeaders) {
         console.error("[BookList.js SRC CONSOLE.ERROR] No auth token found for delete operation.");
         setError("Authentication token not found. Please log in.");
-        setDeletingId(null);
-        return;
-    }
-    const token = rawToken.trim().replace(/(\r\n|\n|\r)/gm, "");
-    if (!token || token === "null" || token === "undefined") {
-        console.error(`[BookList.js SRC CONSOLE.ERROR] Invalid auth token for delete operation. Sanitized token: '${token}'`);
-        setError("Authentication token is invalid. Please log in again.");
         setDeletingId(null);
         return;
     }
@@ -255,9 +225,7 @@ function BookList() {
     try {
         const response = await fetch(`/api/books/${bookId}`, {
             method: 'DELETE',
-            headers: {
-                'Authorization': `Bearer ${token}`,
-            },
+            headers: authHeaders,
         });
         if (response.status === 204) { // Successfully deleted
             setBooks(prevBooks => prevBooks.filter(book => book.id !== bookId));
@@ -291,17 +259,10 @@ function BookList() {
     setRenamingId(bookId);
     setError(null); // Clear previous errors
 
-    const rawToken = localStorage.getItem('authToken');
-    if (!rawToken) {
+    const authHeaders = getAuthHeaders();
+    if (!authHeaders) {
         console.error("[BookList.js SRC CONSOLE.ERROR] No auth token found for rename operation.");
         setError("Authentication token not found. Please log in.");
-        setRenamingId(null);
-        return;
-    }
-    const token = rawToken.trim().replace(/(\r\n|\n|\r)/gm, "");
-    if (!token || token === "null" || token === "undefined") {
-        console.error(`[BookList.js SRC CONSOLE.ERROR] Invalid auth token for rename operation. Sanitized token: '${token}'`);
-        setError("Authentication token is invalid. Please log in again.");
         setRenamingId(null);
         return;
     }
@@ -311,7 +272,7 @@ function BookList() {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`,
+                ...authHeaders,
             },
             body: JSON.stringify({ new_title: newTitle.trim() }),
         });

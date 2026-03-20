@@ -14,7 +14,6 @@ function AuthCallbackPage({ setAuthToken }) {
     const token = query.get('token');
     if (token) {
       console.log("Token received from callback:", token);
-      localStorage.setItem('authToken', token);
       setAuthToken(token); // Update auth state in App.js
       navigate('/'); // Redirect to homepage (BookList)
     } else {

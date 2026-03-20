@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import './UserManagementPage.css'; // We'll create this CSS file
+import { getAuthHeaders } from '../utils/authRequest';
 
 function UserManagementPage() {
   const [users, setUsers] = useState([]);
@@ -13,8 +14,8 @@ function UserManagementPage() {
   const fetchUsers = useCallback(async () => {
     setLoadingUsers(true);
     // setError(null); // Keep error state for overall page, or separate for users/stats
-    const token = localStorage.getItem('authToken');
-    if (!token) {
+    const authHeaders = getAuthHeaders();
+    if (!authHeaders) {
       setError("Authentication token not found. Please log in.");
       setLoadingUsers(false);
       return;
@@ -22,9 +23,7 @@ function UserManagementPage() {
 
     try {
       const response = await fetch('/api/auth/admin/users', {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
+        headers: authHeaders,
       });
       if (!response.ok) {
         const errorData = await response.json();
@@ -41,17 +40,15 @@ function UserManagementPage() {
 
   const fetchStats = useCallback(async () => {
     setLoadingStats(true);
-    const token = localStorage.getItem('authToken');
-    if (!token) {
+    const authHeaders = getAuthHeaders();
+    if (!authHeaders) {
       // Error already handled by fetchUsers or will be shown globally
       setLoadingStats(false);
       return;
     }
     try {
       const response = await fetch('/api/auth/admin/stats', {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
+        headers: authHeaders,
       });
       if (!response.ok) {
         const errorData = await response.json();
@@ -83,8 +80,8 @@ function UserManagementPage() {
     }
     setDeletingId(googleIdToDelete); // Track deletion by google_id
     setError(null);
-    const token = localStorage.getItem('authToken');
-    if (!token) {
+    const authHeaders = getAuthHeaders();
+    if (!authHeaders) {
       setError("Authentication token not found. Please log in.");
       setDeletingId(null);
       return;
@@ -93,9 +90,7 @@ function UserManagementPage() {
     try {
       const response = await fetch(`/api/auth/admin/users/${googleIdToDelete}`, { // Use googleIdToDelete in URL
         method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
+        headers: authHeaders,
       });
       if (!response.ok) {
         // For 204 No Content, response.json() will fail. Check status first.
@@ -134,8 +129,8 @@ function UserManagementPage() {
 
     setTogglingStatusId(googleIdToToggle);
     setError(null); // Clear previous errors
-    const token = localStorage.getItem('authToken');
-    if (!token) {
+    const authHeaders = getAuthHeaders();
+    if (!authHeaders) {
       setError("Authentication token not found. Please log in.");
       setTogglingStatusId(null);
       return;
@@ -145,8 +140,8 @@ function UserManagementPage() {
       const response = await fetch(`/api/auth/admin/users/${googleIdToToggle}/status`, {
         method: 'PUT',
         headers: {
-          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
+          ...authHeaders,
         },
         body: JSON.stringify({ is_active: newStatus }),
       });

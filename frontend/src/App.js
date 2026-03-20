@@ -9,6 +9,7 @@ import LoginPage from './pages/LoginPage'; // Import LoginPage
 import AuthCallbackPage from './pages/AuthCallbackPage'; // Import AuthCallbackPage
 import AdminLoginPage from './pages/AdminLoginPage'; // Import AdminLoginPage
 import UserManagementPage from './pages/UserManagementPage'; // Import UserManagementPage
+import { clearStoredAuthToken, getStoredAuthToken, setStoredAuthToken } from './utils/storage';
 
 // Helper to decode JWT (simplified, use a library like jwt-decode in a real app for production)
 const decodeJwt = (token) => {
@@ -26,11 +27,11 @@ const decodeJwt = (token) => {
 };
 
 function App() {
-  const [authToken, setAuthToken] = useState(localStorage.getItem('authToken'));
+  const [authToken, setAuthToken] = useState(() => getStoredAuthToken());
   const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
-    const token = localStorage.getItem('authToken');
+    const token = getStoredAuthToken();
     if (token) {
       setAuthToken(token); // Set the token state
       const decoded = decodeJwt(token); // Decode it
@@ -45,18 +46,25 @@ function App() {
 
   const handleSetAuthToken = (token) => {
     if (token) {
-      localStorage.setItem('authToken', token);
-      const decoded = decodeJwt(token);
+      setStoredAuthToken(token);
+      const normalizedToken = getStoredAuthToken();
+      if (!normalizedToken) {
+        setIsAdmin(false);
+        setAuthToken(null);
+        return;
+      }
+      const decoded = decodeJwt(normalizedToken);
       if (decoded && decoded.is_admin) {
         setIsAdmin(true);
       } else {
         setIsAdmin(false);
       }
+      setAuthToken(normalizedToken);
     } else {
-      localStorage.removeItem('authToken');
+      clearStoredAuthToken();
       setIsAdmin(false);
+      setAuthToken(null);
     }
-    setAuthToken(token);
   };
 
   const handleLogout = () => {

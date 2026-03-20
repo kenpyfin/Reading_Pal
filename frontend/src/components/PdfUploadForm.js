@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom'; // Import useNavigate
+import { getAuthHeaders } from '../utils/authRequest';
 
 // Define timeout duration for upload in milliseconds
 const UPLOAD_TIMEOUT_MS = 60000; // 60 seconds
@@ -41,27 +42,19 @@ function PdfUploadForm() {
     let timeoutId = null;
 
     // --- MODIFICATION START: Add Authorization Header ---
-    const rawToken = localStorage.getItem('authToken');
-    if (!rawToken) {
+    const authHeaders = getAuthHeaders();
+    if (!authHeaders) {
         console.error("[PdfUploadForm] No auth token found for upload.");
         setError("Authentication token not found. Please log in again.");
         setUploading(false);
         return;
     }
-    let token = rawToken.trim().replace(/(\r\n|\n|\r)/gm, "");
-    if (!token || token === "null" || token === "undefined") {
-        console.error(`[PdfUploadForm] Invalid auth token for upload. Sanitized token: '${token}'`);
-        setError("Authentication token is invalid. Please log in again.");
-        setUploading(false);
-        return;
-    }
-    console.log(`[PdfUploadForm] Using token for upload: '${token.substring(0,20)}...'`);
 
     const requestHeaders = {
         // 'Content-Type': 'multipart/form-data' is NOT set here.
         // The browser will automatically set it correctly with the boundary
         // when FormData is used as the body.
-        'Authorization': `Bearer ${token}`
+        ...authHeaders,
     };
     // --- MODIFICATION END ---
 

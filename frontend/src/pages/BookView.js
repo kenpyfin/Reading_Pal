@@ -9,6 +9,12 @@ import { debounce } from 'lodash';
 import './BookView.css';
 import logger from '../utils/logger'; // Ensure logger is imported
 import { getPageForOffset } from '../utils/textLinking'; // Import text linking utilities
+import {
+  getStoredReadingPosition,
+  getStoredReadingViewMode,
+  setStoredReadingPosition,
+  setStoredReadingViewMode,
+} from '../utils/storage';
 
 const APPROX_CHARS_PER_PAGE = 25000; // Approximate target characters per page
 
@@ -270,17 +276,10 @@ function BookView() {
   const [selectedGlobalCharOffset, setSelectedGlobalCharOffset] = useState(null);
 
   const [currentPage, setCurrentPage] = useState(() => {
-    const savedPositionRaw = localStorage.getItem(`readingPalLastPosition_${bookId}`);
-    if (savedPositionRaw) {
-      try {
-        const savedPosition = JSON.parse(savedPositionRaw);
-        if (savedPosition && typeof savedPosition.page === 'number') {
-          logger.info(`[BookView - useState init] Initializing currentPage from localStorage: ${savedPosition.page}`);
-          return savedPosition.page;
-        }
-      } catch (e) {
-        logger.error("[BookView - useState init] Error parsing saved position, defaulting to 1.", e);
-      }
+    const savedPosition = getStoredReadingPosition(bookId);
+    if (savedPosition && typeof savedPosition.page === 'number') {
+      logger.info(`[BookView - useState init] Initializing currentPage from localStorage: ${savedPosition.page}`);
+      return savedPosition.page;
     }
     return 1;
   });
@@ -339,10 +338,7 @@ function BookView() {
   }, []);
 
   // View mode: 'guide' = reading guide as main content, 'original' = original text as main content
-  const [viewMode, setViewMode] = useState(() => {
-    const saved = localStorage.getItem(`readingPalViewMode_${bookId}`);
-    return saved === 'guide' ? 'guide' : 'original';
-  });
+  const [viewMode, setViewMode] = useState(() => getStoredReadingViewMode(bookId));
 
   // Show floating "Back to Reading Guide" when user navigated from guide via "View in original text"
   const [showBackToGuide, setShowBackToGuide] = useState(false);
@@ -418,7 +414,6 @@ function BookView() {
   const [reformatError, setReformatError] = useState(null);
   // --- END NEW State for Content Reformatting ---
   const isInitialMount = useRef(true);
-
   const fetchBook = async () => {
     setLoading(true);
     setError(null);
@@ -464,18 +459,11 @@ function BookView() {
         }
 
         // Restore scroll position for the current page
-        const savedPositionRaw = localStorage.getItem(`readingPalLastPosition_${bookId}`);
-        if (savedPositionRaw) {
-          try {
-            const savedPosition = JSON.parse(savedPositionRaw);
-            // Only apply scroll if the saved page is the one we are actually on.
-            if (savedPosition && savedPosition.page === currentPage && typeof savedPosition.scrollTop === 'number') {
-              logger.info(`[BookView - fetchBook] Restoring scroll position for page ${currentPage}: ScrollTop ${savedPosition.scrollTop}`);
-              setInitialScrollTop(savedPosition.scrollTop);
-            }
-          } catch (parseError) {
-            logger.error(`[BookView - fetchBook] Error parsing saved position for scroll restore:`, parseError);
-          }
+        const savedPosition = getStoredReadingPosition(bookId);
+        // Only apply scroll if the saved page is the one we are actually on.
+        if (savedPosition && savedPosition.page === currentPage && typeof savedPosition.scrollTop === 'number') {
+          logger.info(`[BookView - fetchBook] Restoring scroll position for page ${currentPage}: ScrollTop ${savedPosition.scrollTop}`);
+          setInitialScrollTop(savedPosition.scrollTop);
         }
 
       } else {
@@ -601,15 +589,14 @@ function BookView() {
   // Persist viewMode to localStorage when it changes
   useEffect(() => {
     if (bookId) {
-      localStorage.setItem(`readingPalViewMode_${bookId}`, viewMode);
+      setStoredReadingViewMode(bookId, viewMode);
     }
   }, [bookId, viewMode]);
 
   // Restore viewMode from localStorage when bookId changes
   useEffect(() => {
     if (bookId) {
-      const saved = localStorage.getItem(`readingPalViewMode_${bookId}`);
-      setViewMode(saved === 'guide' ? 'guide' : 'original');
+      setViewMode(getStoredReadingViewMode(bookId));
     }
   }, [bookId]);
 
@@ -2041,7 +2028,7 @@ function BookView() {
     debounce((bookIdToSave, pageToSave, scrollTopToSave) => {
       if (bookIdToSave && typeof pageToSave === 'number' && typeof scrollTopToSave === 'number') {
         const position = { page: pageToSave, scrollTop: scrollTopToSave };
-        localStorage.setItem(`readingPalLastPosition_${bookIdToSave}`, JSON.stringify(position));
+        setStoredReadingPosition(bookIdToSave, position);
         logger.debug(`[BookView - SavePosition] Saved position for book ${bookIdToSave}: Page ${pageToSave}, ScrollTop ${scrollTopToSave}`);
       }
     }, 1000), // Debounce for 1 second
@@ -2066,7 +2053,7 @@ function BookView() {
     } else {
       if (bookId && currentPage) {
           const position = { page: currentPage, scrollTop: 0 };
-          localStorage.setItem(`readingPalLastPosition_${bookId}`, JSON.stringify(position));
+          setStoredReadingPosition(bookId, position);
           logger.debug(`[BookView - PageChange] Saved page ${currentPage} with scrollTop 0 for book ${bookId}`);
       }
     }
