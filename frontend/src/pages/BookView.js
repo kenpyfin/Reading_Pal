@@ -15,6 +15,25 @@ import {
   setStoredReadingPosition,
   setStoredReadingViewMode,
 } from '../utils/storage';
+import {
+  putBookMeta,
+  getBookMeta,
+  putGuide,
+  getGuide,
+  putAnnotations,
+  getAnnotations,
+  prefetchMarkdownImages,
+  rewriteMarkdownWithCachedImages,
+  cacheRoadmapGraphImages,
+  hydrateRoadmapWithCachedGraphs,
+  addOutboxEntry,
+  getOutboxCount,
+  newLocalId,
+  isLocalId,
+  removePendingCreateNote,
+  removePendingCreateBookmark,
+} from '../utils/offlineBookCache';
+import { flushOutbox } from '../utils/outboxSync';
 
 // Virtual "pages" when splitting full markdown for reading (smaller = less text per page, more page numbers).
 const APPROX_CHARS_PER_PAGE = 8000;
@@ -364,6 +383,30 @@ function BookView() {
   const [completedRoadmapIds, setCompletedRoadmapIds] = useState([]);
   const [graphLoadingById, setGraphLoadingById] = useState({});
 
+  const [isOfflineSnapshot, setIsOfflineSnapshot] = useState(false);
+  const [outboxPendingCount, setOutboxPendingCount] = useState(0);
+  const [netOnline, setNetOnline] = useState(
+    typeof navigator !== 'undefined' ? navigator.onLine : true
+  );
+  const blobUrlRegistryRef = useRef(new Set());
+
+  const serverOffline = !netOnline || isOfflineSnapshot;
+
+  const registerBlobUrl = useCallback((url) => {
+    if (url && url.startsWith('blob:')) {
+      blobUrlRegistryRef.current.add(url);
+    }
+  }, []);
+
+  const refreshOutboxCount = useCallback(async () => {
+    try {
+      const n = await getOutboxCount();
+      setOutboxPendingCount(n);
+    } catch (_e) {
+      setOutboxPendingCount(0);
+    }
+  }, []);
+
   // --- State for Reading Guide Search/Highlight ---
   const [guideSearchText, setGuideSearchText] = useState(null); // Text to search and highlight from reading guide
   const [guideSearchGlobalOffset, setGuideSearchGlobalOffset] = useState(null); // Stable offset target for guide highlight fallback
@@ -415,6 +458,34 @@ function BookView() {
   const [reformatError, setReformatError] = useState(null);
   // --- END NEW State for Content Reformatting ---
   const isInitialMount = useRef(true);
+
+  const applyBookPayload = useCallback((data, markdownOverride) => {
+    const md = markdownOverride !== undefined ? markdownOverride : (data?.markdown_content || '');
+    setBookData(data);
+    if (data && md) {
+      setFullMarkdownContent(md);
+      const calculatedBoundaries = calculatePageBoundaries(md, APPROX_CHARS_PER_PAGE);
+      setPageBoundaries(calculatedBoundaries);
+      const numPages = Math.max(1, calculatedBoundaries.length);
+      setTotalPages(numPages);
+      const savedPosition = getStoredReadingPosition(bookId);
+      setCurrentPage((cp) => {
+        let next = cp > numPages ? 1 : cp;
+        if (cp > numPages) {
+          logger.warn(`[BookView - applyBookPayload] Page ${cp} out of bounds (${numPages}). Resetting to 1.`);
+        }
+        if (savedPosition && savedPosition.page === next && typeof savedPosition.scrollTop === 'number') {
+          setInitialScrollTop(savedPosition.scrollTop);
+        }
+        return next;
+      });
+    } else {
+      setFullMarkdownContent('');
+      setPageBoundaries([]);
+      setTotalPages(1);
+    }
+  }, [bookId]);
+
   const fetchBook = async () => {
     setLoading(true);
     setError(null);
@@ -431,52 +502,58 @@ function BookView() {
         },
       });
       if (!response.ok) {
-        const errorData = await response.json();
-        if (response.status === 401) { // Handle specific 401 error
+        const errorData = await response.json().catch(() => ({}));
+        if (response.status === 401) {
           setError("Not authenticated. Please log in again.");
-          // Optionally, redirect to login or clear token
-          // localStorage.removeItem('authToken'); 
-          // window.location.href = '/login';
         } else if (response.status === 404) {
           setBookData(null);
+          setLoading(false);
           return;
         }
         throw new Error(`HTTP error! status: ${response.status} - ${errorData.detail || response.statusText}`);
       }
       const data = await response.json();
-      setBookData(data);
-      if (data && data.markdown_content) {
-        setFullMarkdownContent(data.markdown_content);
-        // Calculate page boundaries
-        const calculatedBoundaries = calculatePageBoundaries(data.markdown_content, APPROX_CHARS_PER_PAGE);
-        setPageBoundaries(calculatedBoundaries);
-        const numPages = Math.max(1, calculatedBoundaries.length);
-        setTotalPages(numPages);
-        
-        // Validate the current page (which was initialized from localStorage)
-        if (currentPage > numPages) {
-          logger.warn(`[BookView - fetchBook] Restored page ${currentPage} is out of bounds for this book (${numPages} pages). Resetting to page 1.`);
-          setCurrentPage(1);
+      applyBookPayload(data, data.markdown_content);
+      setIsOfflineSnapshot(false);
+      try {
+        await putBookMeta(bookId, { bookData: data, markdownContent: data.markdown_content || '' });
+        if (data.markdown_content) {
+          await prefetchMarkdownImages(bookId, data.markdown_content);
         }
-
-        // Restore scroll position for the current page
-        const savedPosition = getStoredReadingPosition(bookId);
-        // Only apply scroll if the saved page is the one we are actually on.
-        if (savedPosition && savedPosition.page === currentPage && typeof savedPosition.scrollTop === 'number') {
-          logger.info(`[BookView - fetchBook] Restoring scroll position for page ${currentPage}: ScrollTop ${savedPosition.scrollTop}`);
-          setInitialScrollTop(savedPosition.scrollTop);
-        }
-
-      } else {
-        setFullMarkdownContent('');
-        setPageBoundaries([]);
-        setTotalPages(1);
+      } catch (cacheErr) {
+        logger.warn('[BookView - fetchBook] Cache persist failed:', cacheErr);
       }
     } catch (err) {
       logger.error('Failed to fetch book:', err);
-      setError(`Failed to load book: ${err.message || 'Unknown error'}`);
-      setBookData(null);
-      setFullMarkdownContent('');
+      const tryCache =
+        !navigator.onLine ||
+        err.name === 'TypeError' ||
+        (err.message && String(err.message).includes('Failed to fetch'));
+      if (tryCache) {
+        try {
+          const meta = await getBookMeta(bookId);
+          if (meta && meta.bookData && meta.markdownContent) {
+            let md = meta.markdownContent;
+            md = await rewriteMarkdownWithCachedImages(bookId, md, registerBlobUrl);
+            applyBookPayload(meta.bookData, md);
+            setIsOfflineSnapshot(true);
+            setError(null);
+          } else {
+            setError(`Failed to load book: ${err.message || 'Unknown error'}`);
+            setBookData(null);
+            setFullMarkdownContent('');
+          }
+        } catch (cacheErr) {
+          logger.error('[BookView - fetchBook] Cache load failed:', cacheErr);
+          setError(`Failed to load book: ${err.message || 'Unknown error'}`);
+          setBookData(null);
+          setFullMarkdownContent('');
+        }
+      } else {
+        setError(`Failed to load book: ${err.message || 'Unknown error'}`);
+        setBookData(null);
+        setFullMarkdownContent('');
+      }
     } finally {
       setLoading(false);
     }
@@ -530,10 +607,23 @@ function BookView() {
       processedBookmarks.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
       setBookmarks(processedBookmarks);
       logger.info("Processed and set bookmarks:", processedBookmarks);
+      try {
+        const ann = await getAnnotations(bookId);
+        await putAnnotations(bookId, { bookmarks: processedBookmarks, notes: ann?.notes || [] });
+      } catch (_e) { /* ignore */ }
 
     } catch (err) {
       logger.error('Error fetching bookmarks:', err);
-      setBookmarks([]); // Reset bookmarks on error
+      try {
+        const ann = await getAnnotations(bookId);
+        if (ann && Array.isArray(ann.bookmarks)) {
+          setBookmarks(ann.bookmarks);
+        } else {
+          setBookmarks([]);
+        }
+      } catch (_e) {
+        setBookmarks([]);
+      }
     }
   };
 
@@ -549,6 +639,27 @@ function BookView() {
         logger.warn("[BookView - handleDeleteBookmark] Auth token not found.");
         return;
       }
+
+      if (!navigator.onLine || isOfflineSnapshot) {
+        setBookmarks((prev) => prev.filter((b) => b.id !== bookmarkIdToDelete));
+        try {
+          const ann = await getAnnotations(bookId);
+          const nextBm = (ann?.bookmarks || []).filter((b) => b.id !== bookmarkIdToDelete);
+          await putAnnotations(bookId, { bookmarks: nextBm, notes: ann?.notes || [] });
+          if (isLocalId(bookmarkIdToDelete)) {
+            await removePendingCreateBookmark(bookmarkIdToDelete);
+          } else {
+            await addOutboxEntry({
+              type: 'delete_bookmark',
+              bookId,
+              payload: { bookmarkId: bookmarkIdToDelete },
+            });
+          }
+          await refreshOutboxCount();
+        } catch (_e) { /* ignore */ }
+        return;
+      }
+
       const response = await fetch(`/api/bookmarks/${bookmarkIdToDelete}`, {
         method: 'DELETE',
         headers: {
@@ -575,7 +686,8 @@ function BookView() {
   useEffect(() => {
     if (bookId) {
       // Reset initialScrollTop when bookId changes, so it only applies once per book load
-      setInitialScrollTop(null); 
+      setInitialScrollTop(null);
+      setIsOfflineSnapshot(false);
       fetchBook(); // fetchBook now handles restoring page and setting initialScrollTop
       fetchBookmarks();
       // setCurrentPage(1); // This is now handled by the useState initializer
@@ -586,6 +698,47 @@ function BookView() {
       setCompletedRoadmapIds([]);
     }
   }, [bookId]);
+
+  useEffect(() => {
+    return () => {
+      blobUrlRegistryRef.current.forEach((url) => {
+        try {
+          URL.revokeObjectURL(url);
+        } catch (_e) {
+          /* ignore */
+        }
+      });
+      blobUrlRegistryRef.current.clear();
+    };
+  }, [bookId]);
+
+  useEffect(() => {
+    refreshOutboxCount();
+  }, [bookId, refreshOutboxCount]);
+
+  useEffect(() => {
+    const sync = () => setNetOnline(navigator.onLine);
+    window.addEventListener('online', sync);
+    window.addEventListener('offline', sync);
+    return () => {
+      window.removeEventListener('online', sync);
+      window.removeEventListener('offline', sync);
+    };
+  }, []);
+
+  useEffect(() => {
+    const run = async () => {
+      if (typeof navigator !== 'undefined' && navigator.onLine) {
+        try {
+          await flushOutbox();
+          await refreshOutboxCount();
+        } catch (_e) {
+          /* ignore */
+        }
+      }
+    };
+    run();
+  }, []);
 
   // Persist viewMode to localStorage when it changes
   useEffect(() => {
@@ -618,10 +771,23 @@ function BookView() {
         }),
       ]);
 
+      let completedIds = [];
+      if (progressResp.ok) {
+        const progressData = await progressResp.json();
+        completedIds = progressData.completed_ids || [];
+      }
+      setCompletedRoadmapIds(completedIds);
+
       if (guideResp.ok) {
         const data = await guideResp.json();
-        setReadingRoadmap(data);
+        try {
+          await putGuide(bookId, { roadmap: data, completedIds });
+          await cacheRoadmapGraphImages(bookId, data);
+        } catch (_e) { /* ignore */ }
+        const hydrated = await hydrateRoadmapWithCachedGraphs(bookId, data, registerBlobUrl);
+        setReadingRoadmap(hydrated);
         setHasRoadmap(!!(data && data.items && data.items.length > 0));
+        setGuideError(null);
       } else if (guideResp.status === 404) {
         setReadingRoadmap(null);
         setHasRoadmap(false);
@@ -629,26 +795,76 @@ function BookView() {
         const e = await guideResp.json().catch(() => ({ detail: `HTTP ${guideResp.status}` }));
         throw new Error(e.detail || "Failed to load roadmap");
       }
-
-      if (progressResp.ok) {
-        const progressData = await progressResp.json();
-        setCompletedRoadmapIds(progressData.completed_ids || []);
-      } else {
-        setCompletedRoadmapIds([]);
-      }
     } catch (err) {
       logger.error("[BookView - fetchReadingRoadmap] Failed:", err);
-      setGuideError(err.message);
-      setReadingRoadmap(null);
-      setHasRoadmap(false);
+      const tryCache =
+        !navigator.onLine ||
+        err.name === 'TypeError' ||
+        (err.message && String(err.message).includes('Failed to fetch'));
+      if (tryCache) {
+        try {
+          const g = await getGuide(bookId);
+          if (g && g.roadmap) {
+            const hydrated = await hydrateRoadmapWithCachedGraphs(bookId, g.roadmap, registerBlobUrl);
+            setReadingRoadmap(hydrated);
+            setCompletedRoadmapIds(g.completedIds || []);
+            setHasRoadmap(!!(g.roadmap.items && g.roadmap.items.length > 0));
+            setGuideError(null);
+          } else {
+            setGuideError(err.message);
+            setReadingRoadmap(null);
+            setHasRoadmap(false);
+          }
+        } catch (_e) {
+          setGuideError(err.message);
+          setReadingRoadmap(null);
+          setHasRoadmap(false);
+        }
+      } else {
+        setGuideError(err.message);
+        setReadingRoadmap(null);
+        setHasRoadmap(false);
+      }
     } finally {
       setGuideLoading(false);
     }
-  }, [bookId]);
+  }, [bookId, registerBlobUrl]);
+
+  useEffect(() => {
+    const onOnline = async () => {
+      try {
+        await flushOutbox();
+        await refreshOutboxCount();
+        if (!bookId || !localStorage.getItem('authToken')) return;
+        fetchBookmarks();
+        const token = localStorage.getItem('authToken');
+        const res = await fetch(`/api/notes/${bookId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) {
+          const notesData = await res.json();
+          notesData.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+          setNotes(notesData);
+          try {
+            const ann = await getAnnotations(bookId);
+            await putAnnotations(bookId, { bookmarks: ann?.bookmarks || [], notes: notesData });
+          } catch (_e) { /* ignore */ }
+        }
+        if (viewMode === 'guide') {
+          fetchReadingRoadmap();
+        }
+      } catch (_e) {
+        /* ignore */
+      }
+    };
+    window.addEventListener('online', onOnline);
+    return () => window.removeEventListener('online', onOnline);
+  }, [bookId, fetchReadingRoadmap, viewMode]);
 
   // Function to refresh signed URLs in markdown content (must be defined before handleGuideTextLink)
   const refreshImageUrls = useCallback(async () => {
     if (!bookId) return;
+    if (isOfflineSnapshot || !navigator.onLine) return;
     try {
       const token = localStorage.getItem('authToken');
       if (!token) {
@@ -671,10 +887,14 @@ function BookView() {
     } catch (err) {
       logger.error("[BookView - refreshImageUrls] Error refreshing URLs:", err);
     }
-  }, [bookId]);
+  }, [bookId, isOfflineSnapshot]);
 
   const handleGenerateRoadmap = async () => {
     if (!bookId) return;
+    if (!navigator.onLine || isOfflineSnapshot) {
+      setGuideError('Roadmap generation requires an internet connection.');
+      return;
+    }
     logger.info(`[BookView - handleGenerateRoadmap] Generating roadmap for book: ${bookId}`);
     setIsGeneratingGuide(true);
     setGuideError(null);
@@ -709,6 +929,27 @@ function BookView() {
 
   const handleToggleRoadmapProgress = async (itemId, completed) => {
     if (!bookId || !itemId) return;
+    if (!navigator.onLine || isOfflineSnapshot) {
+      const s = new Set(completedRoadmapIds);
+      if (completed) s.add(itemId); else s.delete(itemId);
+      const nextIds = [...s];
+      setCompletedRoadmapIds(nextIds);
+      try {
+        const g = await getGuide(bookId);
+        if (g?.roadmap) {
+          await putGuide(bookId, { roadmap: g.roadmap, completedIds: nextIds });
+        }
+        await addOutboxEntry({
+          type: 'roadmap_progress',
+          bookId,
+          payload: { item_id: itemId, completed },
+        });
+        await refreshOutboxCount();
+      } catch (err) {
+        logger.error("[BookView - handleToggleRoadmapProgress] Offline persist failed:", err);
+      }
+      return;
+    }
     try {
       const token = localStorage.getItem('authToken');
       if (!token) throw new Error("Authentication token not found.");
@@ -723,6 +964,12 @@ function BookView() {
       if (!response.ok) return;
       const data = await response.json();
       setCompletedRoadmapIds(data.completed_ids || []);
+      try {
+        const g = await getGuide(bookId);
+        if (g?.roadmap) {
+          await putGuide(bookId, { roadmap: g.roadmap, completedIds: data.completed_ids || [] });
+        }
+      } catch (_e) { /* ignore */ }
     } catch (err) {
       logger.error("[BookView - handleToggleRoadmapProgress] Failed:", err);
     }
@@ -730,6 +977,10 @@ function BookView() {
 
   const handleGenerateCardGraph = async (cardId) => {
     if (!bookId || !cardId) return;
+    if (!navigator.onLine || isOfflineSnapshot) {
+      setGuideError('Graph generation requires an internet connection.');
+      return;
+    }
     setGraphLoadingById((prev) => ({ ...prev, [cardId]: true }));
     try {
       const token = localStorage.getItem('authToken');
@@ -752,7 +1003,20 @@ function BookView() {
         }));
         setReadingRoadmap((prev) => {
           if (!prev) return prev;
-          return { ...prev, items: setGraph(prev.items) };
+          const updated = { ...prev, items: setGraph(prev.items) };
+          (async () => {
+            try {
+              const gSnap = await getGuide(bookId);
+              await putGuide(bookId, {
+                roadmap: updated,
+                completedIds: gSnap?.completedIds ?? completedRoadmapIds,
+              });
+              await cacheRoadmapGraphImages(bookId, updated);
+              const hydrated = await hydrateRoadmapWithCachedGraphs(bookId, updated, registerBlobUrl);
+              setReadingRoadmap(hydrated);
+            } catch (_e) { /* ignore */ }
+          })();
+          return updated;
         });
       }
     } catch (err) {
@@ -1050,9 +1314,22 @@ function BookView() {
         // Sort notes by creation date or another relevant field if needed for consistent highlighting
         notesData.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
         setNotes(notesData);
+        try {
+          const ann = await getAnnotations(bookId);
+          await putAnnotations(bookId, { bookmarks: ann?.bookmarks || [], notes: notesData });
+        } catch (_e) { /* ignore */ }
       } catch (err) {
         logger.error('Error fetching notes:', err);
-        setNotes([]); // Reset notes on error
+        try {
+          const ann = await getAnnotations(bookId);
+          if (ann && Array.isArray(ann.notes)) {
+            setNotes(ann.notes);
+          } else {
+            setNotes([]);
+          }
+        } catch (_e) {
+          setNotes([]);
+        }
       }
     };
 
@@ -1550,6 +1827,27 @@ function BookView() {
         alert("Authentication token not found.");
         return;
       }
+
+      if (!navigator.onLine || isOfflineSnapshot) {
+        setNotes((prev) => prev.filter((n) => (n._id || n.id) !== noteIdToDelete));
+        try {
+          const ann = await getAnnotations(bookId);
+          const nextNotes = (ann?.notes || []).filter((n) => (n._id || n.id) !== noteIdToDelete);
+          await putAnnotations(bookId, { bookmarks: ann?.bookmarks || [], notes: nextNotes });
+          if (isLocalId(noteIdToDelete)) {
+            await removePendingCreateNote(noteIdToDelete);
+          } else {
+            await addOutboxEntry({
+              type: 'delete_note',
+              bookId,
+              payload: { noteId: noteIdToDelete },
+            });
+          }
+          await refreshOutboxCount();
+        } catch (_e) { /* ignore */ }
+        return;
+      }
+
       const response = await fetch(`/api/notes/${noteIdToDelete}`, {
         method: 'DELETE',
         headers: {
@@ -1625,6 +1923,40 @@ function BookView() {
     } else {
         logger.warn("[BookView - handleNewNoteSaved] Received invalid newNote object or note without ID:", newNote);
     }
+  };
+
+  const handleOfflineNoteSave = async (noteData) => {
+    const clientId = newLocalId();
+    const note = {
+      id: clientId,
+      _id: clientId,
+      book_id: bookId,
+      content: noteData.content,
+      page_number: noteData.page_number,
+      source_text: noteData.source_text,
+      scroll_percentage: noteData.scroll_percentage,
+      global_character_offset: noteData.global_character_offset,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      _localClientId: clientId,
+    };
+    setNotes((prev) => [...prev, note].sort((a, b) => new Date(a.created_at) - new Date(b.created_at)));
+    try {
+      const ann = await getAnnotations(bookId);
+      await putAnnotations(bookId, {
+        bookmarks: ann?.bookmarks || [],
+        notes: [...(ann?.notes || []), note],
+      });
+      await addOutboxEntry({
+        type: 'create_note',
+        bookId,
+        payload: { clientId, ...noteData },
+      });
+      await refreshOutboxCount();
+    } catch (e) {
+      logger.error('[BookView - handleOfflineNoteSave]', e);
+    }
+    setNotesLLMPopupMode(null);
   };
 
   // Effect for scrolling to a note when scrollToGlobalOffset changes
@@ -2193,6 +2525,30 @@ function BookView() {
         logger.warn("[BookView - handleSaveBookmark] Auth token not found.");
         return;
       }
+
+      if (!navigator.onLine || isOfflineSnapshot) {
+        const clientId = newLocalId();
+        const localBookmark = {
+          ...bookmarkData,
+          id: clientId,
+          created_at: new Date().toISOString(),
+        };
+        setBookmarks((prev) => [...prev, localBookmark].sort((a, b) => new Date(a.created_at) - new Date(b.created_at)));
+        try {
+          const ann = await getAnnotations(bookId);
+          const next = [...(ann?.bookmarks || []), localBookmark];
+          await putAnnotations(bookId, { bookmarks: next, notes: ann?.notes || [] });
+          await addOutboxEntry({
+            type: 'create_bookmark',
+            bookId,
+            payload: { clientId, ...bookmarkData },
+          });
+          await refreshOutboxCount();
+        } catch (_e) { /* ignore */ }
+        closeAddBookmarkModal();
+        return;
+      }
+
       const response = await fetch('/api/bookmarks/', {
         method: 'POST',
         headers: {
@@ -2214,8 +2570,6 @@ function BookView() {
       }
 
       const savedBookmark = await response.json();
-      // Optionally, refresh bookmarks list here if displaying them on BookView
-      // setBookmarks(prevBookmarks => [...prevBookmarks, savedBookmark].sort((a, b) => new Date(a.created_at) - new Date(b.created_at)));
       logger.info("Bookmark saved successfully:", savedBookmark);
       closeAddBookmarkModal();
       fetchBookmarks(); // Refresh bookmarks list after saving a new one
@@ -2227,6 +2581,10 @@ function BookView() {
 
   // --- UPDATED: Handler for reformatting content ---
   const handleReformatPage = async () => {
+    if (serverOffline) {
+      alert('Reformatting requires an internet connection.');
+      return;
+    }
     const reformatTarget = selectedBookText ? "the selected text" : `page ${currentPage}`;
     const confirmMessage = `Are you sure you want to reformat ${reformatTarget}? This will permanently replace the content with an AI-generated version and cannot be undone.`;
 
@@ -2337,21 +2695,42 @@ function BookView() {
       ref={bookViewContainerRef}
       style={{
         display: 'flex',
-        flexDirection: isMobileView ? 'column' : 'row',
-        justifyContent: 'flex-start'
+        flexDirection: 'column',
+        justifyContent: 'flex-start',
+        height: '100%',
+        minHeight: 0,
       }}
     >
+      {serverOffline && (
+        <div
+          role="status"
+          style={{
+            width: '100%',
+            padding: '8px 16px',
+            background: '#fff3cd',
+            borderBottom: '1px solid #ffc107',
+            fontSize: '14px',
+            color: '#664d03',
+            flexShrink: 0,
+          }}
+        >
+          {outboxPendingCount > 0
+            ? 'Offline — edits will sync when you’re back online.'
+            : 'Offline — showing cached book.'}
+        </div>
+      )}
       {/* Main Content Area (Book/Guide and Notes) */}
       <div
         className="main-content-area"
         ref={mainContentAreaRef} // Ref for the resizer context
         style={{
-          flex: '1 1 auto', // Grow and shrink to fill available space
+          flex: '1 1 auto',
           flexDirection: isMobileView ? 'column' : 'row',
           height: '100%',
           overflow: 'hidden',
           display: 'flex',
-          minWidth: !isMobileView ? 0 : undefined, // Prevent flex item from overflowing
+          minWidth: !isMobileView ? 0 : undefined,
+          minHeight: 0,
         }}
       >
         {/* Book Pane Area */}
@@ -2432,7 +2811,7 @@ function BookView() {
                       <button 
                         onClick={() => { handleReformatPage(); setIsBookViewMenuOpen(false); }} 
                         className="dropdown-item control-button"
-                        disabled={isReformatting}
+                        disabled={isReformatting || serverOffline}
                         title={selectedBookText ? "Reformat selected text with AI." : "Reformat current page with AI. This cannot be undone."}
                       >
                         {isReformatting ? 'Reformatting...' : (selectedBookText ? 'Reformat Selection' : 'Reformat Page')}
@@ -2534,6 +2913,7 @@ function BookView() {
                   isVisible={true}
                   hasRoadmap={hasRoadmap}
                   isGenerating={isGeneratingGuide}
+                  serverActionsDisabled={serverOffline}
                   onGuideTextLink={(textLink) => {
                     const scrollTop = guideScrollContainerRef.current?.scrollTop ?? 0;
                     setGuideScrollPositionByPage(prev => ({ ...prev, [currentPage]: scrollTop }));
@@ -2603,6 +2983,8 @@ function BookView() {
               currentPage={currentPage}
               currentPageContent={currentPageContent}
               onNewNoteSaved={handleNewNoteSaved}
+              offline={serverOffline}
+              onOfflineNoteSave={handleOfflineNoteSave}
               mode="note"
               embedInModal
               onClose={() => setNotesLLMPopupMode(null)}
@@ -2629,6 +3011,8 @@ function BookView() {
               currentPage={currentPage}
               currentPageContent={currentPageContent}
               onNewNoteSaved={handleNewNoteSaved}
+              offline={serverOffline}
+              onOfflineNoteSave={handleOfflineNoteSave}
               mode="llm"
               embedInModal
               onClose={() => setNotesLLMPopupMode(null)}

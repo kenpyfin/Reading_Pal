@@ -3,7 +3,8 @@ uvicorn[standard]
 python-dotenv
 httpx # For async HTTP requests, e.g., to PDF service
 requests # For synchronous HTTP requests, e.g., potentially DeepSeek API
-motor<3.0 # Use a version compatible with MongoDB 3.6 (e.g., 2.x)
+motor<3.0 # MongoDB 3.6 compatible Motor/PyMongo stack
+dnspython # required for mongodb+srv connection URIs
 pydantic # For data validation and serialization
 anthropic # Anthropic LLM client
 ollama # Ollama LLM client

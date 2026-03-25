@@ -1,11 +1,13 @@
 import os
 import logging
+import re
 from motor.motor_asyncio import AsyncIOMotorClient
 from dotenv import load_dotenv
 from bson import ObjectId # Ensure ObjectId is imported
 from bson.errors import InvalidId # Import InvalidId for specific error handling
 from typing import Optional, List, Dict, Any, TYPE_CHECKING # Import types, Import TYPE_CHECKING
 from datetime import datetime # Import datetime
+from pymongo.errors import DuplicateKeyError
 
 # Import UserCreate for type hinting
 from backend.models.user import UserCreate
@@ -28,8 +30,8 @@ async def connect_to_mongo():
         try:
             client = AsyncIOMotorClient(MONGO_URI)
             db = client[DATABASE_NAME]
-            # The ismaster command is cheap and does not require auth.
-            await client.admin.command('ismaster')
+            # Use ping for broad MongoDB compatibility.
+            await client.admin.command('ping')
             logger.info("MongoDB connection successful")
         except Exception as e:
             logger.error(f"MongoDB connection failed: {e}")
@@ -286,80 +288,100 @@ async def create_or_update_user_from_google(user_data: 'UserCreate') -> Optional
         return None
 
     now = datetime.utcnow()
-    
-    # 1. Try to find user by google_id
-    user_doc = await database.users.find_one({"google_id": user_data.google_id})
+    google_id = str(user_data.google_id).strip()
+    email = str(user_data.email).strip().lower()
+    picture = str(user_data.picture) if user_data.picture else None
 
-    if user_doc:
-        # User found by google_id, update their information
-        update_fields = {
-            "email": user_data.email, # Google is source of truth for email if linked
-            "full_name": user_data.full_name,
-            "picture": str(user_data.picture) if user_data.picture else None, # Convert HttpUrl to string
-            "updated_at": now
-        }
-        update_fields = {k: v for k, v in update_fields.items() if v is not None} # Remove fields that are None in user_data
-
-        # Ensure 'updated_at' is always part of the update if other fields are present
-        if update_fields: # If there's anything to update (besides potentially just updated_at)
-            await database.users.update_one(
-                {"_id": user_doc["_id"]},
-                {"$set": update_fields}
-            )
-            logger.info(f"Updated user (found by google_id {user_data.google_id}): {user_data.email}. Modified count: {await database.users.count_documents({'_id': user_doc['_id']})}") # Log modified count or similar
-        else: # Only updated_at needs to be set (e.g. if all other fields from Google were None or matched)
-             await database.users.update_one(
-                {"_id": user_doc["_id"]},
-                {"$set": {"updated_at": now}}
-            )
-        logger.info(f"User {user_data.email} (Google ID: {user_data.google_id}) processed. DB ID: {user_doc['_id']}.")
-        return str(user_doc["_id"])
-    else:
-        # No user found by google_id. Try to find by email.
-        logger.info(f"User not found by google_id {user_data.google_id}. Checking by email: {user_data.email}")
-        user_doc_by_email = await database.users.find_one({"email": user_data.email})
-
-        if user_doc_by_email:
-            # User found by email. Link Google ID and update info.
-            logger.info(f"User found by email {user_data.email}. Linking google_id {user_data.google_id}.")
+    try:
+        # 1) Prefer exact google_id match.
+        user_doc = await database.users.find_one({"google_id": google_id})
+        if user_doc:
             update_fields = {
-                "google_id": user_data.google_id, # Add/update google_id
-                "full_name": user_data.full_name, # Update name from Google
-                "picture": str(user_data.picture) if user_data.picture else None,     # Convert HttpUrl to string
-                "updated_at": now
+                "email": email,
+                "full_name": user_data.full_name,
+                "picture": picture,
+                "updated_at": now,
             }
-            # Ensure email isn't accidentally set to None if user_data.email was None (UserCreate model should enforce email presence)
-            if user_data.email:
-                 update_fields["email"] = user_data.email # This should be redundant if UserCreate enforces email
-            
             update_fields = {k: v for k, v in update_fields.items() if v is not None}
+            await database.users.update_one({"_id": user_doc["_id"]}, {"$set": update_fields})
+            logger.info(
+                f"Updated user (google_id match) {email}. DB ID: {user_doc['_id']}."
+            )
+            return str(user_doc["_id"])
 
+        # 2) Fallback to email match (case-insensitive), then link google_id.
+        logger.info(f"User not found by google_id {google_id}. Checking by email: {email}")
+        user_doc_by_email = await database.users.find_one(
+            {"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}}
+        )
+        if user_doc_by_email:
+            update_fields = {
+                "google_id": google_id,
+                "email": email,
+                "full_name": user_data.full_name,
+                "picture": picture,
+                "updated_at": now,
+            }
+            update_fields = {k: v for k, v in update_fields.items() if v is not None}
             await database.users.update_one(
                 {"_id": user_doc_by_email["_id"]},
-                {"$set": update_fields}
+                {"$set": update_fields},
             )
-            logger.info(f"Linked google_id to existing user (found by email {user_data.email}). DB ID: {user_doc_by_email['_id']}.")
+            logger.info(
+                f"Linked google_id to existing email user {email}. DB ID: {user_doc_by_email['_id']}."
+            )
             return str(user_doc_by_email["_id"])
-        else:
-            # No user found by google_id or email. Create a new user.
-            logger.info(f"No user found by email {user_data.email} either. Creating new user.")
-            new_user_doc_data = {
-                "google_id": user_data.google_id,
-                "email": user_data.email,
-                "full_name": user_data.full_name,
-                "picture": str(user_data.picture) if user_data.picture else None, # Convert HttpUrl to string
-                "is_active": True,
-                "is_superuser": False,
-                "created_at": now,
-                "updated_at": now
+
+        # 3) Create new user.
+        logger.info(f"No user found by google_id/email for {email}. Creating new user.")
+        new_user_doc_data = {
+            "google_id": google_id,
+            "email": email,
+            "full_name": user_data.full_name,
+            "picture": picture,
+            "is_active": True,
+            "is_superuser": False,
+            "created_at": now,
+            "updated_at": now,
+        }
+        result = await database.users.insert_one(new_user_doc_data)
+        logger.info(f"Created new user {email} (Google ID: {google_id}) with DB ID: {result.inserted_id}")
+        return str(result.inserted_id)
+    except DuplicateKeyError:
+        # Handle login race / pre-existing unique index conflicts by refetching and updating.
+        logger.warning(
+            f"DuplicateKeyError while processing Google user {email} ({google_id}); retrying lookup.",
+            exc_info=True,
+        )
+        existing_doc = await database.users.find_one(
+            {
+                "$or": [
+                    {"google_id": google_id},
+                    {"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}},
+                ]
             }
-            try:
-                result = await database.users.insert_one(new_user_doc_data)
-                logger.info(f"Created new user {user_data.email} (Google ID: {user_data.google_id}) with DB ID: {result.inserted_id}")
-                return str(result.inserted_id)
-            except Exception as e: # This could still be a different DB error (e.g. connection, other constraint)
-                logger.error(f"Error creating new user {user_data.email} even after checks: {e}", exc_info=True)
-                return None
+        )
+        if not existing_doc:
+            return None
+        await database.users.update_one(
+            {"_id": existing_doc["_id"]},
+            {
+                "$set": {
+                    "google_id": google_id,
+                    "email": email,
+                    "full_name": user_data.full_name,
+                    "picture": picture,
+                    "updated_at": now,
+                }
+            },
+        )
+        return str(existing_doc["_id"])
+    except Exception as e:
+        logger.error(
+            f"Error creating/updating Google user {email} ({google_id}): {e}",
+            exc_info=True,
+        )
+        return None
 
 async def get_all_users() -> List[Dict[str, Any]]:
     """Retrieves all users from the database."""

@@ -24,6 +24,7 @@ function RoadmapCard({
   onGenerateGraph,
   graphLoadingById,
   onOpenGraphImage,
+  serverActionsDisabled = false,
   depth = 0,
 }) {
   const [expanded, setExpanded] = useState(depth < 2);
@@ -102,7 +103,7 @@ function RoadmapCard({
         <button
           className="guide-section-link secondary"
           type="button"
-          disabled={isGraphLoading}
+          disabled={isGraphLoading || serverActionsDisabled}
           onClick={() => onGenerateGraph(item.id)}
         >
           {isGraphLoading ? 'Generating graph...' : 'Generate Graph'}
@@ -134,6 +135,7 @@ function RoadmapCard({
               onGenerateGraph={onGenerateGraph}
               graphLoadingById={graphLoadingById}
               onOpenGraphImage={onOpenGraphImage}
+              serverActionsDisabled={serverActionsDisabled}
               depth={depth + 1}
             />
           ))}
@@ -160,6 +162,7 @@ const ReadingGuidePane = ({
   scrollContainerRef,
   scrollPositionToRestore = 0,
   embedInMainArea = false,
+  serverActionsDisabled = false,
 }) => {
   const paneRef = useRef(null);
   const [selectedGraphImage, setSelectedGraphImage] = useState(null);
@@ -212,7 +215,11 @@ const ReadingGuidePane = ({
       </div>
 
       <div className="reading-guide-actions">
-        <button onClick={onGenerateRoadmap} disabled={isLoading || isGenerating} className="generate-guide-btn">
+        <button
+          onClick={onGenerateRoadmap}
+          disabled={isLoading || isGenerating || serverActionsDisabled}
+          className="generate-guide-btn"
+        >
           {isGenerating ? 'Generating...' : (roadmap ? 'Regenerate Roadmap' : 'Generate Roadmap')}
         </button>
         {totalItems > 0 && (
@@ -241,6 +248,7 @@ const ReadingGuidePane = ({
                 onGenerateGraph={onGenerateGraph}
                 graphLoadingById={graphLoadingById}
                 onOpenGraphImage={(url, title) => setSelectedGraphImage({ url, title })}
+                serverActionsDisabled={serverActionsDisabled}
               />
             ))}
           </div>

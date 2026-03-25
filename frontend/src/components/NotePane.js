@@ -17,6 +17,8 @@ const NotePane = ({
   mode = 'both', // 'note' | 'llm' | 'both' - which section(s) to render
   embedInModal = false, // when true, omit h2 and mobile header (modal provides title/close)
   onClose, // optional; used when embedInModal to close the modal
+  offline = false,
+  onOfflineNoteSave,
 }) => {
   const [newNoteContent, setNewNoteContent] = useState('');
   const [isPageNoteMode, setIsPageNoteMode] = useState(true);
@@ -75,6 +77,12 @@ const NotePane = ({
 
     logger.debug("[NotePane - handleSaveNote] Sending noteData to backend:", noteData); // Use logger
 
+    if (offline && typeof onOfflineNoteSave === 'function') {
+      onOfflineNoteSave(noteData);
+      setNewNoteContent('');
+      setError(null);
+      return;
+    }
 
     try {
       const response = await fetch('/api/notes/', {
@@ -108,6 +116,10 @@ const NotePane = ({
     if (!bookId || !llmQuestion.trim()) {
         setLlmError("Please enter a question.");
         return;
+    }
+    if (offline) {
+      setLlmError('Ask LLM requires an internet connection.');
+      return;
     }
     setLlmLoading(true);
     setLlmAskResponse(null);
