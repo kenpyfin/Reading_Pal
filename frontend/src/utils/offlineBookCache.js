@@ -4,13 +4,16 @@
  */
 
 const DB_NAME = 'readingPalOffline';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 const STORE_META = 'meta';
 const STORE_GUIDE = 'guide';
 const STORE_BLOBS = 'blobs';
 const STORE_ANNOTATIONS = 'annotations';
 const STORE_OUTBOX = 'outbox';
+const STORE_BOOK_LIST = 'bookListSnapshot';
+
+const BOOK_LIST_SCOPE_DEFAULT = 'default';
 
 let dbPromise = null;
 
@@ -36,6 +39,9 @@ function openDb() {
         }
         if (!db.objectStoreNames.contains(STORE_OUTBOX)) {
           db.createObjectStore(STORE_OUTBOX, { keyPath: 'id' });
+        }
+        if (!db.objectStoreNames.contains(STORE_BOOK_LIST)) {
+          db.createObjectStore(STORE_BOOK_LIST, { keyPath: 'scope' });
         }
       };
     });
@@ -231,6 +237,67 @@ export async function getBookMeta(bookId) {
     r.onsuccess = () => resolve(r.result || null);
     r.onerror = () => reject(r.error);
   });
+}
+
+/** Last successful paginated book list from the API (for offline navigation back to BookList). */
+export async function putBookListSnapshot({ books, totalBooks, currentPage }) {
+  const db = await openDb();
+  const rec = {
+    scope: BOOK_LIST_SCOPE_DEFAULT,
+    books: Array.isArray(books) ? books.map((b) => ({ ...b })) : [],
+    totalBooks: typeof totalBooks === 'number' ? totalBooks : 0,
+    currentPage: typeof currentPage === 'number' && currentPage > 0 ? currentPage : 1,
+    cachedAt: Date.now(),
+  };
+  return new Promise((resolve, reject) => {
+    const r = db.transaction(STORE_BOOK_LIST, 'readwrite').objectStore(STORE_BOOK_LIST).put(rec);
+    r.onsuccess = () => resolve();
+    r.onerror = () => reject(r.error);
+  });
+}
+
+export async function getBookListSnapshot() {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const r = db.transaction(STORE_BOOK_LIST, 'readonly').objectStore(STORE_BOOK_LIST).get(BOOK_LIST_SCOPE_DEFAULT);
+    r.onsuccess = () => resolve(r.result || null);
+    r.onerror = () => reject(r.error);
+  });
+}
+
+/**
+ * Minimal list rows for books that have cached meta (e.g. opened in BookView) but may not appear in list snapshot.
+ */
+export async function getBookSummariesFromMeta() {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const r = db.transaction(STORE_META, 'readonly').objectStore(STORE_META).getAll();
+    r.onsuccess = () => {
+      const rows = [];
+      for (const rec of r.result || []) {
+        if (!rec || !rec.bookId || !rec.bookData) continue;
+        const bd = rec.bookData;
+        const id = bd.id || bd._id || rec.bookId;
+        rows.push({
+          id: String(id),
+          title: bd.title,
+          original_filename: bd.original_filename,
+          status: bd.status || 'completed',
+          ...(bd.job_id ? { job_id: bd.job_id } : {}),
+        });
+      }
+      resolve(rows);
+    };
+    r.onerror = () => reject(r.error);
+  });
+}
+
+export function isRecoverableListFetchError(err) {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return true;
+  if (!err) return false;
+  if (err.name === 'TypeError') return true;
+  const msg = err.message != null ? String(err.message) : '';
+  return msg.includes('Failed to fetch');
 }
 
 export async function putGuide(bookId, { roadmap, completedIds }) {

@@ -1,7 +1,13 @@
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { getAuthHeaders } from '../utils/authRequest';
+import {
+  putBookListSnapshot,
+  getBookListSnapshot,
+  getBookSummariesFromMeta,
+  isRecoverableListFetchError,
+} from '../utils/offlineBookCache';
 
 // --- ADD THIS LINE ---
 console.log("[BookList.js SRC MODULE LEVEL] BookList.js module loaded"); 
@@ -24,6 +30,13 @@ function BookList() {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalBooks, setTotalBooks] = useState(0);
   const PAGE_SIZE = 10;
+
+  const [netOnline, setNetOnline] = useState(
+    typeof navigator !== 'undefined' ? navigator.onLine : true
+  );
+  const [fromOfflineCache, setFromOfflineCache] = useState(false);
+
+  const listReadOnly = !netOnline || fromOfflineCache;
 
   // --- Style definitions for buttons and actions container ---
   const actionsContainerBaseStyle = {
@@ -81,16 +94,13 @@ function BookList() {
   };
   // --- End of style definitions ---
 
-  // Function to fetch the list of books from the backend
-  const fetchBooks = async () => {
+  const fetchBooks = useCallback(async () => {
       console.log("[BookList.js SRC CONSOLE.LOG] Fetching books list from backend...");
       const authHeaders = getAuthHeaders();
       if (!authHeaders) {
           console.error("[BookList.js SRC CONSOLE.ERROR] No auth token found (rawToken is falsy). User might not be logged in.");
           setError("Authentication token not found. Please log in.");
-          setLoading(false); // Stop loading as we can't proceed
-          // Optionally, redirect to login page here
-          // navigate('/login'); 
+          setLoading(false);
           return;
       }
 
@@ -107,7 +117,7 @@ function BookList() {
               headers: requestHeaders
           });
           if (!response.ok) {
-              const errorText = await response.text(); 
+              const errorText = await response.text();
               console.error(`[BookList.js SRC CONSOLE.ERROR] HTTP error fetching books: ${response.status} - ${errorText}`);
               let detail = errorText;
               try {
@@ -118,26 +128,76 @@ function BookList() {
               }
               throw new Error(`HTTP error! status: ${response.status} - ${detail}`);
           }
-          
-          // Get total count from header
+
           const totalCount = response.headers.get('X-Total-Count');
+          let nextTotal = 0;
           if (totalCount !== null) {
-              setTotalBooks(parseInt(totalCount, 10));
+              nextTotal = parseInt(totalCount, 10);
+              setTotalBooks(nextTotal);
           }
 
           const data = await response.json();
           console.log(`[BookList.js SRC CONSOLE.LOG] Successfully fetched ${data.length} books.`);
           const activeBooks = data.filter(book => book.status !== 'failed');
           setBooks(activeBooks);
-          setError(null); // Clear any previous error on successful fetch
+          setFromOfflineCache(false);
+          setError(null);
+          const snapshotTotal =
+            nextTotal > 0 ? nextTotal : (currentPage - 1) * PAGE_SIZE + activeBooks.length;
+          if (totalCount === null && snapshotTotal > 0) {
+            setTotalBooks(snapshotTotal);
+          }
+          try {
+            await putBookListSnapshot({
+              books: activeBooks,
+              totalBooks: snapshotTotal,
+              currentPage,
+            });
+          } catch (snapErr) {
+            console.warn('[BookList] Failed to persist list snapshot:', snapErr);
+          }
       } catch (error) {
           console.error("[BookList.js SRC CONSOLE.ERROR] Error fetching books:", error);
-          setError(error.message || "Failed to load books. Please try again later.");
-          // Do not set books to [] here, allow existing books to be displayed if any
+          if (isRecoverableListFetchError(error)) {
+            try {
+              const snap = await getBookListSnapshot();
+              const metaRows = await getBookSummariesFromMeta();
+              const seen = new Set();
+              const merged = [];
+              for (const b of snap?.books || []) {
+                if (b && b.id != null) {
+                  merged.push(b);
+                  seen.add(String(b.id));
+                }
+              }
+              for (const m of metaRows) {
+                if (m && m.id != null && !seen.has(String(m.id))) {
+                  merged.push(m);
+                  seen.add(String(m.id));
+                }
+              }
+              if (merged.length > 0) {
+                setBooks(merged);
+                setTotalBooks(Math.max(snap?.totalBooks || 0, merged.length));
+                if (snap && typeof snap.currentPage === 'number' && snap.currentPage > 0) {
+                  setCurrentPage(snap.currentPage);
+                }
+                setFromOfflineCache(true);
+                setError(null);
+              } else {
+                setError(error.message || "Failed to load books. Please try again later.");
+              }
+            } catch (cacheErr) {
+              console.error('[BookList] Offline cache load failed:', cacheErr);
+              setError(error.message || "Failed to load books. Please try again later.");
+            }
+          } else {
+            setError(error.message || "Failed to load books. Please try again later.");
+          }
       } finally {
           setLoading(false);
       }
-  };
+  }, [currentPage]);
 
   const checkBookStatus = async (bookId, jobId) => {
       if (!jobId) return null;
@@ -158,12 +218,31 @@ function BookList() {
   };
 
   useEffect(() => {
-    setLoading(true); // Set loading true only on initial mount fetch
+    setLoading(true);
     setError(null);
     fetchBooks();
-  }, [currentPage]); // Re-fetch when page changes
+  }, [currentPage, fetchBooks]);
 
   useEffect(() => {
+    const syncOnline = () => setNetOnline(navigator.onLine);
+    const onOnline = () => {
+      syncOnline();
+      if (getAuthHeaders()) {
+        setLoading(true);
+        fetchBooks();
+      }
+    };
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', syncOnline);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', syncOnline);
+    };
+  }, [fetchBooks]);
+
+  useEffect(() => {
+      if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+      if (fromOfflineCache) return;
       const pollableBooks = books.filter(book =>
           (book.status === 'processing' || book.status === 'pending') && book.job_id
       );
@@ -205,9 +284,12 @@ function BookList() {
           console.log("Clearing polling interval.");
           clearInterval(intervalId);
       };
-  }, [books]);
+  }, [books, fromOfflineCache]);
 
   const handleDeleteBook = async (bookId, bookTitle) => {
+    if (listReadOnly) {
+      return;
+    }
     if (!window.confirm(`Are you sure you want to delete the book "${bookTitle}"? This action cannot be undone.`)) {
         return;
     }
@@ -246,6 +328,9 @@ function BookList() {
   };
 
   const handleRenameBook = async (bookId, currentTitle) => {
+    if (listReadOnly) {
+      return;
+    }
     const newTitle = window.prompt("Enter the new title for the book:", currentTitle);
     if (newTitle === null || newTitle.trim() === "" || newTitle.trim() === currentTitle) {
         if (newTitle !== null && newTitle.trim() !== "" && newTitle.trim() === currentTitle) {
@@ -307,6 +392,19 @@ function BookList() {
   return (
     <div className="book-list-container" style={{ fontFamily: 'Arial, sans-serif', padding: '20px' }}>
       <h2 style={{ marginBottom: '20px', color: '#333' }}>Available Books</h2>
+      {listReadOnly && books.length > 0 && (
+        <p style={{
+          marginBottom: '12px',
+          padding: '10px 12px',
+          backgroundColor: '#fff8e6',
+          border: '1px solid #ffe0a3',
+          borderRadius: '4px',
+          color: '#664d03',
+          fontSize: '14px',
+        }}>
+          Offline — showing cached book list. Rename, delete, and pagination need a connection.
+        </p>
+      )}
       {error && <p style={{ color: 'red', marginBottom: '15px' }}>Error: {error}</p>} {/* Display error message above list */}
       {books.length === 0 && !loading ? (
         <p>No books found. <Link to="/upload" style={{ color: '#007bff' }}>Upload a PDF</Link> to get started!</p>
@@ -357,7 +455,7 @@ function BookList() {
                 <button
                   title="Rename Book"
                   onClick={(e) => { e.stopPropagation(); handleRenameBook(book.id, book.title || book.original_filename);}}
-                  disabled={renamingId === book.id || deletingId === book.id || book.status === 'processing'}
+                  disabled={listReadOnly || renamingId === book.id || deletingId === book.id || book.status === 'processing'}
                   style={renamingId === book.id ? {...renameButtonStyle, backgroundColor: renameButtonHoverStyle.backgroundColor} : renameButtonStyle}
                   onMouseEnter={(e) => {
                     if (!(renamingId === book.id || deletingId === book.id || book.status === 'processing')) {
@@ -379,7 +477,7 @@ function BookList() {
                 <button
                   title="Delete Book"
                   onClick={(e) => { e.stopPropagation(); handleDeleteBook(book.id, book.title || book.original_filename);}}
-                  disabled={deletingId === book.id || renamingId === book.id || book.status === 'processing'}
+                  disabled={listReadOnly || deletingId === book.id || renamingId === book.id || book.status === 'processing'}
                   style={deletingId === book.id ? {...deleteButtonStyle, backgroundColor: deleteButtonHoverStyle.backgroundColor} : deleteButtonStyle}
                    onMouseEnter={(e) => {
                     if (!(renamingId === book.id || deletingId === book.id || book.status === 'processing')) {
@@ -411,11 +509,11 @@ function BookList() {
       }}>
           <button 
               onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-              disabled={currentPage === 1}
+              disabled={listReadOnly || currentPage === 1}
               style={{
                   ...baseButtonStyle,
-                  opacity: currentPage === 1 ? 0.5 : 1,
-                  cursor: currentPage === 1 ? 'not-allowed' : 'pointer'
+                  opacity: listReadOnly || currentPage === 1 ? 0.5 : 1,
+                  cursor: listReadOnly || currentPage === 1 ? 'not-allowed' : 'pointer'
               }}
           >
               Previous
@@ -427,11 +525,11 @@ function BookList() {
 
           <button 
               onClick={() => setCurrentPage(p => p + 1)}
-              disabled={currentPage * PAGE_SIZE >= totalBooks}
+              disabled={listReadOnly || currentPage * PAGE_SIZE >= totalBooks}
               style={{
                   ...baseButtonStyle,
-                  opacity: currentPage * PAGE_SIZE >= totalBooks ? 0.5 : 1,
-                  cursor: currentPage * PAGE_SIZE >= totalBooks ? 'not-allowed' : 'pointer'
+                  opacity: listReadOnly || currentPage * PAGE_SIZE >= totalBooks ? 0.5 : 1,
+                  cursor: listReadOnly || currentPage * PAGE_SIZE >= totalBooks ? 'not-allowed' : 'pointer'
               }}
           >
               Next

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom'; // Import useNavigate
 import { getAuthHeaders } from '../utils/authRequest';
 
@@ -10,7 +10,20 @@ function PdfUploadForm() {
   const [title, setTitle] = useState('');
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState(null);
+  const [netOnline, setNetOnline] = useState(
+    typeof navigator !== 'undefined' ? navigator.onLine : true
+  );
   const navigate = useNavigate(); // Get the navigate function
+
+  useEffect(() => {
+    const sync = () => setNetOnline(navigator.onLine);
+    window.addEventListener('online', sync);
+    window.addEventListener('offline', sync);
+    return () => {
+      window.removeEventListener('online', sync);
+      window.removeEventListener('offline', sync);
+    };
+  }, []);
 
   const handleFileChange = (event) => {
     setSelectedFile(event.target.files[0]);
@@ -22,6 +35,10 @@ function PdfUploadForm() {
   };
 
   const handleUpload = async () => {
+    if (!netOnline) {
+      setError('Upload requires an internet connection.');
+      return;
+    }
     if (!selectedFile) {
       setError("Please select a PDF file.");
       return;
@@ -123,6 +140,20 @@ function PdfUploadForm() {
     // --- Use consistent styling from BookList ---
     <div className="book-list-container"> {/* Reuse container style */}
       <h2>Upload New PDF</h2>
+      {!netOnline && (
+        <p style={{
+          marginBottom: '15px',
+          padding: '10px 12px',
+          backgroundColor: '#fff8e6',
+          border: '1px solid #ffe0a3',
+          borderRadius: '4px',
+          color: '#664d03',
+          fontSize: '14px',
+          textAlign: 'center',
+        }}>
+          Upload requires a connection to the server. You can still read cached books from the book list.
+        </p>
+      )}
       {error && <p style={{ color: 'red', textAlign: 'center', marginBottom: '15px' }}>{error}</p>}
 
       {/* Form Fields Styling */}
@@ -133,7 +164,7 @@ function PdfUploadForm() {
           id="pdf-file"
           accept=".pdf"
           onChange={handleFileChange}
-          disabled={uploading}
+          disabled={uploading || !netOnline}
           style={{ border: '1px solid #ccc', padding: '8px', borderRadius: '4px', maxWidth: '400px', width: '100%' }}
         />
         {selectedFile && <p style={{ fontSize: '0.9em', marginTop: '5px', color: '#555' }}>Selected: {selectedFile.name}</p>}
@@ -147,7 +178,7 @@ function PdfUploadForm() {
           value={title}
           onChange={handleTitleChange}
           placeholder="Leave blank to use filename"
-          disabled={uploading}
+          disabled={uploading || !netOnline}
           style={{ border: '1px solid #ccc', padding: '8px', borderRadius: '4px', maxWidth: '400px', width: '100%' }}
         />
       </div>
@@ -156,22 +187,22 @@ function PdfUploadForm() {
       <div style={{ textAlign: 'center' }}> {/* Center the button */}
         <button
           onClick={handleUpload}
-          disabled={!selectedFile || uploading}
+          disabled={!selectedFile || uploading || !netOnline}
           // --- Reuse button style from BookList upload link ---
           style={{
             display: 'inline-block',
             padding: '10px 20px',
-            backgroundColor: (!selectedFile || uploading) ? '#ccc' : '#007bff', // Grey out when disabled
+            backgroundColor: (!selectedFile || uploading || !netOnline) ? '#ccc' : '#007bff', // Grey out when disabled
             color: 'white',
             textDecoration: 'none',
             border: 'none', // Remove default border
             borderRadius: '5px',
             fontWeight: '500',
-            cursor: (!selectedFile || uploading) ? 'not-allowed' : 'pointer', // Change cursor when disabled
+            cursor: (!selectedFile || uploading || !netOnline) ? 'not-allowed' : 'pointer', // Change cursor when disabled
             transition: 'background-color 0.2s ease-in-out',
           }}
-          onMouseOver={(e) => { if (!(!selectedFile || uploading)) e.currentTarget.style.backgroundColor = '#0056b3'; }} // Hover effect only if enabled
-          onMouseOut={(e) => { if (!(!selectedFile || uploading)) e.currentTarget.style.backgroundColor = '#007bff'; }} // Restore color on mouse out
+          onMouseOver={(e) => { if (selectedFile && !uploading && netOnline) e.currentTarget.style.backgroundColor = '#0056b3'; }} // Hover effect only if enabled
+          onMouseOut={(e) => { if (selectedFile && !uploading && netOnline) e.currentTarget.style.backgroundColor = '#007bff'; }} // Restore color on mouse out
         >
           {uploading ? 'Uploading...' : 'Upload and Process'}
         </button>

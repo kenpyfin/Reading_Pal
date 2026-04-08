@@ -29,6 +29,13 @@ Use a reverse-chronological list (newest first). Each entry should be short and 
 
 <!-- New entries go below this comment, newest first. -->
 
+## 2026-03-25 — Cross-route offline: book list + upload
+
+- **What:** IndexedDB (`readingPalOffline` v2) gains `bookListSnapshot` for the last successful paginated `/api/books/` response; `getBookSummariesFromMeta()` lists books with cached `meta`. BookList persists on success, rehydrates from snapshot plus meta on network/offline failure, shows a banner, and disables rename/delete/pagination while offline or when showing cache. PdfUploadForm listens for `online`/`offline`, disables inputs and blocks upload without a connection.
+- **Why:** Navigating BookView → book list remounted BookList and cleared state; offline fetch left an empty list and a full-page error. Upload offline was confusing without gating.
+- **Where:** `frontend/src/utils/offlineBookCache.js`, `frontend/src/pages/BookList.js`, `frontend/src/components/PdfUploadForm.js`
+- **Notes:** Existing users get DB upgrade on next open (v1→v2). Pagination while offline is intentionally disabled; coming back online refetches via the `online` event.
+
 ## 2026-03-23 — Backend Python corrected to 3.10 for Motor 2.x
 
 - **What:** Corrected backend base image from Python 3.11 to Python 3.10 while keeping `motor<3.0`.
