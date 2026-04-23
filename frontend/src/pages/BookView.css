@@ -24,14 +24,28 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  min-height: 0;
 }
 
+/* Column: toolbar does not scroll; only .book-pane-body scrolls (reliable vs sticky + overflow:hidden ancestors) */
 .book-pane-container {
-  flex-grow: 1;
-  overflow-y: auto;
-  padding: 20px;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
   box-sizing: border-box;
-  height: 100%;
+}
+
+.book-pane-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 20px;
+  padding-top: calc(20px + var(--book-toolbar-inset, 0px));
+  box-sizing: border-box;
 }
 
 
@@ -445,15 +459,55 @@
 @import url('../components/NoteDisplayModal.css');
 
 /* --- Styling for the new Book Pane Controls Header --- */
+.book-pane-controls-header-wrapper {
+  flex-shrink: 0;
+  align-self: stretch;
+}
+
+.book-pane-controls-header-wrapper--floated {
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
+}
+
 .book-pane-controls-header {
   display: flex;
   justify-content: space-between; /* Key for layout */
   align-items: center;
   padding: 8px 12px;
-  border-bottom: 1px solid #e0e0e0;
   background-color: #f8f9fa;
+  border-bottom: none;
   flex-shrink: 0;
-  position: relative; /* For dropdown positioning context */
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .book-pane-controls-header {
+    scroll-behavior: auto;
+  }
+}
+
+.book-toolbar-toggle-btn {
+  flex-shrink: 0;
+  margin-left: auto;
+  min-width: 36px;
+  padding: 0 10px;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.book-pane-controls-header .book-toolbar-toggle-btn {
+  margin-left: 8px;
+}
+
+.book-toolbar-callout-btn {
+  position: fixed;
+  min-width: 40px;
+  padding: 0;
+  border-radius: 999px;
+  font-size: 1.1rem;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
 }
 
 /* Book View Menu Container (Left) */

@@ -409,7 +409,7 @@
   margin: 3px 0;
 }
 
-.roadmap-thought-process {
+.roadmap-alternative-reading {
   margin-top: 10px;
   border: 1px solid #e1e7ef;
   border-radius: 6px;
@@ -417,15 +417,18 @@
   background: #fcfdff;
 }
 
-.roadmap-thought-process summary {
+.roadmap-alternative-reading summary {
   cursor: pointer;
   font-weight: 600;
   color: #34495e;
 }
 
-.roadmap-thought-process ul {
-  margin: 8px 0 0 0;
-  padding-left: 18px;
+.roadmap-alternative-reading-content {
+  margin-top: 8px;
+}
+
+.roadmap-alternative-reading-content p {
+  margin: 0;
 }
 
 .roadmap-quote {

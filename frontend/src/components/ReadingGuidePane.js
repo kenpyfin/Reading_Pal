@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import './ReadingGuidePane.css';
@@ -16,21 +16,49 @@ function countItems(items) {
   return count;
 }
 
+/** Stack of parent ids that must be expanded for `targetId` to appear (excludes target). */
+function ancestorIdsToExpandForRoadmapItem(items, targetId) {
+  const target = String(targetId);
+  const walk = (nodes, stack) => {
+    if (!nodes) return null;
+    for (const n of nodes) {
+      if (String(n.id) === target) return stack;
+      if (n.children && n.children.length > 0) {
+        const found = walk(n.children, [...stack, n.id]);
+        if (found !== null) return found;
+      }
+    }
+    return null;
+  };
+  const path = walk(items, []);
+  return path === null ? [] : path;
+}
+
 function RoadmapCard({
   item,
   completedIds,
   onToggleProgress,
   onGuideTextLink,
   onGenerateGraph,
+  onGenerateAlternativeReading,
   graphLoadingById,
+  alternativeLoadingById,
   onOpenGraphImage,
   serverActionsDisabled = false,
   depth = 0,
+  mustExpandIds,
 }) {
-  const [expanded, setExpanded] = useState(depth < 2);
+  const idStr = String(item.id);
+  const mustExpand = mustExpandIds && mustExpandIds.has(idStr);
+  const [expanded, setExpanded] = useState(() => depth < 2 || !!mustExpand);
   const hasChildren = item.children && item.children.length > 0;
   const isCompleted = completedIds.includes(item.id);
   const isGraphLoading = !!graphLoadingById[item.id];
+  const isAlternativeReadingLoading = !!alternativeLoadingById[item.id];
+
+  useEffect(() => {
+    if (mustExpand) setExpanded(true);
+  }, [mustExpand]);
 
   const handleViewOriginal = () => {
     if (!onGuideTextLink) return;
@@ -41,11 +69,16 @@ function RoadmapCard({
       key_quote: item.key_quote || null,
       context_before: null,
       context_after: null,
+      sourceItemId: item.id,
     });
   };
 
   return (
-    <div className="guide-section roadmap-card" style={{ marginLeft: depth * 14 }}>
+    <div
+      className="guide-section roadmap-card"
+      style={{ marginLeft: depth * 14 }}
+      data-roadmap-item-id={idStr}
+    >
       <div className="roadmap-card-header">
         <div className="roadmap-left">
           {hasChildren ? (
@@ -84,14 +117,12 @@ function RoadmapCard({
           )}
         </div>
       )}
-      {Array.isArray(item.thought_process) && item.thought_process.length > 0 && (
-        <details className="roadmap-thought-process">
-          <summary>Thought process</summary>
-          <ul>
-            {item.thought_process.map((step, idx) => (
-              <li key={`${item.id}-thought-${idx}`}>{step}</li>
-            ))}
-          </ul>
+      {typeof item.alternative_reading === 'string' && item.alternative_reading.trim() && (
+        <details className="roadmap-alternative-reading">
+          <summary>Author Shortcut</summary>
+          <div className="roadmap-alternative-reading-content">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.alternative_reading}</ReactMarkdown>
+          </div>
         </details>
       )}
       {item.key_quote && <blockquote className="roadmap-quote">"{item.key_quote}"</blockquote>}
@@ -107,6 +138,14 @@ function RoadmapCard({
           onClick={() => onGenerateGraph(item.id)}
         >
           {isGraphLoading ? 'Generating graph...' : 'Generate Graph'}
+        </button>
+        <button
+          className="guide-section-link secondary"
+          type="button"
+          disabled={isAlternativeReadingLoading || serverActionsDisabled || !onGenerateAlternativeReading}
+          onClick={() => onGenerateAlternativeReading && onGenerateAlternativeReading(item.id)}
+        >
+          {isAlternativeReadingLoading ? 'Generating author shortcut...' : 'Author Shortcut'}
         </button>
       </div>
 
@@ -133,10 +172,13 @@ function RoadmapCard({
               onToggleProgress={onToggleProgress}
               onGuideTextLink={onGuideTextLink}
               onGenerateGraph={onGenerateGraph}
+              onGenerateAlternativeReading={onGenerateAlternativeReading}
               graphLoadingById={graphLoadingById}
+              alternativeLoadingById={alternativeLoadingById}
               onOpenGraphImage={onOpenGraphImage}
               serverActionsDisabled={serverActionsDisabled}
               depth={depth + 1}
+              mustExpandIds={mustExpandIds}
             />
           ))}
         </div>
@@ -152,7 +194,9 @@ const ReadingGuidePane = ({
   onToggleProgress,
   onGuideTextLink,
   onGenerateGraph,
+  onGenerateAlternativeReading,
   graphLoadingById = {},
+  alternativeLoadingById = {},
   isLoading,
   isGenerating,
   error,
@@ -163,19 +207,62 @@ const ReadingGuidePane = ({
   scrollPositionToRestore = 0,
   embedInMainArea = false,
   serverActionsDisabled = false,
+  focusItemId = null,
+  onRoadmapReturnFocusDone,
 }) => {
   const paneRef = useRef(null);
   const [selectedGraphImage, setSelectedGraphImage] = useState(null);
 
+  const mustExpandIds = useMemo(() => {
+    if (!focusItemId || !roadmap?.items?.length) return null;
+    const ids = ancestorIdsToExpandForRoadmapItem(roadmap.items, focusItemId);
+    return new Set(ids.map(String));
+  }, [focusItemId, roadmap]);
+
   useEffect(() => {
-    if (scrollPositionToRestore > 0 && scrollContainerRef?.current) {
-      const el = scrollContainerRef.current;
-      const raf = requestAnimationFrame(() => {
-        el.scrollTop = scrollPositionToRestore;
-      });
-      return () => cancelAnimationFrame(raf);
+    if (!scrollContainerRef?.current || typeof scrollPositionToRestore !== 'number' || scrollPositionToRestore <= 0) {
+      return undefined;
     }
+    const el = scrollContainerRef.current;
+    const raf = requestAnimationFrame(() => {
+      el.scrollTop = scrollPositionToRestore;
+    });
+    return () => cancelAnimationFrame(raf);
   }, [scrollPositionToRestore, scrollContainerRef, roadmap]);
+
+  useEffect(() => {
+    if (!focusItemId || !scrollContainerRef?.current || !roadmap?.items?.length) {
+      return undefined;
+    }
+    const container = scrollContainerRef.current;
+    let cancelled = false;
+    let escaped = String(focusItemId);
+    try {
+      if (typeof CSS !== 'undefined' && CSS.escape) {
+        escaped = CSS.escape(escaped);
+      }
+    } catch (_e) {
+      /* ignore */
+    }
+    const id = window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        if (cancelled) return;
+        const el = container.querySelector(`[data-roadmap-item-id="${escaped}"]`);
+        if (el && typeof el.scrollIntoView === 'function') {
+          el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
+        if (onRoadmapReturnFocusDone) {
+          window.setTimeout(() => {
+            if (!cancelled) onRoadmapReturnFocusDone();
+          }, 480);
+        }
+      });
+    });
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(id);
+    };
+  }, [focusItemId, roadmap, scrollContainerRef, onRoadmapReturnFocusDone]);
 
   useEffect(() => {
     const onEsc = (event) => {
@@ -191,6 +278,10 @@ const ReadingGuidePane = ({
     };
   }, [selectedGraphImage]);
 
+  const handleOpenGraph = useCallback((url, title) => {
+    setSelectedGraphImage({ url, title });
+  }, []);
+
   if (!embedInMainArea && !isVisible) return null;
 
   const totalItems = roadmap?.items ? countItems(roadmap.items) : 0;
@@ -202,12 +293,12 @@ const ReadingGuidePane = ({
         <h3>Reading Roadmap</h3>
         <div className="reading-guide-header-actions">
           {embedInMainArea && onSwitchToOriginal && (
-            <button onClick={onSwitchToOriginal} className="switch-to-original-btn" aria-label="Switch to original text">
+            <button type="button" onClick={onSwitchToOriginal} className="switch-to-original-btn" aria-label="Switch to original text">
               Switch to Original Text
             </button>
           )}
           {!embedInMainArea && onClose && (
-            <button onClick={onClose} className="close-guide-pane-btn" aria-label="Close Reading Guide">
+            <button type="button" onClick={onClose} className="close-guide-pane-btn" aria-label="Close Reading Guide">
               &times;
             </button>
           )}
@@ -216,6 +307,7 @@ const ReadingGuidePane = ({
 
       <div className="reading-guide-actions">
         <button
+          type="button"
           onClick={onGenerateRoadmap}
           disabled={isLoading || isGenerating || serverActionsDisabled}
           className="generate-guide-btn"
@@ -235,7 +327,7 @@ const ReadingGuidePane = ({
       <div className="reading-guide-content" ref={scrollContainerRef}>
         {isLoading && <p>Loading roadmap...</p>}
         {error && <p className="error-message">Error: {error}</p>}
-        {!isLoading && !error && !roadmap && <p>No roadmap generated yet. Click "Generate Roadmap".</p>}
+        {!isLoading && !error && !roadmap && <p>No roadmap generated yet. Click &quot;Generate Roadmap&quot;.</p>}
         {!isLoading && !error && roadmap?.items?.length > 0 && (
           <div className="structured-guide roadmap-tree">
             {roadmap.items.map((item) => (
@@ -246,9 +338,12 @@ const ReadingGuidePane = ({
                 onToggleProgress={onToggleProgress}
                 onGuideTextLink={onGuideTextLink}
                 onGenerateGraph={onGenerateGraph}
+                onGenerateAlternativeReading={onGenerateAlternativeReading}
                 graphLoadingById={graphLoadingById}
-                onOpenGraphImage={(url, title) => setSelectedGraphImage({ url, title })}
+                alternativeLoadingById={alternativeLoadingById}
+                onOpenGraphImage={handleOpenGraph}
                 serverActionsDisabled={serverActionsDisabled}
+                mustExpandIds={mustExpandIds}
               />
             ))}
           </div>

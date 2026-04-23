@@ -1,4 +1,4 @@
-import React, { forwardRef, useState, useCallback } from 'react'; // Added useCallback
+import React, { forwardRef, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw'; // Import rehype-raw
@@ -38,43 +38,22 @@ const BookPane = forwardRef(({ markdownContent, imageUrls, onTextSelect, onHighl
       return;
     }
 
-    const originalRange = selection.getRangeAt(0).cloneRange();
-
-    selection.collapse(originalRange.startContainer, originalRange.startOffset);
-    selection.modify('move', 'backward', 'word');
-    selection.modify('extend', 'forward', 'word');
-    const startWordRange = selection.getRangeAt(0).cloneRange();
-
-    selection.collapse(originalRange.endContainer, originalRange.endOffset);
-    selection.modify('move', 'backward', 'word');
-    selection.modify('extend', 'forward', 'word');
-    const endWordRange = selection.getRangeAt(0).cloneRange();
-
-    const finalSnapRange = document.createRange();
-    finalSnapRange.setStart(startWordRange.startContainer, startWordRange.startOffset);
-    finalSnapRange.setEnd(endWordRange.endContainer, endWordRange.endOffset);
-
-    selection.removeAllRanges();
-    selection.addRange(finalSnapRange);
-
-    const selectedText = selection.toString();
+    const range = selection.getRangeAt(0).cloneRange();
+    const selectedText = range.toString();
 
     if (onTextSelect) {
       if (selectedText.length > 0) {
-        // Get the current range of the (snapped) selection
-        const currentRange = selection.getRangeAt(0);
-        const selectionData = {
+        onTextSelect({
           text: selectedText,
           rangeDetails: {
-            startContainer: currentRange.startContainer,
-            startOffset: currentRange.startOffset,
-            endContainer: currentRange.endContainer,
-            endOffset: currentRange.endOffset,
+            startContainer: range.startContainer,
+            startOffset: range.startOffset,
+            endContainer: range.endContainer,
+            endOffset: range.endOffset,
           },
-        };
-        onTextSelect(selectionData);
+        });
       } else {
-        onTextSelect(null); // Pass null if snapped selection is empty
+        onTextSelect(null);
       }
     }
   }, [onTextSelect]); // Added onTextSelect to useCallback dependencies

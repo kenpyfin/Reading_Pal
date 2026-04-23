@@ -57,6 +57,10 @@ class ReadingGuideItem(BaseModel):
     title: str = Field(..., description="Section title from document")
     takeaway: Optional[str] = Field(None, description="Short description or key takeaway from LLM")
     thought_process: Optional[List[str]] = Field(None, description="Reasoning steps for understanding this section")
+    alternative_reading: Optional[str] = Field(
+        None,
+        description="Short rewrite in the source author's style to help quick comprehension",
+    )
     reading_summary: Optional[str] = Field(None, description="Quick 1-2 sentence absorption summary for this section")
     reading_bullets: Optional[List[str]] = Field(None, description="Short bullet points for quick reading absorption")
     start_offset: int = Field(..., description="Character offset in original markdown where this section starts")

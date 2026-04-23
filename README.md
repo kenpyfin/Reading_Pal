@@ -57,6 +57,7 @@ This repository contains the code for the Reading Pal application, a tool for re
     ```
     Or use `bash start_services.sh`, which runs `docker compose up`. The **PDF processing service** is part of the compose stack and starts with the other services. Ensure `PDF_CLIENT_URL` in your `.env` points to where the backend can reach it (e.g. `http://localhost:8502` when the backend uses host networking and the PDF service port is published).
 4.  Optionally, you can still run the PDF service **outside** Docker (e.g. in a Conda MinerU environment) and start only the other services: `docker compose up --build backend frontend image_server`. In that case, set `PDF_CLIENT_URL` to the URL of your standalone PDF service.
+5.  For faster continuous development reloads, use `./reload_dev.sh` from the project root. It detects changed services and reloads only those (default `docker compose up -d --build --no-deps ...`), avoiding full `down/prune/rebuild` cycles.
 5.  The frontend should be accessible at `http://localhost:${FRONTEND_PORT}` (default 3100).
     The backend API should be accessible at `http://localhost:${BACKEND_PORT}` (default 8000).
 

@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, useCallback } from 'react';
+import React, { useEffect, useLayoutEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import BookPane from '../components/BookPane';
 import NotePane from '../components/NotePane';
@@ -37,6 +37,21 @@ import { flushOutbox } from '../utils/outboxSync';
 
 // Virtual "pages" when splitting full markdown for reading (smaller = less text per page, more page numbers).
 const APPROX_CHARS_PER_PAGE = 8000;
+
+const BOOK_CONTROLS_EXPANDED_KEY = 'readingPal_bookControlsExpanded';
+const FLOATING_TOOLBAR_TOP_PX = 80;
+
+function readStoredBookControlsExpanded() {
+  if (typeof window === 'undefined') return true;
+  try {
+    const v = window.sessionStorage.getItem(BOOK_CONTROLS_EXPANDED_KEY);
+    if (v === '0') return false;
+    if (v === '1') return true;
+  } catch (_e) {
+    /* ignore */
+  }
+  return true;
+}
 
 // Helper to decode HTML entities (basic version)
 function decodeHtmlEntities(text) {
@@ -363,6 +378,8 @@ function BookView() {
   // Show floating "Back to Reading Guide" when user navigated from guide via "View in original text"
   const [showBackToGuide, setShowBackToGuide] = useState(false);
   const navigatingFromGuideTextLinkRef = useRef(false);
+  // Roadmap card id to scroll back to after "View in original text" → "Back to Reading Guide"
+  const [guideReturnItemId, setGuideReturnItemId] = useState(null);
 
   // Guide scroll to restore when clicking "Back to Reading Guide" (saved when leaving via "View in original text")
   const [guideScrollToRestoreOnBack, setGuideScrollToRestoreOnBack] = useState(null);
@@ -382,6 +399,7 @@ function BookView() {
   const [isGeneratingGuide, setIsGeneratingGuide] = useState(false);
   const [completedRoadmapIds, setCompletedRoadmapIds] = useState([]);
   const [graphLoadingById, setGraphLoadingById] = useState({});
+  const [alternativeLoadingById, setAlternativeLoadingById] = useState({});
 
   const [isOfflineSnapshot, setIsOfflineSnapshot] = useState(false);
   const [outboxPendingCount, setOutboxPendingCount] = useState(0);
@@ -448,6 +466,25 @@ function BookView() {
   const [isBookViewMenuOpen, setIsBookViewMenuOpen] = useState(false);
   const bookViewMenuRef = useRef(null);
   // --- END Dropdown Menu State ---
+
+  const [bookControlsExpanded, setBookControlsExpanded] = useState(() => readStoredBookControlsExpanded());
+  const setBookControlsExpandedPersist = useCallback((next) => {
+    setBookControlsExpanded(next);
+    try {
+      window.sessionStorage.setItem(BOOK_CONTROLS_EXPANDED_KEY, next ? '1' : '0');
+    } catch (_e) {
+      /* ignore */
+    }
+  }, []);
+
+  /** Viewport frame of the book pane area — used to float toolbar / callout above inner scrollers */
+  const bookToolbarWrapperRef = useRef(null);
+  const [bookPaneAreaFrame, setBookPaneAreaFrame] = useState(null);
+  const [floatingToolbarInsetPx, setFloatingToolbarInsetPx] = useState(0);
+
+  const handleRoadmapReturnFocusDone = useCallback(() => {
+    setGuideReturnItemId(null);
+  }, []);
   const readingGuidePaneAreaRef = useRef(null); // Ref for the reading-guide-pane-area div
   const initialReadingGuidePaneWidthPx = useRef(0);
   // dragStartX is already defined and can be reused if we ensure no overlap in active resizing
@@ -458,6 +495,56 @@ function BookView() {
   const [reformatError, setReformatError] = useState(null);
   // --- END NEW State for Content Reformatting ---
   const isInitialMount = useRef(true);
+
+  useLayoutEffect(() => {
+    if (!bookPaneAreaRef.current || loading || !bookData) {
+      setBookPaneAreaFrame(null);
+      setFloatingToolbarInsetPx(0);
+      return undefined;
+    }
+
+    const area = bookPaneAreaRef.current;
+
+    const updateLayout = () => {
+      const r = area.getBoundingClientRect();
+      const nextFrame = { left: r.left, width: r.width };
+      setBookPaneAreaFrame((prev) => {
+        if (
+          prev &&
+          prev.left === nextFrame.left &&
+          prev.width === nextFrame.width
+        ) {
+          return prev;
+        }
+        return nextFrame;
+      });
+      const h =
+        bookControlsExpanded && bookToolbarWrapperRef.current
+          ? bookToolbarWrapperRef.current.offsetHeight
+          : 0;
+      setFloatingToolbarInsetPx((prev) => (prev === h ? prev : h));
+    };
+
+    updateLayout();
+
+    const roArea = new ResizeObserver(updateLayout);
+    roArea.observe(area);
+
+    let roToolbar = null;
+    if (bookControlsExpanded && bookToolbarWrapperRef.current) {
+      roToolbar = new ResizeObserver(updateLayout);
+      roToolbar.observe(bookToolbarWrapperRef.current);
+    }
+
+    const onWin = () => updateLayout();
+    window.addEventListener('resize', onWin);
+
+    return () => {
+      roArea.disconnect();
+      if (roToolbar) roToolbar.disconnect();
+      window.removeEventListener('resize', onWin);
+    };
+  }, [loading, bookData, bookControlsExpanded, viewMode]);
 
   const applyBookPayload = useCallback((data, markdownOverride) => {
     const md = markdownOverride !== undefined ? markdownOverride : (data?.markdown_content || '');
@@ -1027,6 +1114,55 @@ function BookView() {
     }
   };
 
+  const handleGenerateAlternativeReading = async (cardId) => {
+    if (!bookId || !cardId) return;
+    if (!navigator.onLine || isOfflineSnapshot) {
+      setGuideError('Author Shortcut generation requires an internet connection.');
+      return;
+    }
+    setAlternativeLoadingById((prev) => ({ ...prev, [cardId]: true }));
+    try {
+      const token = localStorage.getItem('authToken');
+      if (!token) throw new Error("Authentication token not found.");
+      const response = await fetch(`/api/books/${bookId}/reading-guide/cards/${encodeURIComponent(cardId)}/alternative-reading`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+        throw new Error(errorData.detail || "Failed to generate alternative reading");
+      }
+      const data = await response.json();
+      const alternativeReading = data.alternative_reading;
+      if (typeof alternativeReading === 'string' && alternativeReading.trim()) {
+        const setAlternative = (nodes) => (nodes || []).map((n) => ({
+          ...n,
+          alternative_reading: n.id === cardId ? alternativeReading : n.alternative_reading,
+          children: setAlternative(n.children),
+        }));
+        setReadingRoadmap((prev) => {
+          if (!prev) return prev;
+          const updated = { ...prev, items: setAlternative(prev.items) };
+          (async () => {
+            try {
+              const gSnap = await getGuide(bookId);
+              await putGuide(bookId, {
+                roadmap: updated,
+                completedIds: gSnap?.completedIds ?? completedRoadmapIds,
+              });
+            } catch (_e) { /* ignore */ }
+          })();
+          return updated;
+        });
+      }
+    } catch (err) {
+      logger.error("[BookView - handleGenerateAlternativeReading] Failed:", err);
+      setGuideError(err.message);
+    } finally {
+      setAlternativeLoadingById((prev) => ({ ...prev, [cardId]: false }));
+    }
+  };
+
   // --- NEW: Handler for clicking a document structure item or guide section ---
   const handleStructureItemClick = (offset) => {
     logger.info(`[BookView - handleStructureItemClick] Clicked item with global offset: ${offset}`);
@@ -1147,6 +1283,7 @@ function BookView() {
     }
     if (prevPageRef.current !== currentPage) {
       setShowBackToGuide(false);
+      setGuideReturnItemId(null);
       prevPageRef.current = currentPage;
     }
   }, [currentPage]);
@@ -1920,6 +2057,10 @@ function BookView() {
         logger.debug("[BookView - handleNewNoteSaved] Updated notes state with new note:", updatedNotes.map(n => (n.id || n._id)));
         return updatedNotes;
       });
+      setNotesLLMPopupMode(null);
+      setSelectedBookText(null);
+      setSelectedGlobalCharOffset(null);
+      setSelectedScrollPercentage(null);
     } else {
         logger.warn("[BookView - handleNewNoteSaved] Received invalid newNote object or note without ID:", newNote);
     }
@@ -2646,6 +2787,69 @@ function BookView() {
     }
   };
 
+  const viewModeToggleEl = (
+    <div className="view-mode-toggle" role="group" aria-label="View mode">
+      <button
+        type="button"
+        className={`view-mode-btn ${viewMode === 'guide' ? 'active' : ''}`}
+        onClick={() => {
+          if (viewMode === 'original' && bookPaneContainerRef.current) {
+            setBookScrollPositionByPage((prev) => ({ ...prev, [currentPage]: bookPaneContainerRef.current.scrollTop }));
+            bookPaneContainerRef.current.scrollTop = 0;
+          }
+          setViewMode('guide');
+          setShowBackToGuide(false);
+          setGuideReturnItemId(null);
+        }}
+        aria-pressed={viewMode === 'guide'}
+      >
+        Reading Guide
+      </button>
+      <button
+        type="button"
+        className={`view-mode-btn ${viewMode === 'original' ? 'active' : ''}`}
+        onClick={() => {
+          if (guideScrollContainerRef.current) {
+            setGuideScrollPositionByPage((prev) => ({
+              ...prev,
+              [currentPage]: guideScrollContainerRef.current.scrollTop,
+            }));
+          }
+          setViewMode('original');
+          setShowBackToGuide(false);
+          setGuideReturnItemId(null);
+        }}
+        aria-pressed={viewMode === 'original'}
+      >
+        Original Text
+      </button>
+    </div>
+  );
+
+  const floatingToolbarStyle = useMemo(() => {
+    if (!bookControlsExpanded || !bookPaneAreaFrame) return undefined;
+    return {
+      position: 'fixed',
+      top: FLOATING_TOOLBAR_TOP_PX,
+      left: bookPaneAreaFrame.left,
+      width: bookPaneAreaFrame.width,
+      zIndex: 40,
+    };
+  }, [bookControlsExpanded, bookPaneAreaFrame]);
+
+  const collapsedCalloutStyle = useMemo(() => {
+    if (bookControlsExpanded || !bookPaneAreaFrame) return undefined;
+    const size = 40;
+    const margin = 8;
+    return {
+      position: 'fixed',
+      top: FLOATING_TOOLBAR_TOP_PX + margin,
+      left: bookPaneAreaFrame.left + bookPaneAreaFrame.width - size - margin,
+      width: size,
+      height: size,
+      zIndex: 1200,
+    };
+  }, [bookControlsExpanded, bookPaneAreaFrame]);
 
   if (loading) return <div style={{ padding: '20px' }}>Loading book...</div>;
   if (error) return <div style={{ padding: '20px', color: 'red' }}>Error loading book: {error}</div>;
@@ -2745,163 +2949,167 @@ function BookView() {
             display: 'flex',
             flexDirection: 'column',
             overflow: 'hidden',
-            position: isMobileView ? 'relative' : undefined, // Needed if note pane is absolute child for some reason
+            position: 'relative',
           }}
         >
           {/* .book-pane-wrapper is the existing structure inside book-pane-area */}
           <div className="book-pane-wrapper">
-            {/* --- MODIFIED Controls Header for Book Pane --- */}
-            <div className="book-pane-controls-header">
-              {/* Left Group: Font Controls and Book View Menu */}
-              <div className="left-controls-group">
-                {/* Font Controls */}
-                <div className="font-controls-group" style={{ display: 'flex', alignItems: 'center', marginRight: '8px' }}>
-                  <button onClick={decreaseFontSize} className="font-control-btn" title="Decrease font size">A-</button>
-                  <span style={{ margin: '0 8px', fontSize: '13px', minWidth: '40px', textAlign: 'center' }}>{fontSize}px</span>
-                  <button onClick={increaseFontSize} className="font-control-btn" title="Increase font size">A+</button>
-                  <span style={{ borderLeft: '1px solid #ccc', height: '20px', margin: '0 10px' }}></span>
-                  <button onClick={decreaseLineHeight} className="font-control-btn" title="Decrease line spacing">LH-</button>
-                  <span style={{ margin: '0 8px', fontSize: '13px', minWidth: '35px', textAlign: 'center' }}>{lineHeight.toFixed(1)}</span>
-                  <button onClick={increaseLineHeight} className="font-control-btn" title="Increase line spacing">LH+</button>
-                </div>
-
-                {/* Book View Menu Dropdown */}
-                <div className="book-view-menu-container" ref={bookViewMenuRef} style={{ marginLeft: '8px' }}>
-                  <button 
-                    onClick={() => setIsBookViewMenuOpen(prev => !prev)} 
-                    className="control-button book-view-menu-button"
-                    aria-haspopup="true"
-                    aria-expanded={isBookViewMenuOpen}
-                  >
-                    Menu <span className={`arrow ${isBookViewMenuOpen ? 'up' : 'down'}`}></span>
-                  </button>
-                  {isBookViewMenuOpen && (
-                    <div className="book-view-dropdown-menu">
-                      <button 
-                        onClick={() => { openAddBookmarkModal(); setIsBookViewMenuOpen(false); }} 
-                        className="dropdown-item control-button"
+            <div
+              className="book-pane-container"
+              style={{ '--book-toolbar-inset': `${floatingToolbarInsetPx}px` }}
+            >
+              {bookControlsExpanded && (
+                <div
+                  ref={bookToolbarWrapperRef}
+                  className="book-pane-controls-header-wrapper book-pane-controls-header-wrapper--floated"
+                  style={floatingToolbarStyle}
+                >
+                  <div className="book-pane-controls-header">
+                    <div className="left-controls-group">
+                      <div className="font-controls-group" style={{ display: 'flex', alignItems: 'center', marginRight: '8px' }}>
+                        <button type="button" onClick={decreaseFontSize} className="font-control-btn" title="Decrease font size">A-</button>
+                        <span style={{ margin: '0 8px', fontSize: '13px', minWidth: '40px', textAlign: 'center' }}>{fontSize}px</span>
+                        <button type="button" onClick={increaseFontSize} className="font-control-btn" title="Increase font size">A+</button>
+                        <span style={{ borderLeft: '1px solid #ccc', height: '20px', margin: '0 10px' }} />
+                        <button type="button" onClick={decreaseLineHeight} className="font-control-btn" title="Decrease line spacing">LH-</button>
+                        <span style={{ margin: '0 8px', fontSize: '13px', minWidth: '35px', textAlign: 'center' }}>{lineHeight.toFixed(1)}</span>
+                        <button type="button" onClick={increaseLineHeight} className="font-control-btn" title="Increase line spacing">LH+</button>
+                      </div>
+                      <div className="book-view-menu-container" ref={bookViewMenuRef} style={{ marginLeft: '8px' }}>
+                        <button
+                          type="button"
+                          onClick={() => setIsBookViewMenuOpen((prev) => !prev)}
+                          className="control-button book-view-menu-button"
+                          aria-haspopup="true"
+                          aria-expanded={isBookViewMenuOpen}
+                        >
+                          Menu <span className={`arrow ${isBookViewMenuOpen ? 'up' : 'down'}`} />
+                        </button>
+                        {isBookViewMenuOpen && (
+                          <div className="book-view-dropdown-menu">
+                            <button
+                              type="button"
+                              onClick={() => { openAddBookmarkModal(); setIsBookViewMenuOpen(false); }}
+                              className="dropdown-item control-button"
+                            >
+                              Add Bookmark
+                            </button>
+                            {bookmarks.length > 0 && (
+                              <div className="dropdown-item-select-container">
+                                <label htmlFor="jump-to-bookmark-select-menu" className="sr-only">Jump to Bookmark</label>
+                                <select
+                                  id="jump-to-bookmark-select-menu"
+                                  onChange={(e) => { handleBookmarkSelect(e); setIsBookViewMenuOpen(false); }}
+                                  className="bookmark-select dropdown-item-select control-button"
+                                  defaultValue=""
+                                  aria-label="Jump to bookmark"
+                                >
+                                  <option value="" disabled>Jump to Bookmark...</option>
+                                  {bookmarks.map((bookmark) => (
+                                    <option key={bookmark.id} value={bookmark.id}>
+                                      {bookmark.name ? `${bookmark.name} (P${bookmark.page_number})` : `Page ${bookmark.page_number} (Unnamed)`}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => { setShowManageBookmarksModal(true); setIsBookViewMenuOpen(false); }}
+                              className="dropdown-item control-button"
+                            >
+                              Manage Bookmarks
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => { handleReformatPage(); setIsBookViewMenuOpen(false); }}
+                              className="dropdown-item control-button"
+                              disabled={isReformatting || serverOffline}
+                              title={selectedBookText ? 'Reformat selected text with AI.' : 'Reformat current page with AI. This cannot be undone.'}
+                            >
+                              {isReformatting ? 'Reformatting...' : (selectedBookText ? 'Reformat Selection' : 'Reformat Page')}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => { setShowAllNotesModal(true); setIsBookViewMenuOpen(false); }}
+                              className="dropdown-item control-button"
+                            >
+                              Review Notes
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => { setNotesLLMPopupMode('note'); setIsBookViewMenuOpen(false); }}
+                              className="dropdown-item control-button"
+                            >
+                              Add note
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => { setNotesLLMPopupMode('llm'); setIsBookViewMenuOpen(false); }}
+                              className="dropdown-item control-button"
+                            >
+                              Ask LLM
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    {totalPages > 1 && (
+                      <div className="pagination-controls header-pagination">
+                        <button type="button" onClick={handlePreviousPage} disabled={currentPage === 1} className="control-button">
+                          Previous
+                        </button>
+                        <form onSubmit={handleGoToPage} className="page-input-form">
+                          <span> Page </span>
+                          <input
+                            type="number"
+                            value={pageInput}
+                            onChange={handlePageInputChange}
+                            onBlur={handleGoToPage}
+                            min="1"
+                            max={totalPages}
+                            className="page-input"
+                          />
+                          <span> of {totalPages} </span>
+                        </form>
+                        <button type="button" onClick={handleNextPage} disabled={currentPage === totalPages} className="control-button">
+                          Next
+                        </button>
+                      </div>
+                    )}
+                    {totalPages <= 1 && <div className="pagination-controls-placeholder" />}
+                    <div className="right-controls-group">
+                      {viewModeToggleEl}
+                      <button
+                        type="button"
+                        className="control-button book-toolbar-toggle-btn"
+                        onClick={() => setBookControlsExpandedPersist(false)}
+                        aria-expanded={true}
+                        aria-label="Hide full toolbar"
+                        title="Hide full toolbar"
                       >
-                        Add Bookmark
-                      </button>
-                      {bookmarks.length > 0 && (
-                        <div className="dropdown-item-select-container">
-                          <label htmlFor="jump-to-bookmark-select-menu" className="sr-only">Jump to Bookmark</label>
-                          <select
-                            id="jump-to-bookmark-select-menu"
-                            onChange={(e) => { handleBookmarkSelect(e); setIsBookViewMenuOpen(false); }}
-                            className="bookmark-select dropdown-item-select control-button"
-                            defaultValue=""
-                            aria-label="Jump to bookmark"
-                          >
-                            <option value="" disabled>Jump to Bookmark...</option>
-                            {bookmarks.map((bookmark) => (
-                              <option key={bookmark.id} value={bookmark.id}>
-                                {bookmark.name ? `${bookmark.name} (P${bookmark.page_number})` : `Page ${bookmark.page_number} (Unnamed)`}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      )}
-                      <button 
-                        onClick={() => { setShowManageBookmarksModal(true); setIsBookViewMenuOpen(false); }} 
-                        className="dropdown-item control-button"
-                      >
-                        Manage Bookmarks
-                      </button>
-                      <button 
-                        onClick={() => { handleReformatPage(); setIsBookViewMenuOpen(false); }} 
-                        className="dropdown-item control-button"
-                        disabled={isReformatting || serverOffline}
-                        title={selectedBookText ? "Reformat selected text with AI." : "Reformat current page with AI. This cannot be undone."}
-                      >
-                        {isReformatting ? 'Reformatting...' : (selectedBookText ? 'Reformat Selection' : 'Reformat Page')}
-                      </button>
-                      <button 
-                        onClick={() => { setShowAllNotesModal(true); setIsBookViewMenuOpen(false); }} 
-                        className="dropdown-item control-button"
-                      >
-                        Review Notes
-                      </button>
-                      <button 
-                        onClick={() => { setNotesLLMPopupMode('note'); setIsBookViewMenuOpen(false); }} 
-                        className="dropdown-item control-button"
-                      >
-                        Add note
-                      </button>
-                      <button 
-                        onClick={() => { setNotesLLMPopupMode('llm'); setIsBookViewMenuOpen(false); }} 
-                        className="dropdown-item control-button"
-                      >
-                        Ask LLM
+                        ▲
                       </button>
                     </div>
-                  )}
-                </div>
-              </div>
-              
-              {/* Center: Pagination Controls */}
-              {totalPages > 1 && (
-                <div className="pagination-controls header-pagination"> {/* Added header-pagination class */}
-                  <button onClick={handlePreviousPage} disabled={currentPage === 1} className="control-button">
-                    Previous
-                  </button>
-                  <form onSubmit={handleGoToPage} className="page-input-form">
-                    <span> Page </span>
-                    <input
-                      type="number"
-                      value={pageInput}
-                      onChange={handlePageInputChange}
-                      onBlur={handleGoToPage} 
-                      min="1"
-                      max={totalPages}
-                      className="page-input"
-                    />
-                    <span> of {totalPages} </span>
-                  </form>
-                  <button onClick={handleNextPage} disabled={currentPage === totalPages} className="control-button">
-                    Next
-                  </button>
+                  </div>
                 </div>
               )}
-              {/* Placeholder for pagination if totalPages <= 1 to maintain layout balance */}
-              {totalPages <= 1 && <div className="pagination-controls-placeholder"></div>}
 
+              {!bookControlsExpanded && collapsedCalloutStyle && (
+                <button
+                  type="button"
+                  className="control-button book-toolbar-callout-btn"
+                  style={collapsedCalloutStyle}
+                  onClick={() => setBookControlsExpandedPersist(true)}
+                  aria-expanded={false}
+                  aria-label="Show toolbar"
+                  title="Show toolbar"
+                >
+                  ▼
+                </button>
+              )}
 
-              {/* Right: View mode toggle */}
-              <div className="right-controls-group">
-                <div className="view-mode-toggle" role="group" aria-label="View mode">
-                  <button
-                    className={`view-mode-btn ${viewMode === 'guide' ? 'active' : ''}`}
-                    onClick={() => {
-                      if (viewMode === 'original' && bookPaneContainerRef.current) {
-                        setBookScrollPositionByPage(prev => ({ ...prev, [currentPage]: bookPaneContainerRef.current.scrollTop }));
-                        bookPaneContainerRef.current.scrollTop = 0;
-                      }
-                      setViewMode('guide');
-                      setShowBackToGuide(false);
-                    }}
-                    aria-pressed={viewMode === 'guide'}
-                  >
-                    Reading Guide
-                  </button>
-                  <button
-                    className={`view-mode-btn ${viewMode === 'original' ? 'active' : ''}`}
-                    onClick={() => {
-                      if (guideScrollContainerRef.current) setGuideScrollPositionByPage(prev => ({ ...prev, [currentPage]: guideScrollContainerRef.current.scrollTop }));
-                      setViewMode('original');
-                      setShowBackToGuide(false);
-                    }}
-                    aria-pressed={viewMode === 'original'}
-                  >
-                    Original Text
-                  </button>
-                </div>
-              </div>
-            </div>
-            {/* --- END OF MODIFIED Controls Header --- */}
-
-            {/* Main content: Reading Guide (when viewMode is guide) or Original Text (BookPane) */}
-            <div className="book-pane-container" ref={bookPaneContainerRef}>
+              <div className="book-pane-body" ref={bookPaneContainerRef}>
               {viewMode === 'guide' ? (
                 <ReadingGuidePane
                   roadmap={readingRoadmap}
@@ -2916,8 +3124,9 @@ function BookView() {
                   serverActionsDisabled={serverOffline}
                   onGuideTextLink={(textLink) => {
                     const scrollTop = guideScrollContainerRef.current?.scrollTop ?? 0;
-                    setGuideScrollPositionByPage(prev => ({ ...prev, [currentPage]: scrollTop }));
+                    setGuideScrollPositionByPage((prev) => ({ ...prev, [currentPage]: scrollTop }));
                     setGuideScrollToRestoreOnBack(scrollTop);
+                    setGuideReturnItemId(textLink.sourceItemId != null ? String(textLink.sourceItemId) : null);
                     navigatingFromGuideTextLinkRef.current = true;
                     setShowBackToGuide(true);
                     setViewMode('original');
@@ -2925,6 +3134,8 @@ function BookView() {
                   }}
                   onGenerateGraph={handleGenerateCardGraph}
                   graphLoadingById={graphLoadingById}
+                  onGenerateAlternativeReading={handleGenerateAlternativeReading}
+                  alternativeLoadingById={alternativeLoadingById}
                   onSwitchToOriginal={() => {
                     if (guideScrollContainerRef.current) setGuideScrollPositionByPage(prev => ({ ...prev, [currentPage]: guideScrollContainerRef.current.scrollTop }));
                     setViewMode('original');
@@ -2932,6 +3143,8 @@ function BookView() {
                   scrollContainerRef={guideScrollContainerRef}
                   scrollPositionToRestore={guideScrollToRestoreOnBack ?? guideScrollPositionByPage[currentPage] ?? 0}
                   embedInMainArea={true}
+                  focusItemId={guideReturnItemId}
+                  onRoadmapReturnFocusDone={handleRoadmapReturnFocusDone}
                 />
               ) : (
                 <BookPane
@@ -2943,24 +3156,25 @@ function BookView() {
                   lineHeight={lineHeight}
                 />
               )}
+              </div>
+              {/* Floating "Back to Reading Guide" button when user navigated from guide */}
+              {viewMode === 'original' && showBackToGuide && (
+                <button
+                  type="button"
+                  className="back-to-guide-floating-btn"
+                  onClick={() => {
+                    if (bookPaneContainerRef.current) {
+                      setBookScrollPositionByPage((prev) => ({ ...prev, [currentPage]: bookPaneContainerRef.current.scrollTop }));
+                      bookPaneContainerRef.current.scrollTop = 0;
+                    }
+                    setViewMode('guide');
+                    setShowBackToGuide(false);
+                  }}
+                >
+                  Back to Reading Guide
+                </button>
+              )}
             </div>
-            {/* Floating "Back to Reading Guide" button when user navigated from guide */}
-            {viewMode === 'original' && showBackToGuide && (
-              <button
-                className="back-to-guide-floating-btn"
-                onClick={() => {
-                  if (bookPaneContainerRef.current) {
-                    setBookScrollPositionByPage(prev => ({ ...prev, [currentPage]: bookPaneContainerRef.current.scrollTop }));
-                    bookPaneContainerRef.current.scrollTop = 0;
-                  }
-                  setViewMode('guide');
-                  setShowBackToGuide(false);
-                }}
-              >
-                Back to Reading Guide
-              </button>
-            )}
-            {/* The original pagination block was here and is now removed */}
           </div>
         </div>
 

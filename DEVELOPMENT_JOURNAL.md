@@ -29,6 +29,33 @@ Use a reverse-chronological list (newest first). Each entry should be short and 
 
 <!-- New entries go below this comment, newest first. -->
 
+## 2026-04-22 — Alternative Reading reframed as Author Shortcut
+
+- **What:** Updated the roadmap rewrite prompt to generate a concise passage in the original author's perspective (not editor voice), and renamed visible UI copy from `Alternative Reading` to `Author Shortcut` in the card button/section title and offline error message.
+- **Why:** The intended experience is shortcut reading that still feels like the author speaking, rather than edited commentary.
+- **Where:** `backend/services/llm_service.py`, `frontend/src/components/ReadingGuidePane.js`, `frontend/src/pages/BookView.js`
+
+## 2026-04-22 — Fast targeted reload script for continuous dev
+
+- **What:** Added `reload_dev.sh`, a lightweight reload helper that targets only affected Docker services instead of full teardown/prune rebuilds. It supports auto-detection from `git status`, explicit `--service` selection, `--all`, `--no-build`, `--with-deps`, and `--dry-run`.
+- **Why:** Existing refresh/deploy flow is optimized for clean deployments, but too slow during active iteration because it performs `docker compose down` and image pruning before rebuilding everything.
+- **Where:** `reload_dev.sh`, `README.md`
+- **Notes:** Default path reloads `backend` + `frontend` when no mapped changes are found.
+
+## 2026-04-22 — Roadmap card Alternative Reading generation
+
+- **What:** Replaced roadmap card `Thought process` display with an `Alternative Reading` section and added an on-demand `Alternative Reading` button per card. Added backend endpoint `POST /api/books/{book_id}/reading-guide/cards/{card_id}/alternative-reading` that reads the card source excerpt, asks the guide LLM for a shorter author-style rewrite, persists it to the roadmap item, and returns it to the UI.
+- **Why:** Readers need a faster, easier-to-consume version of referenced content while keeping the original idea and tone. On-demand generation avoids extra roadmap-generation cost and only runs when requested.
+- **Where:** `backend/api/books.py`, `backend/services/llm_service.py`, `backend/models/reading_guide.py`, `frontend/src/pages/BookView.js`, `frontend/src/components/ReadingGuidePane.js`, `frontend/src/components/ReadingGuidePane.css`
+- **Notes:** `alternative_reading` is optional and backward-compatible for existing guides.
+
+## 2026-04-21 — BookView toolbar retract/expand and guide return-to-card
+
+- **What:** Book pane controls use a sticky wrapper with a **▼ / ▲ toggle** that hides/shows the **entire toolbar** (not a compact subset), with optional **sessionStorage** persistence. When hidden, a fixed **Show bar** callout remains available so users can restore the toolbar from anywhere while scrolling. The toolbar lives **inside** `.book-pane-container` so `position: sticky` pins it while the book body scrolls; content sits in `.book-pane-body` with padding. Reading Guide **View in original text** now sends `sourceItemId`; returning via **Back to Reading Guide** expands roadmap ancestors as needed, scrolls the source card into view, then clears the focus id. Roadmap cards expose `data-roadmap-item-id` for targeting.
+- **Why:** Narrow headers wrapped messily; users wanted the same retract/expand everywhere. Scroll-only restore did not reliably return to nested cards after remount.
+- **Where:** `frontend/src/pages/BookView.js`, `frontend/src/pages/BookView.css`, `frontend/src/components/ReadingGuidePane.js`
+- **Notes:** Guide vertical scroll restore still applies only when saved `scrollTop > 0` (unchanged from prior behavior).
+
 ## 2026-03-25 — Cross-route offline: book list + upload
 
 - **What:** IndexedDB (`readingPalOffline` v2) gains `bookListSnapshot` for the last successful paginated `/api/books/` response; `getBookSummariesFromMeta()` lists books with cached `meta`. BookList persists on success, rehydrates from snapshot plus meta on network/offline failure, shows a banner, and disables rename/delete/pagination while offline or when showing cache. PdfUploadForm listens for `online`/`offline`, disables inputs and blocks upload without a connection.

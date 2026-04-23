@@ -933,6 +933,61 @@ Return ONLY valid JSON, no other text."""
             logger.error(f"Graph image generation failed: {e}", exc_info=True)
             return None
 
+    async def generate_alternative_reading(
+        self,
+        card_title: str,
+        source_excerpt: str,
+    ) -> Optional[str]:
+        """
+        Generate a concise rewrite in the source author's style.
+        Returns plain text or None when generation fails.
+        """
+        if not source_excerpt or not source_excerpt.strip():
+            return None
+
+        client, model_name = self._select_guide_gemini()
+        if not client or not model_name:
+            logger.warning("Alternative reading generation skipped: no guide client available.")
+            return None
+
+        trimmed_source = source_excerpt.strip()[:6000]
+        system_prompt = (
+            "You are rewriting your own passage as the original author. "
+            "Produce a much shorter shortcut reading that preserves the same claims, perspective, and tone. "
+            "Keep the author's point of view and rhetorical stance, but remove repetition and non-essential detail. "
+            "Do not switch to editor commentary, meta explanation, or study-guide voice. "
+            "Do not add new facts, examples, or interpretations not supported by the source."
+        )
+        user_prompt = (
+            f"CARD TITLE: {card_title}\n\n"
+            "SOURCE PASSAGE:\n"
+            f"{trimmed_source}\n\n"
+            "Write an 'Author Shortcut' that is shorter than the source and easy to consume quickly. "
+            "Prefer a single concise paragraph in 3-6 sentences. "
+            "Return only the rewritten passage text."
+        )
+
+        try:
+            response = await client.aio.models.generate_content(
+                model=model_name,
+                contents=user_prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_prompt,
+                    max_output_tokens=1024,
+                ),
+            )
+            response_text = self._remove_think_tags(response.text if response and response.text else "").strip()
+            if response_text.startswith("```"):
+                first_newline = response_text.find("\n")
+                if first_newline != -1:
+                    response_text = response_text[first_newline + 1:].strip()
+                if response_text.endswith("```"):
+                    response_text = response_text[:-3].strip()
+            return response_text or None
+        except Exception as e:
+            logger.error(f"Alternative reading generation failed: {e}", exc_info=True)
+            return None
+
 
 # Instantiate the service as a singleton
 llm_service = LLMService(
