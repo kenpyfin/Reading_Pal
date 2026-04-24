@@ -1,4 +1,5 @@
 import React, { useEffect, useLayoutEffect, useState, useRef, useCallback, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { useParams, Link } from 'react-router-dom';
 import BookPane from '../components/BookPane';
 import NotePane from '../components/NotePane';
@@ -358,10 +359,14 @@ function BookView() {
   // Close dropdown menus when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {
-      if (bookViewMenuRef.current && !bookViewMenuRef.current.contains(event.target)) {
+      const t = event.target;
+      const inBookMenu =
+        (bookViewMenuRef.current && bookViewMenuRef.current.contains(t)) ||
+        (bookViewMenuPortalRef.current && bookViewMenuPortalRef.current.contains(t));
+      if (!inBookMenu) {
         setIsBookViewMenuOpen(false);
       }
-      if (bookmarkMenuRef.current && !bookmarkMenuRef.current.contains(event.target)) {
+      if (bookmarkMenuRef.current && !bookmarkMenuRef.current.contains(t)) {
         setIsBookmarkMenuOpen(false);
       }
     };
@@ -465,6 +470,9 @@ function BookView() {
   // --- Dropdown Menu State ---
   const [isBookViewMenuOpen, setIsBookViewMenuOpen] = useState(false);
   const bookViewMenuRef = useRef(null);
+  const bookViewMenuButtonRef = useRef(null);
+  const bookViewMenuPortalRef = useRef(null);
+  const [bookViewMenuPopperStyle, setBookViewMenuPopperStyle] = useState(null);
   // --- END Dropdown Menu State ---
 
   const [bookControlsExpanded, setBookControlsExpanded] = useState(() => readStoredBookControlsExpanded());
@@ -545,6 +553,45 @@ function BookView() {
       window.removeEventListener('resize', onWin);
     };
   }, [loading, bookData, bookControlsExpanded, viewMode]);
+
+  useLayoutEffect(() => {
+    if (!isBookViewMenuOpen) {
+      setBookViewMenuPopperStyle(null);
+      return undefined;
+    }
+    const btn = bookViewMenuButtonRef.current;
+    if (!btn) {
+      setBookViewMenuPopperStyle(null);
+      return undefined;
+    }
+    const margin = 8;
+    const update = () => {
+      const r = btn.getBoundingClientRect();
+      const gap = 4;
+      const minW = Math.max(220, r.width);
+      let left = r.left;
+      if (left + minW > window.innerWidth - margin) {
+        left = Math.max(margin, window.innerWidth - minW - margin);
+      }
+      const maxH = Math.max(120, window.innerHeight - r.bottom - gap - margin);
+      setBookViewMenuPopperStyle({
+        position: 'fixed',
+        top: r.bottom + gap,
+        left,
+        minWidth: minW,
+        maxHeight: maxH,
+        overflowY: 'auto',
+        zIndex: 10050,
+      });
+    };
+    update();
+    window.addEventListener('resize', update);
+    window.addEventListener('scroll', update, true);
+    return () => {
+      window.removeEventListener('resize', update);
+      window.removeEventListener('scroll', update, true);
+    };
+  }, [isBookViewMenuOpen, bookControlsExpanded, viewMode, bookPaneAreaFrame]);
 
   const applyBookPayload = useCallback((data, markdownOverride) => {
     const md = markdownOverride !== undefined ? markdownOverride : (data?.markdown_content || '');
@@ -2977,6 +3024,7 @@ function BookView() {
                       </div>
                       <div className="book-view-menu-container" ref={bookViewMenuRef} style={{ marginLeft: '8px' }}>
                         <button
+                          ref={bookViewMenuButtonRef}
                           type="button"
                           onClick={() => setIsBookViewMenuOpen((prev) => !prev)}
                           className="control-button book-view-menu-button"
@@ -2985,73 +3033,80 @@ function BookView() {
                         >
                           Menu <span className={`arrow ${isBookViewMenuOpen ? 'up' : 'down'}`} />
                         </button>
-                        {isBookViewMenuOpen && (
-                          <div className="book-view-dropdown-menu">
-                            <button
-                              type="button"
-                              onClick={() => { openAddBookmarkModal(); setIsBookViewMenuOpen(false); }}
-                              className="dropdown-item control-button"
+                        {isBookViewMenuOpen && bookViewMenuPopperStyle
+                          ? createPortal(
+                            <div
+                              ref={bookViewMenuPortalRef}
+                              className="book-view-dropdown-menu book-view-dropdown-menu--portal"
+                              style={bookViewMenuPopperStyle}
                             >
-                              Add Bookmark
-                            </button>
-                            {bookmarks.length > 0 && (
-                              <div className="dropdown-item-select-container">
-                                <label htmlFor="jump-to-bookmark-select-menu" className="sr-only">Jump to Bookmark</label>
-                                <select
-                                  id="jump-to-bookmark-select-menu"
-                                  onChange={(e) => { handleBookmarkSelect(e); setIsBookViewMenuOpen(false); }}
-                                  className="bookmark-select dropdown-item-select control-button"
-                                  defaultValue=""
-                                  aria-label="Jump to bookmark"
-                                >
-                                  <option value="" disabled>Jump to Bookmark...</option>
-                                  {bookmarks.map((bookmark) => (
-                                    <option key={bookmark.id} value={bookmark.id}>
-                                      {bookmark.name ? `${bookmark.name} (P${bookmark.page_number})` : `Page ${bookmark.page_number} (Unnamed)`}
-                                    </option>
-                                  ))}
-                                </select>
-                              </div>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => { setShowManageBookmarksModal(true); setIsBookViewMenuOpen(false); }}
-                              className="dropdown-item control-button"
-                            >
-                              Manage Bookmarks
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => { handleReformatPage(); setIsBookViewMenuOpen(false); }}
-                              className="dropdown-item control-button"
-                              disabled={isReformatting || serverOffline}
-                              title={selectedBookText ? 'Reformat selected text with AI.' : 'Reformat current page with AI. This cannot be undone.'}
-                            >
-                              {isReformatting ? 'Reformatting...' : (selectedBookText ? 'Reformat Selection' : 'Reformat Page')}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => { setShowAllNotesModal(true); setIsBookViewMenuOpen(false); }}
-                              className="dropdown-item control-button"
-                            >
-                              Review Notes
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => { setNotesLLMPopupMode('note'); setIsBookViewMenuOpen(false); }}
-                              className="dropdown-item control-button"
-                            >
-                              Add note
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => { setNotesLLMPopupMode('llm'); setIsBookViewMenuOpen(false); }}
-                              className="dropdown-item control-button"
-                            >
-                              Ask LLM
-                            </button>
-                          </div>
-                        )}
+                              <button
+                                type="button"
+                                onClick={() => { openAddBookmarkModal(); setIsBookViewMenuOpen(false); }}
+                                className="dropdown-item control-button"
+                              >
+                                Add Bookmark
+                              </button>
+                              {bookmarks.length > 0 && (
+                                <div className="dropdown-item-select-container">
+                                  <label htmlFor="jump-to-bookmark-select-menu" className="sr-only">Jump to Bookmark</label>
+                                  <select
+                                    id="jump-to-bookmark-select-menu"
+                                    onChange={(e) => { handleBookmarkSelect(e); setIsBookViewMenuOpen(false); }}
+                                    className="bookmark-select dropdown-item-select control-button"
+                                    defaultValue=""
+                                    aria-label="Jump to bookmark"
+                                  >
+                                    <option value="" disabled>Jump to Bookmark...</option>
+                                    {bookmarks.map((bookmark) => (
+                                      <option key={bookmark.id} value={bookmark.id}>
+                                        {bookmark.name ? `${bookmark.name} (P${bookmark.page_number})` : `Page ${bookmark.page_number} (Unnamed)`}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => { setShowManageBookmarksModal(true); setIsBookViewMenuOpen(false); }}
+                                className="dropdown-item control-button"
+                              >
+                                Manage Bookmarks
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => { handleReformatPage(); setIsBookViewMenuOpen(false); }}
+                                className="dropdown-item control-button"
+                                disabled={isReformatting || serverOffline}
+                                title={selectedBookText ? 'Reformat selected text with AI.' : 'Reformat current page with AI. This cannot be undone.'}
+                              >
+                                {isReformatting ? 'Reformatting...' : (selectedBookText ? 'Reformat Selection' : 'Reformat Page')}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => { setShowAllNotesModal(true); setIsBookViewMenuOpen(false); }}
+                                className="dropdown-item control-button"
+                              >
+                                Review Notes
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => { setNotesLLMPopupMode('note'); setIsBookViewMenuOpen(false); }}
+                                className="dropdown-item control-button"
+                              >
+                                Add note
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => { setNotesLLMPopupMode('llm'); setIsBookViewMenuOpen(false); }}
+                                className="dropdown-item control-button"
+                              >
+                                Ask LLM
+                              </button>
+                            </div>,
+                            document.body,
+                          )
+                          : null}
                       </div>
                     </div>
                     {totalPages > 1 && (

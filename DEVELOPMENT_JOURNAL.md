@@ -29,6 +29,18 @@ Use a reverse-chronological list (newest first). Each entry should be short and 
 
 <!-- New entries go below this comment, newest first. -->
 
+## 2026-04-23 — PDF pipeline formatting/image reliability hardening
+
+- **What:** Aligned PDF service callback payload with backend expectations by including `images` metadata; added backend fallback extraction of image filenames from markdown for legacy callbacks; fixed page merge separator handling to rejoin with canonical `---`; switched markdown image injection to stable `/images/app/<filename>` links; hardened temp upload naming with job-scoped filenames; parameterized compose callback URL with `BACKEND_PORT`; expanded smoke checks for image-link and separator invariants; and made PaddleOCR import optional at startup so text/image flows do not crash when OCR deps are absent.
+- **Why:** PDF jobs could complete with poor markdown segmentation and missing image metadata/links due to callback and separator issues, while environment-specific OCR imports could fail the whole worker even for non-OCR paths.
+- **Where:** `pdf_service/app.py`, `backend/api/books.py`, `pdf_service/scripts/smoke_test_pdf_pipeline.py`, `docker-compose.yml`
+
+## 2026-04-23 — Book View Menu dropdown as fixed overlay
+
+- **What:** Render the Book View “Menu” dropdown with `createPortal` to `document.body`, position it with `position: fixed` from the menu button’s `getBoundingClientRect()`, and refresh on window resize, capture-phase scroll, and book pane frame updates. Click-outside now treats the portaled menu as inside the control.
+- **Why:** The in-flow `position: absolute` panel expanded layout and pushed content; overlaying avoids reflow and matches floating-toolbar UX.
+- **Where:** `frontend/src/pages/BookView.js`, `frontend/src/pages/BookView.css`
+
 ## 2026-04-22 — Alternative Reading reframed as Author Shortcut
 
 - **What:** Updated the roadmap rewrite prompt to generate a concise passage in the original author's perspective (not editor voice), and renamed visible UI copy from `Alternative Reading` to `Author Shortcut` in the card button/section title and offline error message.

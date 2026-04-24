@@ -405,32 +405,9 @@ async def get_book_by_id(book_id: str, current_user_id: str = Depends(get_curren
 
             markdown_content = await run_in_threadpool(check_and_read_markdown, container_markdown_path)
 
-            # Replace /images/app/ paths in markdown with signed URLs
+            # Replace /images/app/ and /api/books/images/app/ paths in markdown with signed URLs
             if isinstance(markdown_content, str) and not markdown_content.startswith("Error:"):
-                # Replace markdown image syntax: ![](/images/app/filename.jpg)
-                def replace_md_image(match):
-                    full_match = match.group(0)
-                    image_path = match.group(2)  # The URL part
-                    if image_path.startswith('/images/app/'):
-                        filename = image_path.replace('/images/app/', '')
-                        signed_url = generate_signed_image_url(filename)
-                        return full_match.replace(image_path, signed_url)
-                    return full_match
-                
-                # Replace HTML img tags: <img src="/images/app/filename.jpg">
-                def replace_html_image(match):
-                    full_match = match.group(0)
-                    image_path = match.group(2)  # The src value
-                    if image_path.startswith('/images/app/'):
-                        filename = image_path.replace('/images/app/', '')
-                        signed_url = generate_signed_image_url(filename)
-                        return full_match.replace(image_path, signed_url)
-                    return full_match
-                
-                # Apply replacements
-                markdown_content = re.sub(r"!\[([^\]]*)\]\(([^)]+)\)", replace_md_image, markdown_content)
-                markdown_content = re.sub(r"<img ([^>]*src\s*=\s*['\"])([^'\"]+)(['\"][^>]*)>", replace_html_image, markdown_content)
-                
+                markdown_content = _sign_app_image_urls_in_markdown(markdown_content)
                 logger.info(f"Get endpoint: Replaced image paths in markdown with signed URLs for book {book_id}")
 
 
@@ -503,30 +480,9 @@ async def refresh_image_urls(book_id: str, current_user_id: str = Depends(get_cu
     if not markdown_content or isinstance(markdown_content, str) and markdown_content.startswith("Error:"):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Markdown content not found")
     
-    # Replace /images/app/ paths with fresh signed URLs
+    # Replace app image paths with fresh signed URLs
     if isinstance(markdown_content, str):
-        def replace_md_image(match):
-            full_match = match.group(0)
-            image_path = match.group(2)  # The URL part
-            if image_path.startswith('/images/app/'):
-                filename = image_path.replace('/images/app/', '')
-                signed_url = generate_signed_image_url(filename)
-                return full_match.replace(image_path, signed_url)
-            return full_match
-        
-        def replace_html_image(match):
-            full_match = match.group(0)
-            image_path = match.group(2)  # The src value
-            if image_path.startswith('/images/app/'):
-                filename = image_path.replace('/images/app/', '')
-                signed_url = generate_signed_image_url(filename)
-                return full_match.replace(image_path, signed_url)
-            return full_match
-        
-        # Apply replacements
-        markdown_content = re.sub(r"!\[([^\]]*)\]\(([^)]+)\)", replace_md_image, markdown_content)
-        markdown_content = re.sub(r"<img ([^>]*src\s*=\s*['\"])([^'\"]+)(['\"][^>]*)>", replace_html_image, markdown_content)
-        
+        markdown_content = _sign_app_image_urls_in_markdown(markdown_content)
         logger.info(f"Refreshed signed URLs in markdown for book {book_id}")
     
     return {"markdown_content": markdown_content}
@@ -629,8 +585,28 @@ class PDFServiceCallbackData(BaseModel):
     status: str # "completed" or "failed"
     message: Optional[str] = None
     file_path: Optional[str] = None # Full path to markdown file on PDF service
-    images: Optional[List[PDFServiceImageInfo]] = []
+    images: List[PDFServiceImageInfo] = Field(default_factory=list)
     processing_error: Optional[str] = None
+
+
+def _extract_image_filenames_from_markdown(markdown_path: str) -> List[str]:
+    """Fallback for legacy callbacks without image metadata."""
+    if not markdown_path or not os.path.exists(markdown_path):
+        return []
+    try:
+        with open(markdown_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        matches = re.findall(r"!\[[^\]]*\]\(([^)]+)\)", content or "")
+        filenames: List[str] = []
+        for image_path in matches:
+            rel = _extract_app_image_relative_path(image_path)
+            if rel:
+                filenames.append(rel)
+        # Preserve insertion order while deduplicating
+        return list(dict.fromkeys(filenames))
+    except Exception as exc:
+        logger.warning(f"Failed to extract image filenames from markdown fallback: {exc}")
+        return []
 
 # Pydantic Models for Reading Guide - OLD, TO BE REMOVED
 # class ReadingGuideItem(BaseModel):
@@ -922,7 +898,14 @@ async def pdf_processing_callback(payload: PDFServiceCallbackData = Body(...)):
             update_data["processing_error"] = "Processing reported as completed by PDF service, but no markdown file path was provided."
             update_data["markdown_filename"] = None # Ensure it's cleared
 
-        image_filenames = [img_info.filename for img_info in payload.images if img_info and img_info.filename] if payload.images else []
+        image_filenames = [img_info.filename for img_info in payload.images if img_info and img_info.filename]
+        if not image_filenames and update_data.get("markdown_filename") and CONTAINER_MARKDOWN_PATH:
+            markdown_path = os.path.join(CONTAINER_MARKDOWN_PATH, update_data["markdown_filename"])
+            image_filenames = _extract_image_filenames_from_markdown(markdown_path)
+            if image_filenames:
+                logger.info(
+                    f"Callback: Recovered {len(image_filenames)} image filenames from markdown fallback."
+                )
         update_data["image_filenames"] = image_filenames
         logger.info(f"Callback: Extracted {len(image_filenames)} image filenames.")
 
@@ -1200,6 +1183,8 @@ async def reformat_page_content(book_id: str, page_number: int, payload: Reforma
         page_boundary = _calculate_page_boundaries(full_content, APPROX_CHARS_PER_PAGE_FOR_GUIDE)[page_number - 1]
         start_offset, end_offset = page_boundary['start'], page_boundary['end']
         new_full_content = full_content[:start_offset] + reformatted_content + full_content[end_offset:]
+
+    new_full_content = _sign_app_image_urls_in_markdown(new_full_content)
 
     # 6. Overwrite the markdown file with the new full content
     try:
@@ -1645,12 +1630,16 @@ async def generate_roadmap_card_alternative_reading(
     return {"card_id": card_id, "alternative_reading": alternative_reading}
 
 
-# Shared secret for app image access (simpler than full auth for img tags)
+# Shared secret for app image HMAC signing (<img> cannot send Bearer). Set in .env for production.
 APP_IMAGE_SECRET = os.getenv("APP_IMAGE_SECRET", "")
-logger.info(f"App image secret configured: {bool(APP_IMAGE_SECRET)} (length: {len(APP_IMAGE_SECRET) if APP_IMAGE_SECRET else 0})")
+logger.info(
+    f"App image secret configured: {bool(APP_IMAGE_SECRET)} "
+    f"(length: {len(APP_IMAGE_SECRET) if APP_IMAGE_SECRET else 0}); "
+    "without it, signed URLs in markdown cannot be verified."
+)
 
-# Signed URL expiration time (1 minute)
-SIGNED_URL_EXPIRATION = 60  # seconds
+# Signed URL TTL for embedded book images (refreshed on page navigation via refresh-image-urls).
+SIGNED_URL_EXPIRATION = 3600  # seconds (1 hour)
 
 def generate_signed_image_url(filepath: str) -> str:
     """
@@ -1705,6 +1694,59 @@ def verify_signed_url(filepath: str, expires: Optional[str], signature: Optional
         return hmac.compare_digest(signature, expected_signature)
     except (ValueError, TypeError):
         return False
+
+
+def _extract_app_image_relative_path(image_path_raw: str) -> Optional[str]:
+    """Normalize markdown/HTML image URL to filepath under app images (basename path, no leading slash)."""
+    if not image_path_raw or not isinstance(image_path_raw, str):
+        return None
+    s = image_path_raw.strip()
+    if not s:
+        return None
+    if s.startswith("<") and s.endswith(">"):
+        s = s[1:-1].strip()
+    parsed = urllib.parse.urlparse(s)
+    path = (parsed.path or "").strip()
+    if not path:
+        path = s.split("?", 1)[0].strip()
+    if not path:
+        return None
+    api_prefix = "/api/books/images/app/"
+    img_prefix = "/images/app/"
+    if path.startswith(api_prefix):
+        rel = path[len(api_prefix) :].lstrip("/")
+        return rel or None
+    if path.startswith(img_prefix):
+        rel = path[len(img_prefix) :].lstrip("/")
+        return rel or None
+    return None
+
+
+def _sign_app_image_urls_in_markdown(markdown: str) -> str:
+    """Replace /images/app/... and /api/books/images/app/... image references with freshly signed URLs."""
+
+    def replace_md_image(match):
+        full_match = match.group(0)
+        image_path_raw = match.group(2)
+        filename = _extract_app_image_relative_path(image_path_raw)
+        if not filename:
+            return full_match
+        signed_url = generate_signed_image_url(filename)
+        return full_match.replace(image_path_raw, signed_url)
+
+    def replace_html_image(match):
+        full_match = match.group(0)
+        image_path_raw = match.group(2)
+        filename = _extract_app_image_relative_path(image_path_raw)
+        if not filename:
+            return full_match
+        signed_url = generate_signed_image_url(filename)
+        return full_match.replace(image_path_raw, signed_url)
+
+    out = re.sub(r"!\[([^\]]*)\]\(([^)]+)\)", replace_md_image, markdown)
+    out = re.sub(r"<img ([^>]*src\s*=\s*['\"])([^'\"]+)(['\"][^>]*)>", replace_html_image, out)
+    return out
+
 
 @router.get("/images/app/{filepath:path}")
 async def serve_app_image(

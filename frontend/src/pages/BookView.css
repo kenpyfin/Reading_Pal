@@ -545,6 +545,15 @@
   flex-direction: column;
 }
 
+/* Portaled to document.body — fixed coords from JS; do not participate in layout */
+.book-view-dropdown-menu.book-view-dropdown-menu--portal {
+  position: fixed;
+  top: auto;
+  left: auto;
+  margin: 0;
+  box-sizing: border-box;
+}
+
 .book-view-dropdown-menu .dropdown-item,
 .book-view-dropdown-menu .dropdown-item-select-container {
   display: block; /* Make items take full width */
