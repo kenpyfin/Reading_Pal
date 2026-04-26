@@ -8,14 +8,20 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 import fitz  # PyMuPDF
 from pdf2image import convert_from_bytes as pdf2image_convert_from_bytes
-from paddleocr import PaddleOCR
 import numpy as np
 import re
+import unicodedata
 import ollama # Import the ollama library
 import asyncio # Import asyncio for background tasks
 import requests # Import requests for making HTTP calls in background task
 from google import genai
 from anthropic import Anthropic # Import Anthropic for formatting-specific LLM
+
+# PaddleOCR is optional at import time so non-OCR flows still work.
+try:
+    from paddleocr import PaddleOCR
+except Exception:  # pragma: no cover - optional dependency may be absent locally
+    PaddleOCR = None  # type: ignore[assignment]
 
 # Initialize FastAPI app
 app = FastAPI(title="PDF Processing Service")
@@ -60,7 +66,12 @@ BACKEND_CALLBACK_URL = os.getenv("BACKEND_CALLBACK_URL")
 GEMINI_API_KEY_REFORMAT = os.getenv("GEMINI_API_KEY") # Use the general GEMINI_API_KEY for reformatting
 
 # Get Gemini Reformat Model Name (used if Gemini API key is present)
-GEMINI_REFORMAT_MODEL_NAME = os.getenv("GEMINI_REFORMAT_MODEL", "gemini-2.5-flash")
+# Support both legacy and current env names.
+GEMINI_REFORMAT_MODEL_NAME = (
+    os.getenv("GEMINI_REFORMAT_MODEL")
+    or os.getenv("GEMINI_REFORMAT_MODEL_NAME")
+    or "gemini-2.5-flash"
+)
 
 # Gemini client for markdown reformat (google-genai SDK)
 gemini_reformat_client = None
@@ -208,22 +219,45 @@ def extract_pdf_images(
                 page = doc[page_num]
                 xref_list = page.get_images(full=True)
                 filenames: List[str] = []
+                page_failures = 0
                 for img_idx, xref in enumerate(xref_list):
                     try:
                         base_xref = xref[0]
                         img_info = doc.extract_image(base_xref)
                         img_bytes = img_info.get("image")
+                        if not img_bytes:
+                            page_failures += 1
+                            continue
                         ext = (img_info.get("ext") or "png").lower()
-                        if ext not in ("png", "jpg", "jpeg", "gif", "webp"):
-                            ext = "png"
+                        supported_exts = {"png", "jpg", "jpeg", "gif", "webp"}
+                        if ext not in supported_exts:
+                            # PyMuPDF can return formats such as jpx/jp2. Browsers may not render those
+                            # (and simply renaming the extension produces broken images). Convert to PNG.
+                            try:
+                                pix = fitz.Pixmap(doc, base_xref)
+                                if pix.n - pix.alpha > 3:
+                                    pix = fitz.Pixmap(fitz.csRGB, pix)
+                                img_bytes = pix.tobytes("png")
+                                ext = "png"
+                            except Exception as convert_exc:
+                                page_failures += 1
+                                logger.warning(
+                                    f"Failed to convert unsupported image format '{img_info.get('ext')}' "
+                                    f"for xref={base_xref} on page {page_num}: {convert_exc}"
+                                )
+                                continue
                         name = f"{sanitized_title}_p{page_num}_i{img_idx}.{ext}"
                         out_path = os.path.join(app_images_path, name)
                         with open(out_path, "wb") as f:
                             f.write(img_bytes)
                         filenames.append(name)
                     except Exception as e:
+                        page_failures += 1
                         logger.warning(f"Failed to extract image xref={xref} on page {page_num}: {e}")
                 images_per_page.append(filenames)
+                logger.info(
+                    f"extract_pdf_images page={page_num + 1} found={len(xref_list)} saved={len(filenames)} failed={page_failures}"
+                )
         finally:
             doc.close()
     except Exception as e:
@@ -235,11 +269,11 @@ def extract_pdf_images(
 def inject_image_links_into_markdown(
     raw_md: str,
     images_per_page: List[List[str]],
-    app_images_path: str,
+    web_image_base_path: str = "/images/app",
     page_separator: str = "\n\n---\n\n",
 ) -> str:
     """Append markdown image links for each page's extracted images. Preserves page separator."""
-    if not images_per_page or not app_images_path:
+    if not images_per_page:
         return raw_md
     parts = raw_md.split(page_separator)
     # Align by page index; if we have more image pages than text segments, extend parts
@@ -252,11 +286,48 @@ def inject_image_links_into_markdown(
         block = seg.rstrip()
         if img_names:
             links = "\n\n".join(
-                f"![]({app_images_path}/{name})" for name in img_names
+                f"![]({web_image_base_path.rstrip('/')}/{name})" for name in img_names
             )
             block = f"{block}\n\n{links}" if block else links
         injected.append(block)
     return page_separator.join(injected)
+
+
+def sanitize_extracted_text(text: str) -> str:
+    """Normalize extracted text and remove problematic control characters."""
+    if not text:
+        return ""
+    normalized = unicodedata.normalize("NFKC", text)
+    cleaned_chars = []
+    for ch in normalized:
+        # Keep printable text, newline, tab. Drop most control/non-printable chars.
+        if ch in ("\n", "\t") or ch.isprintable():
+            cleaned_chars.append(ch)
+    cleaned = "".join(cleaned_chars)
+    cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
+
+def _protect_markdown_image_links(text: str) -> Tuple[str, Dict[str, str]]:
+    """Replace markdown image links with placeholders to avoid LLM corruption."""
+    token_map: Dict[str, str] = {}
+
+    def replacer(match: re.Match) -> str:
+        idx = len(token_map)
+        token = f"__IMG_TOKEN_{idx}__"
+        token_map[token] = match.group(0)
+        return token
+
+    protected = re.sub(r"!\[[^\]]*\]\([^)]+\)", replacer, text)
+    return protected, token_map
+
+
+def _restore_markdown_image_links(text: str, token_map: Dict[str, str]) -> str:
+    restored = text
+    for token, original in token_map.items():
+        restored = restored.replace(token, original)
+    return restored
 
 
 # --- Updated ProcessResponse model for async initiation ---
@@ -350,11 +421,12 @@ Reformat the following Markdown text according to these strict instructions:
             continue
         try:
             logger.info(f"Sending chunk {i+1}/{len(chunks)} to Ollama ({OLLAMA_REFORMAT_MODEL}). Length: {len(chunk)} characters.")
+            protected_chunk, token_map = _protect_markdown_image_links(chunk)
             response = client.chat(
                 model=OLLAMA_REFORMAT_MODEL,
                 messages=[
                     {'role': 'system', 'content': system_prompt},
-                    {'role': 'user', 'content': chunk } # Just the chunk, the instruction is in the system prompt
+                    {'role': 'user', 'content': protected_chunk } # Just the chunk, the instruction is in the system prompt
                 ],
                 options={
                     'temperature': 0.05, # Very low temperature for deterministic output
@@ -374,6 +446,7 @@ Reformat the following Markdown text according to these strict instructions:
                 logger.info(f"Stripped ```markdown wrapper from Ollama chunk {i+1}.")
             else:
                 reformatted_chunk = reformatted_chunk_raw.strip() # Strip leading/trailing whitespace anyway
+            reformatted_chunk = _restore_markdown_image_links(reformatted_chunk, token_map)
             
             # Basic validation: Check if the reformatted chunk is not empty if the original wasn't
             if not reformatted_chunk.strip() and chunk.strip():
@@ -491,7 +564,8 @@ def reformat_markdown_with_gemini(md_text: str) -> str:
     # Large context; aim for chunks well under the limit.
     # Let's aim for chunks well under this, e.g., ~200k characters.
     # 1 token ~ 4 chars. So 200k chars ~ 50k tokens.
-    MAX_CHUNK_CHARS_GEMINI = 200000 # Roughly 200,000 characters per chunk
+    # Keep chunks moderate; very large chunks were often summarized instead of reformatted.
+    MAX_CHUNK_CHARS_GEMINI = 40000
 
     logger.info(f"Splitting markdown into chunks for Gemini reformatting (max_chunk_size={MAX_CHUNK_CHARS_GEMINI})...")
     # Increased max_chunks to prevent problematic recombination into overly large chunks.
@@ -576,8 +650,11 @@ Reformat this markdown:
         try:
             logger.info(f"Sending chunk {i+1}/{len(chunks)} to Gemini. Length: {len(chunk)} characters.")
             
+            # Protect markdown image links so they survive model rewriting.
+            protected_chunk, token_map = _protect_markdown_image_links(chunk)
+
             # Construct the prompt for Gemini
-            full_prompt = system_instruction + "\n\n" + chunk
+            full_prompt = system_instruction + "\n\n" + protected_chunk
             
             response = gemini_reformat_client.models.generate_content(
                 model=GEMINI_REFORMAT_MODEL_NAME,
@@ -593,6 +670,7 @@ Reformat this markdown:
                 logger.info(f"Stripped ```markdown wrapper from Gemini chunk {i+1}.")
             else:
                 reformatted_chunk = reformatted_chunk_raw.strip() # Strip leading/trailing whitespace anyway
+            reformatted_chunk = _restore_markdown_image_links(reformatted_chunk, token_map)
 
             logger.info(f"Received response for chunk {i+1}. Reformatted length: {len(reformatted_chunk)} characters.")
 
@@ -627,7 +705,7 @@ def process_text_pdf(pdf_bytes: bytes) -> str:
         try:
             for i in range(len(doc)):
                 page = doc[i]
-                text = page.get_text()
+                text = sanitize_extracted_text(page.get_text())
                 if text.strip():
                     # Normalize whitespace; separate paragraphs by blank lines
                     blocks = [b.strip() for b in text.split("\n\n") if b.strip()]
@@ -641,12 +719,14 @@ def process_text_pdf(pdf_bytes: bytes) -> str:
 
 
 # --- PaddleOCR singleton and scanned-PDF pipeline ---
-_paddle_ocr_instance: Optional[PaddleOCR] = None
+_paddle_ocr_instance: Optional[Any] = None
 
 
-def get_paddle_ocr(use_gpu: bool = True) -> PaddleOCR:
+def get_paddle_ocr(use_gpu: bool = True):
     """Lazy-initialize and return a single PaddleOCR instance (GPU or CPU)."""
     global _paddle_ocr_instance
+    if PaddleOCR is None:
+        raise RuntimeError("PaddleOCR is not available in this environment.")
     if _paddle_ocr_instance is None:
         # PaddleOCR 3.x uses device instead of use_gpu; show_log was removed.
         device = "gpu:0" if use_gpu else "cpu"
@@ -678,7 +758,15 @@ def _ocr_results_to_markdown_page(lines_with_boxes: List[Tuple[List, Tuple[str, 
         return (y, x)
     sorted_items = sorted(lines_with_boxes, key=sort_key)
     # Group into paragraphs by vertical gap (e.g. > 1.5 * typical line height)
-    texts = [text for _box, (text, _conf) in sorted_items if text and text.strip()]
+    texts = []
+    for _box, (text, conf) in sorted_items:
+        cleaned = sanitize_extracted_text(text or "")
+        if not cleaned:
+            continue
+        # Drop very low-confidence OCR lines to reduce gibberish/noise.
+        if conf is not None and conf < 0.45:
+            continue
+        texts.append(cleaned)
     if not texts:
         return ""
     return "\n\n".join(texts)
@@ -718,6 +806,7 @@ async def perform_pdf_processing(job_id: str, temp_pdf_path: str, sanitized_titl
     callback_message = "Processing started"
     callback_file_path = None
     processing_error_detail = None
+    callback_images: List[Dict[str, str]] = []
 
     try:
         # Read PDF bytes
@@ -749,9 +838,20 @@ async def perform_pdf_processing(job_id: str, temp_pdf_path: str, sanitized_titl
             raw_md_text_from_pipe = inject_image_links_into_markdown(
                 raw_md_text_from_pipe,
                 images_per_page,
-                APP_IMAGES_PATH or "",
+                web_image_base_path="/images/app",
                 page_separator="\n\n---\n\n",
             )
+            callback_images = [
+                {"filename": name, "path": f"/images/app/{name}"}
+                for page_images in images_per_page
+                for name in page_images
+                if name
+            ]
+            logger.info(
+                f"Job {job_id}: Prepared callback image metadata for {len(callback_images)} images."
+            )
+        else:
+            logger.info(f"Job {job_id}: No extractable embedded raster images found.")
 
         logger.info(f"Job {job_id}: Raw markdown content. Length: {len(raw_md_text_from_pipe)} chars.")
 
@@ -767,7 +867,8 @@ async def perform_pdf_processing(job_id: str, temp_pdf_path: str, sanitized_titl
         # --- MERGE PAGES TO MAKE THEM LONGER ---
         # Define how many original "pages" (sections separated by '---') to merge into one.
         # For example, 2 means two original pages become one new page.
-        NUM_ORIGINAL_PAGES_TO_MERGE = 5 
+        NUM_ORIGINAL_PAGES_TO_MERGE = 5
+        PAGE_SEPARATOR_TOKEN = "\n\n---\n\n"
         PAGE_SEPARATOR_PATTERN = r'\n-{3,}\n' # Matches '---' or more hyphens on its own line
 
         if NUM_ORIGINAL_PAGES_TO_MERGE > 1 and raw_md_text_from_pipe.strip():
@@ -784,7 +885,7 @@ async def perform_pdf_processing(job_id: str, temp_pdf_path: str, sanitized_titl
             
             if merged_content_parts:
                 # Join the new "longer" pages with the original separator
-                md_text_for_reformatting = ("\n" + PAGE_SEPARATOR_PATTERN.strip() + "\n").join(merged_content_parts)
+                md_text_for_reformatting = PAGE_SEPARATOR_TOKEN.join(merged_content_parts)
                 logger.info(f"Job {job_id}: Page merging complete. New length: {len(md_text_for_reformatting)} chars. Original sections: {len(original_pages)}, New sections: {len(merged_content_parts)}")
             else:
                 md_text_for_reformatting = raw_md_text_from_pipe # Fallback if merging resulted in empty
@@ -808,17 +909,9 @@ async def perform_pdf_processing(job_id: str, temp_pdf_path: str, sanitized_titl
         
         logger.info(f"Job {job_id}: Markdown reformatting process chosen. Result length: {len(reformatted_md_text)} chars.")
 
-        # --- NEW: Globally rewrite image paths in markdown to be web-accessible ---
-        # Replace app images path with /images/app/ for authenticated access
-        if APP_IMAGES_PATH and isinstance(reformatted_md_text, str): # Ensure APP_IMAGES_PATH is set and text is a string
-            logger.info(f"Job {job_id}: Globally replacing '{APP_IMAGES_PATH}' with '/images/app' in markdown content.")
+        # Keep a narrow backward-compatibility rewrite only for legacy absolute paths.
+        if APP_IMAGES_PATH and isinstance(reformatted_md_text, str):
             reformatted_md_text = reformatted_md_text.replace(APP_IMAGES_PATH, "/images/app")
-            # Also handle case where IMAGES_PATH might be in the path (for backward compatibility)
-            if IMAGES_PATH and IMAGES_PATH != APP_IMAGES_PATH:
-                logger.info(f"Job {job_id}: Also replacing '{IMAGES_PATH}' with '/images/app' in markdown content.")
-                reformatted_md_text = reformatted_md_text.replace(IMAGES_PATH, "/images/app")
-            logger.info(f"Job {job_id}: Global image path replacement complete.")
-        # --- END OF NEW IMAGE PATH REWRITING ---
 
         # Save markdown content to a file using the sanitized title
         markdown_file_path = os.path.join(MARKDOWN_PATH, f"{sanitized_title}.md")
@@ -869,6 +962,7 @@ async def perform_pdf_processing(job_id: str, temp_pdf_path: str, sanitized_titl
 
         if callback_status == "completed":
             callback_data["file_path"] = callback_file_path
+            callback_data["images"] = callback_images
         
         try:
             response = requests.post(callback_url, json=callback_data, timeout=10) # Add a timeout
@@ -897,8 +991,10 @@ async def process_pdf(
 
     logger.info(f"Created job {job_id} for file {file.filename} with sanitized title {sanitized_title}")
 
-    # Save uploaded file temporarily using the original filename
-    temp_path = os.path.join(PDF_STORAGE_PATH, file.filename) # Using original filename for temp storage
+    # Save uploaded file using a job-scoped name to avoid collisions.
+    safe_upload_name = sanitize_filename(file.filename) or "upload.pdf"
+    temp_filename = f"{job_id}_{safe_upload_name}"
+    temp_path = os.path.join(PDF_STORAGE_PATH, temp_filename)
     logger.info(f"Job {job_id}: Saving temporary file to: {temp_path}")
     try:
         await file.seek(0)

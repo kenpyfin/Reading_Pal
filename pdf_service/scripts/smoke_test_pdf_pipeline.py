@@ -49,25 +49,49 @@ def make_minimal_text_pdf_bytes() -> bytes:
 
 
 def main():
-    from app import pdf_has_text, process_text_pdf, PDF_OCR_ENGINE
+    from app import (
+        pdf_has_text,
+        process_text_pdf,
+        extract_pdf_images,
+        inject_image_links_into_markdown,
+        PDF_OCR_ENGINE,
+    )
 
     pdf_bytes = make_minimal_text_pdf_bytes()
     print("1. pdf_has_text:", pdf_has_text(pdf_bytes))
     text_md = process_text_pdf(pdf_bytes)
     print("2. process_text_pdf length:", len(text_md))
     assert "smoke test" in text_md or "Hello" in text_md, "Expected extractable text"
-    print("3. Text pipeline smoke test passed.")
+    assert "\n\n---\n\n" not in text_md, "Single-page text PDF should not include page separators"
+    print("3. Text extraction smoke test passed.")
+
+    images_per_page = extract_pdf_images(pdf_bytes, "smoke_test_doc", os.path.join(os.environ["IMAGES_PATH"], "app"))
+    print("4. extract_pdf_images page count:", len(images_per_page))
+    assert isinstance(images_per_page, list), "Expected list result from image extraction"
+    # For this synthetic text-only PDF, embedded raster images are usually absent.
+    assert sum(len(page) for page in images_per_page) == 0, "Expected no embedded raster images in fixture"
+
+    merged_md = "Page one text\n\n---\n\nPage two text"
+    injected = inject_image_links_into_markdown(
+        merged_md,
+        [["a.png"], ["b.jpg"]],
+        web_image_base_path="/images/app",
+        page_separator="\n\n---\n\n",
+    )
+    assert "![](/images/app/a.png)" in injected and "![](/images/app/b.jpg)" in injected, "Expected stable web image links"
+    assert injected.count("\n\n---\n\n") == 1, "Expected markdown separator to remain canonical"
+    print("5. Image link injection smoke test passed.")
 
     if PDF_OCR_ENGINE == "paddle":
         try:
             from app import process_scanned_pdf_with_paddleocr
             ocr_md = process_scanned_pdf_with_paddleocr(pdf_bytes)
-            print("4. process_scanned_pdf_with_paddleocr length:", len(ocr_md))
-            print("5. PaddleOCR pipeline smoke test passed.")
+            print("6. process_scanned_pdf_with_paddleocr length:", len(ocr_md))
+            print("7. PaddleOCR pipeline smoke test passed.")
         except Exception as e:
-            print("5. PaddleOCR skipped (no GPU or dependency):", e)
+            print("7. PaddleOCR skipped (no GPU or dependency):", e)
     else:
-        print("4. PaddleOCR skipped (PDF_OCR_ENGINE != paddle).")
+        print("6. PaddleOCR skipped (PDF_OCR_ENGINE != paddle).")
 
     print("Done.")
 

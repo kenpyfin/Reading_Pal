@@ -44,7 +44,6 @@
   overflow-y: auto;
   overflow-x: hidden;
   padding: 20px;
-  padding-top: calc(20px + var(--book-toolbar-inset, 0px));
   box-sizing: border-box;
 }
 
@@ -459,19 +458,48 @@
 @import url('../components/NoteDisplayModal.css');
 
 /* --- Styling for the new Book Pane Controls Header --- */
-.book-pane-controls-header-wrapper {
-  flex-shrink: 0;
-  align-self: stretch;
+.book-floating-toolbar-shell {
+  display: flex;
+  justify-content: flex-end;
+  pointer-events: none;
 }
 
-.book-pane-controls-header-wrapper--floated {
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
+.book-floating-toolbar {
+  margin: 8px;
+  display: inline-flex;
+  align-items: stretch;
+  pointer-events: auto;
+}
+
+.book-floating-toolbar-panel {
+  overflow: hidden;
+  transform-origin: right center;
+  transition: max-width 220ms ease, opacity 180ms ease, transform 220ms ease;
+  max-width: min(980px, calc(100vw - 120px));
+  opacity: 1;
+  transform: scaleX(1);
+}
+
+.book-floating-toolbar.is-collapsed .book-floating-toolbar-panel {
+  max-width: 0;
+  opacity: 0;
+  transform: scaleX(0);
+}
+
+.book-floating-toolbar.is-expanded .book-floating-toolbar-panel {
+  pointer-events: auto;
+}
+
+.book-floating-toolbar.is-collapsed .book-floating-toolbar-panel {
+  pointer-events: none;
 }
 
 .book-pane-controls-header {
-  display: flex;
-  justify-content: space-between; /* Key for layout */
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
+  column-gap: 10px;
   padding: 8px 12px;
   background-color: #f8f9fa;
   border-bottom: none;
@@ -497,17 +525,11 @@
   margin-left: 8px;
 }
 
-.book-toolbar-callout-btn {
-  position: fixed;
+.book-toolbar-toggle-btn--floating {
+  margin-left: 0;
   min-width: 40px;
-  padding: 0;
-  border-radius: 999px;
-  font-size: 1.1rem;
-  line-height: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+  border-radius: 0 10px 10px 0;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
 }
 
 /* Book View Menu Container (Left) */
@@ -583,6 +605,20 @@
   display: flex;
   align-items: center;
   gap: 4px;
+  justify-content: flex-end;
+}
+
+.font-controls-value {
+  margin: 0 8px;
+  font-size: 13px;
+  min-width: 40px;
+  text-align: center;
+}
+
+.font-controls-separator {
+  border-left: 1px solid #ccc;
+  height: 20px;
+  margin: 0 10px;
 }
 
 /* Bookmark Menu Container (Left) */
@@ -667,7 +703,7 @@
   display: flex;
   align-items: center;
   justify-content: center; /* Center its own items */
-  flex-grow: 1; /* Allow it to take available space in the center */
+  justify-self: center;
   padding: 0; /* Remove padding if already handled by header */
   border: none; /* Remove border if already handled by header */
   background-color: transparent; /* Inherit header background */
@@ -701,8 +737,8 @@
 
 /* Placeholder for pagination to maintain layout balance */
 .pagination-controls-placeholder {
-  flex-grow: 1; /* Occupy the same space as pagination would */
-  /* visibility: hidden; /* Or just be an empty div */
+  justify-self: center;
+  min-width: 160px;
 }
 
 
@@ -710,7 +746,17 @@
 .right-controls-group {
   display: flex;
   align-items: center;
-  /* No flex-grow, so it stays to the right */
+  justify-self: end;
+  min-width: 0;
+}
+
+.left-controls-group {
+  display: flex;
+  align-items: center;
+  justify-self: start;
+  min-width: 0;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 /* General .control-button (ensure it's robust) */
@@ -797,47 +843,70 @@
 }
 
 
-/* Adjust controls header for new button */
-.book-pane-controls-header .left-controls-group {
-  display: flex;
-  align-items: center;
-}
-.book-pane-controls-header .left-controls-group .control-button {
-  margin-right: 8px; /* Space between buttons in the left group */
-}
-.book-pane-controls-header .left-controls-group .control-button:last-child {
-  margin-right: 0;
-}
-
-/* View mode toggle in header */
-.view-mode-toggle {
-  display: inline-flex;
+.view-mode-switch {
+  position: relative;
+  min-width: 150px;
+  height: 32px;
   border: 1px solid #ccc;
-  border-radius: 6px;
+  border-radius: 16px;
+  background: #fff;
+  color: #333;
+  cursor: pointer;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
   overflow: hidden;
 }
 
-.view-mode-btn {
-  background: #f8f9fa;
-  border: none;
-  padding: 6px 10px;
-  font-size: 0.85em;
-  cursor: pointer;
-  color: #333;
+.view-mode-switch-track {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: center;
+  text-align: center;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 0 8px;
+  z-index: 1;
 }
 
-.view-mode-btn + .view-mode-btn {
-  border-left: 1px solid #ccc;
+.view-mode-switch-label {
+  pointer-events: none;
+  transition: color 0.18s ease;
 }
 
-.view-mode-btn.active {
+.view-mode-switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: calc(50% - 2px);
+  height: 26px;
+  border-radius: 13px;
   background: #007bff;
+  transition: transform 0.2s ease;
+}
+
+.view-mode-switch.is-guide .view-mode-switch-thumb {
+  transform: translateX(0);
+}
+
+.view-mode-switch.is-original .view-mode-switch-thumb {
+  transform: translateX(calc(100% - 2px));
+}
+
+.view-mode-switch.is-guide .view-mode-switch-label--guide,
+.view-mode-switch.is-original .view-mode-switch-label--original {
   color: #fff;
 }
 
-.view-mode-btn:focus {
-  outline: 2px solid rgba(0, 123, 255, 0.4);
-  outline-offset: 1px;
+.view-mode-switch.is-guide .view-mode-switch-label--original,
+.view-mode-switch.is-original .view-mode-switch-label--guide {
+  color: #495057;
+}
+
+.view-mode-switch:focus-visible {
+  outline: 2px solid rgba(0, 123, 255, 0.45);
+  outline-offset: 2px;
 }
 
 
@@ -922,36 +991,40 @@
   }
   
   .book-pane-controls-header {
-    flex-wrap: wrap; 
-    justify-content: space-around; /* Changed from center to space-around for better distribution */
+    grid-template-columns: 1fr;
+    justify-items: start;
     padding: 6px 8px;
-    gap: 8px; /* Increased gap slightly for better touch targets when wrapped */
+    row-gap: 8px;
   }
 
-  .left-controls-group, /* New group for guide/bookmarks */
+  .left-controls-group {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
   .pagination-controls.header-pagination,
+  .pagination-controls-placeholder {
+    justify-self: start;
+    min-width: 0;
+  }
+
   .right-controls-group {
-    flex-basis: auto; /* Allow items to size based on content */
-    flex-grow: 0;
-    flex-shrink: 1;
-    align-self: center;
-    /* margin-bottom: 5px; /* Add some margin if they wrap to new line */
-  }
-  
-  /* Ensure left and right groups don't take all space from pagination */
-  .left-controls-group, .right-controls-group {
-    flex-grow: 0; /* Don't let side button groups grow excessively */
-    flex-shrink: 0; /* Prevent them from shrinking too much */
+    justify-self: start;
   }
 
-
-  /* Allow pagination to take more space if available on the line */
-  .pagination-controls.header-pagination {
-    flex-grow: 1; /* Let pagination try to fill available space */
-    min-width: 150px; /* Give pagination a minimum width */
-    justify-content: center; /* Ensure its internal items are centered */
+  .right-controls-group .font-controls-group {
+    justify-content: flex-start;
   }
-  
+
+  .view-mode-switch {
+    min-width: 132px;
+    height: 30px;
+  }
+
+  .view-mode-switch-thumb {
+    height: 24px;
+  }
+
   /* Make all control buttons in header compact on mobile */
   .book-pane-controls-header .control-button {
     padding: 0 8px; 

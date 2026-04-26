@@ -29,6 +29,24 @@ Use a reverse-chronological list (newest first). Each entry should be short and 
 
 <!-- New entries go below this comment, newest first. -->
 
+## 2026-04-26 — Floating toolbar reorganized with single view-mode switch
+
+- **What:** Reorganized the floating book toolbar into a three-zone layout: left (`Menu`, single Guide/Original switch, `Add Bookmark`, `Add note`), center (pagination), and right (font size/line-height controls). Replaced the dual view-mode buttons with one switch-style toggle and moved `Add Bookmark`/`Add note` out of the dropdown into visible toolbar buttons.
+- **Why:** The prior layout felt crowded and inconsistent with the requested control grouping; a single mode switch reduces button count and makes mode state clearer.
+- **Where:** `frontend/src/pages/BookView.js`, `frontend/src/pages/BookView.css`
+
+## 2026-04-26 — Pagination buttons now land at page top
+
+- **What:** Updated Book View pagination so clicking `Previous` or `Next` always lands at the top of the destination page, even if that page had a previously cached scroll offset.
+- **Why:** The per-page scroll-restore effect was reapplying old offsets after page changes, which made button navigation feel inconsistent.
+- **Where:** `frontend/src/pages/BookView.js`
+
+## 2026-04-24 — Book toolbar decoupled as floating arrow-origin panel
+
+- **What:** Reworked the book controls toolbar into a `createPortal` fixed overlay so it is no longer part of the in-flow book pane header, and kept it floating in both expanded and retracted states. The retract/expand interaction is now a single right-edge arrow button with an animated panel that expands and collapses from the arrow outward right-to-left.
+- **Why:** The prior implementation still behaved like a header-associated control block and used a separate collapsed callout; the requested UX is a consistently floating control with a unified arrow-driven reveal animation.
+- **Where:** `frontend/src/pages/BookView.js`, `frontend/src/pages/BookView.css`
+
 ## 2026-04-23 — PDF pipeline formatting/image reliability hardening
 
 - **What:** Aligned PDF service callback payload with backend expectations by including `images` metadata; added backend fallback extraction of image filenames from markdown for legacy callbacks; fixed page merge separator handling to rejoin with canonical `---`; switched markdown image injection to stable `/images/app/<filename>` links; hardened temp upload naming with job-scoped filenames; parameterized compose callback URL with `BACKEND_PORT`; expanded smoke checks for image-link and separator invariants; and made PaddleOCR import optional at startup so text/image flows do not crash when OCR deps are absent.

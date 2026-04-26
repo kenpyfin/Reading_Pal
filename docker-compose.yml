@@ -60,7 +60,7 @@ services:
       MARKDOWN_PATH: /app/storage/output
       IMAGES_PATH: /app/storage/images
       # From inside the container, reach the host backend (backend uses network_mode: host)
-      BACKEND_CALLBACK_URL: "http://host.docker.internal:8501/api/books/callback"
+      BACKEND_CALLBACK_URL: "http://host.docker.internal:${BACKEND_PORT:-8000}/api/books/callback"
     volumes:
       - ${PDF_STORAGE_PATH}:/app/storage/pdfs
       - ${MARKDOWN_PATH}:/app/storage/output
