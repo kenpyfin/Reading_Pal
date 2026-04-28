@@ -182,6 +182,163 @@ function mapRenderedToRawOffset(renderedOffsetTarget, mdSegments) {
   return currentRawOffset;
 }
 
+function normalizeWhitespaceWithIndexMap(text) {
+  const normalizedChars = [];
+  const indexMap = [];
+  let previousWasWhitespace = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    const isWhitespace = /\s/.test(char);
+    if (isWhitespace) {
+      if (!previousWasWhitespace) {
+        normalizedChars.push(' ');
+        indexMap.push(i);
+      }
+      previousWasWhitespace = true;
+    } else {
+      normalizedChars.push(char);
+      indexMap.push(i);
+      previousWasWhitespace = false;
+    }
+  }
+
+  while (normalizedChars.length > 0 && normalizedChars[0] === ' ') {
+    normalizedChars.shift();
+    indexMap.shift();
+  }
+  while (normalizedChars.length > 0 && normalizedChars[normalizedChars.length - 1] === ' ') {
+    normalizedChars.pop();
+    indexMap.pop();
+  }
+
+  return {
+    normalized: normalizedChars.join(''),
+    indexMap,
+  };
+}
+
+function findNearestMatchIndex(haystack, needle, targetIndex) {
+  if (!needle || !haystack) return -1;
+  let bestIndex = -1;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  let searchFrom = 0;
+
+  while (searchFrom <= haystack.length) {
+    const idx = haystack.indexOf(needle, searchFrom);
+    if (idx === -1) break;
+    const distance = Math.abs(idx - targetIndex);
+    if (distance < bestDistance) {
+      bestIndex = idx;
+      bestDistance = distance;
+    }
+    searchFrom = idx + 1;
+  }
+
+  return bestIndex;
+}
+
+function expandRangeToWordBoundaries(text, start, end) {
+  const maxBoundaryExpansion = 24;
+  let safeStart = Math.max(0, Math.min(start, text.length));
+  let safeEnd = Math.max(safeStart + 1, Math.min(end, text.length));
+
+  let leftExpanded = 0;
+  while (
+    safeStart > 0 &&
+    leftExpanded < maxBoundaryExpansion &&
+    /\S/.test(text[safeStart - 1]) &&
+    /\S/.test(text[safeStart])
+  ) {
+    safeStart--;
+    leftExpanded++;
+  }
+
+  let rightExpanded = 0;
+  while (
+    safeEnd < text.length &&
+    rightExpanded < maxBoundaryExpansion &&
+    /\S/.test(text[safeEnd - 1]) &&
+    /\S/.test(text[safeEnd])
+  ) {
+    safeEnd++;
+    rightExpanded++;
+  }
+
+  return { start: safeStart, end: safeEnd };
+}
+
+function resolveNoteHighlightRange(plainPageText, anchorInPage, sourceText) {
+  if (!plainPageText || !sourceText) return null;
+
+  const pageLength = plainPageText.length;
+  if (pageLength <= 0) return null;
+
+  const anchor = Math.max(0, Math.min(anchorInPage, pageLength - 1));
+  const expectedLen = Math.max(1, sourceText.length);
+  const searchRadius = Math.max(240, Math.min(2200, expectedLen * 4));
+  const windowStart = Math.max(0, anchor - searchRadius);
+  const windowEnd = Math.min(pageLength, anchor + expectedLen + searchRadius);
+  const windowText = plainPageText.substring(windowStart, windowEnd);
+
+  const exactMatchInWindow = findNearestMatchIndex(
+    windowText,
+    sourceText,
+    Math.max(0, anchor - windowStart)
+  );
+  if (exactMatchInWindow !== -1) {
+    const exactStart = windowStart + exactMatchInWindow;
+    return {
+      start: exactStart,
+      end: Math.min(pageLength, exactStart + sourceText.length),
+      strategy: 'exact',
+    };
+  }
+
+  const normalizedWindow = normalizeWhitespaceWithIndexMap(windowText);
+  const normalizedNeedle = normalizeWhitespaceWithIndexMap(sourceText);
+  if (normalizedWindow.normalized && normalizedNeedle.normalized) {
+    const estimatedNormalizedAnchor = normalizeWhitespaceWithIndexMap(
+      windowText.substring(0, Math.max(0, anchor - windowStart))
+    ).normalized.length;
+    const normalizedMatchIndex = findNearestMatchIndex(
+      normalizedWindow.normalized,
+      normalizedNeedle.normalized,
+      estimatedNormalizedAnchor
+    );
+
+    if (normalizedMatchIndex !== -1) {
+      const normalizedMatchEnd = normalizedMatchIndex + normalizedNeedle.normalized.length - 1;
+      const localStart = normalizedWindow.indexMap[normalizedMatchIndex];
+      const localEndChar = normalizedWindow.indexMap[normalizedMatchEnd];
+      if (
+        typeof localStart === 'number' &&
+        typeof localEndChar === 'number'
+      ) {
+        const normalizedRange = expandRangeToWordBoundaries(
+          plainPageText,
+          windowStart + localStart,
+          windowStart + localEndChar + 1
+        );
+        return {
+          ...normalizedRange,
+          strategy: 'normalized',
+        };
+      }
+    }
+  }
+
+  const minGenerousLen = Math.max(28, Math.min(260, Math.round(expectedLen * 1.4)));
+  const generousStart = Math.max(0, anchor - 8);
+  const generousEnd = Math.min(pageLength, generousStart + minGenerousLen);
+  const expandedFallback = expandRangeToWordBoundaries(plainPageText, generousStart, generousEnd);
+
+  return {
+    ...expandedFallback,
+    strategy: 'fallback',
+  };
+}
+
 // Helper function to calculate page boundaries respecting word breaks
 function calculatePageBoundaries(markdown, targetCharsPerPage) {
   if (!markdown || typeof markdown !== 'string') { // Added type check for markdown
@@ -324,6 +481,7 @@ function BookView() {
   const [highlightedPageContent, setHighlightedPageContent] = useState(''); // Content with highlights for rendering
   const [pageInput, setPageInput] = useState('');
   const [pageBoundaries, setPageBoundaries] = useState([]);
+  const pageBoundariesRef = useRef([]);
 
   const [scrollToGlobalOffset, setScrollToGlobalOffset] = useState(null);
   const [pendingScrollOffsetInPage, setPendingScrollOffsetInPage] = useState(null);
@@ -594,6 +752,7 @@ function BookView() {
       setFullMarkdownContent(md);
       const calculatedBoundaries = calculatePageBoundaries(md, APPROX_CHARS_PER_PAGE);
       setPageBoundaries(calculatedBoundaries);
+      pageBoundariesRef.current = calculatedBoundaries;
       const numPages = Math.max(1, calculatedBoundaries.length);
       setTotalPages(numPages);
       const savedPosition = getStoredReadingPosition(bookId);
@@ -610,6 +769,7 @@ function BookView() {
     } else {
       setFullMarkdownContent('');
       setPageBoundaries([]);
+      pageBoundariesRef.current = [];
       setTotalPages(1);
     }
   }, [bookId]);
@@ -1527,10 +1687,12 @@ function BookView() {
     if (fullMarkdownContent) {
       const newBoundaries = calculatePageBoundaries(fullMarkdownContent, APPROX_CHARS_PER_PAGE);
       setPageBoundaries(newBoundaries);
+      pageBoundariesRef.current = newBoundaries;
       setTotalPages(Math.max(1, newBoundaries.length));
       boundariesToUse = newBoundaries;
     } else {
       setPageBoundaries([]);
+      pageBoundariesRef.current = [];
       setTotalPages(1);
     }
 
@@ -1586,13 +1748,25 @@ function BookView() {
         });
 
         for (const note of sortedNotes) {
-          const noteStartInPage = note.global_character_offset - pageStartGlobalOffset;
-          const noteEndInPage = noteStartInPage + (note.source_text?.length || 0);
+          const noteAnchorInPage = note.global_character_offset - pageStartGlobalOffset;
+          const resolvedRange = resolveNoteHighlightRange(
+            plainPageText,
+            noteAnchorInPage,
+            note.source_text
+          );
+          if (!resolvedRange) {
+            continue;
+          }
           const noteId = note.id || note._id;
+          if (resolvedRange.strategy === 'fallback') {
+            logger.info(
+              `[BookView - Page Content Effect] Note ${noteId} used generous fallback highlight around offset ${note.global_character_offset}.`
+            );
+          }
           
           highlights.push({
-            start: noteStartInPage,
-            end: noteEndInPage,
+            start: resolvedRange.start,
+            end: resolvedRange.end,
             type: 'note',
             id: noteId,
             text: note.source_text
@@ -1954,10 +2128,11 @@ function BookView() {
         // Get current page's actual start offset from boundaries
         let currentPageStartOffset = 0; // Default for safety
         const pageIndex = currentPage - 1;
-        if (pageBoundaries.length > 0 && pageIndex >= 0 && pageIndex < pageBoundaries.length) {
-            currentPageStartOffset = pageBoundaries[pageIndex].start;
+        const boundariesSource = pageBoundariesRef.current.length > 0 ? pageBoundariesRef.current : pageBoundaries;
+        if (boundariesSource.length > 0 && pageIndex >= 0 && pageIndex < boundariesSource.length) {
+            currentPageStartOffset = boundariesSource[pageIndex].start;
         } else {
-            logger.warn(`[BookView - handleTextSelect] pageBoundaries not ready or invalid currentPage for offset calculation. Using fallback. CurrentPage: ${currentPage}, Boundaries Length: ${pageBoundaries.length}`);
+            logger.warn(`[BookView - handleTextSelect] pageBoundaries not ready or invalid currentPage for offset calculation. Using fallback. CurrentPage: ${currentPage}, Boundaries Length: ${boundariesSource.length}`);
             currentPageStartOffset = (currentPage - 1) * APPROX_CHARS_PER_PAGE; // Fallback
         }
 
@@ -1974,8 +2149,9 @@ function BookView() {
         // Fallback globalOffset calculation
         let fallbackPageStartOffset = (currentPage - 1) * APPROX_CHARS_PER_PAGE;
         const pageIndex = currentPage - 1;
-        if (pageBoundaries.length > 0 && pageIndex >= 0 && pageIndex < pageBoundaries.length) {
-            fallbackPageStartOffset = pageBoundaries[pageIndex].start;
+        const boundariesSource = pageBoundariesRef.current.length > 0 ? pageBoundariesRef.current : pageBoundaries;
+        if (boundariesSource.length > 0 && pageIndex >= 0 && pageIndex < boundariesSource.length) {
+            fallbackPageStartOffset = boundariesSource[pageIndex].start;
         }
         const fallbackGlobalOffset = fallbackPageStartOffset + startInPageRendered; 
         setSelectedGlobalCharOffset(fallbackGlobalOffset);

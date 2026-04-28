@@ -348,8 +348,8 @@
   cursor: pointer;
   transition: background-color 0.2s ease-in-out;
   border-radius: 2px;
-  padding: 0 1px;
-  margin: 0 -1px;
+  padding: 0 0.5px;
+  margin: 0;
 }
 
 .note-highlight:hover {

@@ -29,6 +29,12 @@ Use a reverse-chronological list (newest first). Each entry should be short and 
 
 <!-- New entries go below this comment, newest first. -->
 
+## 2026-04-26 — Note highlight replay anchored with generous fallback
+
+- **What:** Improved Book View note highlight replay by resolving note ranges via anchor-window text matching (`source_text` near `global_character_offset`) with exact then whitespace-normalized matching, plus a bounded generous fallback range when exact mapping fails. Also aligned selection offset capture to the latest page boundaries via a ref to reduce stale offset fallback and softened `.note-highlight` box model so visual bars better match text spans.
+- **Why:** Persisted note highlights could appear shifted after select -> add note because selection offsets are computed from rendered DOM text while replay ranges were previously reconstructed with a raw `start + length` assumption.
+- **Where:** `frontend/src/pages/BookView.js`, `frontend/src/pages/BookView.css`
+
 ## 2026-04-26 — Floating toolbar reorganized with single view-mode switch
 
 - **What:** Reorganized the floating book toolbar into a three-zone layout: left (`Menu`, single Guide/Original switch, `Add Bookmark`, `Add note`), center (pagination), and right (font size/line-height controls). Replaced the dual view-mode buttons with one switch-style toggle and moved `Add Bookmark`/`Add note` out of the dropdown into visible toolbar buttons.
