@@ -1,0 +1,20 @@
+---
+description: Keep architecture and operations docs aligned with implementation changes
+globs: "{README.md,docs/**/*.md,docker-compose.yml,backend/**/*.py,pdf_service/**/*.py,image_server/**/*.py,*.sh}"
+alwaysApply: false
+---
+
+# Documentation Sync Rule
+
+When changes affect runtime architecture, service boundaries, deployment behavior, or key environment variables:
+
+1. Update `README.md` if quickstart/system overview details changed.
+2. Update `docs/architecture.md` if service flow, ownership, routes, callback contracts, or storage model changed.
+3. Update `docs/operations.md` if setup, env vars, run mode, script behavior, or deploy caveats changed.
+
+## Required checks before finishing
+
+- Ensure docs describe current behavior from code, not planned behavior.
+- Keep naming consistent with `docker-compose.yml` and service entrypoints.
+- Call out destructive or security-sensitive behavior explicitly.
+- If behavior changed non-trivially, append an entry in `DEVELOPMENT_JOURNAL.md`.

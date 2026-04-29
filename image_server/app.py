@@ -194,26 +194,6 @@ async def serve_public_image(filepath: str):
         logger.error(f"Error serving public image {filepath}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
 
-def get_client_ip(request: Request) -> str:
-    """Extract client IP address from request, handling proxy headers."""
-    # Check X-Forwarded-For header first (from nginx/proxy)
-    forwarded_for = request.headers.get("X-Forwarded-For")
-    if forwarded_for:
-        # X-Forwarded-For can contain multiple IPs, take the first one
-        client_ip = forwarded_for.split(",")[0].strip()
-        return client_ip
-    
-    # Check X-Real-IP header (alternative proxy header)
-    real_ip = request.headers.get("X-Real-IP")
-    if real_ip:
-        return real_ip.strip()
-    
-    # Fallback to direct client IP
-    if request.client:
-        return request.client.host
-    
-    return "unknown"
-
 @app.get("/images/app/{filepath:path}")
 async def serve_app_image(request: Request, filepath: str):
     """

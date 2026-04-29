@@ -4,7 +4,6 @@
 import asyncio # Import asyncio
 import os
 import logging
-import requests # Import requests
 import hmac
 import hashlib
 import time
@@ -33,6 +32,7 @@ from backend.db.mongodb import (
 )
 from backend.auth.auth_handler import auth_handler_instance # For decoding JWT
 from backend.services.llm_service import llm_service # For Reading Guide (Import instance)
+from backend.services.pdf_client import process_pdf_with_service
 import json # For parsing LLM response for Reading Guide
 
 # Import new model and DB functions for page-specific reading guides
@@ -57,18 +57,10 @@ router = APIRouter()
 
 # Dependency to get current user_id from token
 async def get_current_user_id(request: Request) -> str:
-    # Log all incoming headers for deep debugging
-    logger.info(f"get_current_user_id: All request headers for {request.url.path}: {dict(request.headers)}")
-
     auth_header = request.headers.get("Authorization")
-    debug_auth_header = request.headers.get("X-Debug-Auth-Header-Seen") # Get the debug header
-    # Log the received headers (or lack thereof) at INFO level for better visibility
-    logger.info(f"get_current_user_id: Specifically checking 'Authorization' header: '{auth_header}'")
-    logger.info(f"get_current_user_id: Specifically checking 'X-Debug-Auth-Header-Seen' header: '{debug_auth_header}'")
 
     if not auth_header:
-        logger.info(f"get_current_user_id: Authorization header is missing or empty for request to: {request.url.path}. Raising 401.")
-        # logger.warning("get_current_user_id: Authorization header missing.") # Original warning was removed, this info log replaces it for this path
+        logger.warning("get_current_user_id: Authorization header is missing for %s", request.url.path)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated", # This is the detail the client will see
@@ -77,7 +69,7 @@ async def get_current_user_id(request: Request) -> str:
     
     parts = auth_header.split()
     if parts[0].lower() != "bearer" or len(parts) == 1 or len(parts) > 2:
-        logger.warning(f"get_current_user_id: Invalid Authorization header format: {auth_header}")
+        logger.warning("get_current_user_id: Invalid Authorization header format for %s", request.url.path)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token format",
@@ -144,29 +136,15 @@ def sanitize_filename(filename: str) -> str:
 
 # --- Helper function for PDF service call (keep as is) ---
 async def call_pdf_service_upload(file: UploadFile, title: Optional[str]):
-    if not PDF_CLIENT_URL:
-        logger.error("PDF_CLIENT_URL environment variable is not set.")
-        raise HTTPException(status_code=500, detail="PDF processing service URL is not configured.")
-
-    pdf_service_upload_url = f"{PDF_CLIENT_URL}/process-pdf"
-    logger.info(f"Forwarding PDF to PDF service at {pdf_service_upload_url}")
-
-    file_content = await file.read()
-    files = {'file': (file.filename, file_content, file.content_type)}
-    data = {'title': title} if title else {}
-
     try:
-        def send_to_pdf_service():
-            response = requests.post(pdf_service_upload_url, files=files, data=data)
-            response.raise_for_status()
-            return response.json()
-
-        response_data = await run_in_threadpool(send_to_pdf_service)
+        response_data = await run_in_threadpool(process_pdf_with_service, file, title)
         logger.info(f"Received response from PDF service upload: {response_data}")
         return response_data
-
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error connecting to PDF service during upload: {e}")
+    except ValueError as e:
+        logger.error("PDF service configuration error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+    except RuntimeError as e:
+        logger.error("Error connecting to PDF service during upload: %s", e)
         raise HTTPException(status_code=503, detail=f"Could not connect to PDF processing service: {e}")
     except Exception as e:
         logger.error(f"Error in PDF service call: {e}", exc_info=True)

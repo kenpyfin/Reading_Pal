@@ -12,8 +12,8 @@ from backend.db.mongodb import get_book # Import function to get book data
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# Define the container markdown path locally, matching the docker-compose mount
-CONTAINER_MARKDOWN_PATH = "/app/storage/markdown"
+# Define markdown path from environment to stay aligned with compose/runtime overrides.
+CONTAINER_MARKDOWN_PATH = os.getenv("MARKDOWN_PATH", "/app/storage/markdown")
 logger.info(f"LLM API: CONTAINER_MARKDOWN_PATH = {CONTAINER_MARKDOWN_PATH}")
 
 

@@ -552,6 +552,8 @@ function BookView() {
   const guideScrollContainerRef = useRef(null);
   const lastScrollToTopPageRef = useRef(null); // Only scroll book pane to top when page actually changed (not when only notes changed)
   const skipBookScrollRestoreOnPageChangeRef = useRef(false);
+  const explicitPaginationInFlightRef = useRef(false);
+  const explicitPaginationTargetPageRef = useRef(null);
   // Remember book (original) pane scroll per page when switching to guide so we can restore when switching back
   const [bookScrollPositionByPage, setBookScrollPositionByPage] = useState({});
 
@@ -625,6 +627,23 @@ function BookView() {
     setLineHeight(prevHeight => parseFloat(Math.max(prevHeight - LINE_HEIGHT_STEP, MIN_LINE_HEIGHT).toFixed(2)));
   };
   // --- END Font Control State ---
+
+  const clearGuideDrivenScrollState = useCallback(() => {
+    setGuideSearchText(null);
+    setGuideSearchGlobalOffset(null);
+    setGuideSearchEndOffset(null);
+    setPendingScrollOffsetInPage(null);
+    setPendingScrollToPercentage(null);
+    setScrollToGlobalOffset(null);
+  }, []);
+
+  const beginExplicitPagination = useCallback((targetPage) => {
+    explicitPaginationInFlightRef.current = true;
+    explicitPaginationTargetPageRef.current = targetPage;
+    skipBookScrollRestoreOnPageChangeRef.current = true;
+    navigatingFromGuideTextLinkRef.current = false;
+    clearGuideDrivenScrollState();
+  }, [clearGuideDrivenScrollState]);
 
   // --- Dropdown Menu State ---
   const [isBookViewMenuOpen, setIsBookViewMenuOpen] = useState(false);
@@ -827,13 +846,21 @@ function BookView() {
             setIsOfflineSnapshot(true);
             setError(null);
           } else {
-            setError(`Failed to load book: ${err.message || 'Unknown error'}`);
+            if (!navigator.onLine) {
+              setError('Offline and no cached copy found for this book yet. Reconnect once and open this book to enable offline reading.');
+            } else {
+              setError(`Failed to load book: ${err.message || 'Unknown error'}. No cached copy is available for fallback.`);
+            }
             setBookData(null);
             setFullMarkdownContent('');
           }
         } catch (cacheErr) {
           logger.error('[BookView - fetchBook] Cache load failed:', cacheErr);
-          setError(`Failed to load book: ${err.message || 'Unknown error'}`);
+          if (!navigator.onLine) {
+            setError('Offline and failed to read this book from local cache. Reconnect and reopen to refresh the offline copy.');
+          } else {
+            setError(`Failed to load book: ${err.message || 'Unknown error'}`);
+          }
           setBookData(null);
           setFullMarkdownContent('');
         }
@@ -1523,6 +1550,7 @@ function BookView() {
   // Restore book (original) pane scroll when switching from Guide back to Original
   useEffect(() => {
     if (viewMode !== 'original' || !bookPaneContainerRef.current) return;
+    if (explicitPaginationInFlightRef.current) return;
     if (skipBookScrollRestoreOnPageChangeRef.current) {
       skipBookScrollRestoreOnPageChangeRef.current = false;
       return;
@@ -1928,24 +1956,39 @@ function BookView() {
       }
       
       if (bookPaneContainerRef.current && viewMode === 'original') {
-        if (pendingScrollOffsetInPage === null && pendingScrollToPercentage === null) {
-            const pageActuallyChanged = lastScrollToTopPageRef.current !== currentPage;
-            if (pageActuallyChanged && !isProgrammaticScroll.current) {
-                logger.debug("[BookView - Page Content Effect] Page changed to", currentPage, ". Scrolling to top.");
-                lastScrollToTopPageRef.current = currentPage;
-                isProgrammaticScroll.current = true;
-                bookPaneContainerRef.current.scrollTop = 0;
-                setTimeout(() => {
-                    isProgrammaticScroll.current = false;
-                    logger.debug("[BookView - Page Content Effect] Reset isProgrammaticScroll from scroll-to-top action.");
-                }, 100);
-            } else if (!pageActuallyChanged) {
-                logger.debug("[BookView - Page Content Effect] Same page; not scrolling to top (e.g. note saved).");
-            } else {
-                logger.debug("[BookView - Page Content Effect] Scroll-to-top conditions met, BUT isProgrammaticScroll.current is true. Skipping.");
-            }
+        const pageActuallyChanged = lastScrollToTopPageRef.current !== currentPage;
+        const isExplicitPaginationPage =
+          explicitPaginationInFlightRef.current &&
+          explicitPaginationTargetPageRef.current === currentPage;
+
+        if (isExplicitPaginationPage && pageActuallyChanged) {
+          logger.debug("[BookView - Page Content Effect] Explicit pagination landed on page", currentPage, ". Forcing scroll to top.");
+          lastScrollToTopPageRef.current = currentPage;
+          isProgrammaticScroll.current = true;
+          bookPaneContainerRef.current.scrollTop = 0;
+          explicitPaginationInFlightRef.current = false;
+          explicitPaginationTargetPageRef.current = null;
+          setTimeout(() => {
+            isProgrammaticScroll.current = false;
+            logger.debug("[BookView - Page Content Effect] Reset isProgrammaticScroll after explicit pagination top scroll.");
+          }, 120);
+        } else if (pendingScrollOffsetInPage === null && pendingScrollToPercentage === null) {
+          if (pageActuallyChanged && !isProgrammaticScroll.current) {
+              logger.debug("[BookView - Page Content Effect] Page changed to", currentPage, ". Scrolling to top.");
+              lastScrollToTopPageRef.current = currentPage;
+              isProgrammaticScroll.current = true;
+              bookPaneContainerRef.current.scrollTop = 0;
+              setTimeout(() => {
+                  isProgrammaticScroll.current = false;
+                  logger.debug("[BookView - Page Content Effect] Reset isProgrammaticScroll from scroll-to-top action.");
+              }, 100);
+          } else if (!pageActuallyChanged) {
+              logger.debug("[BookView - Page Content Effect] Same page; not scrolling to top (e.g. note saved).");
+          } else {
+              logger.debug("[BookView - Page Content Effect] Scroll-to-top conditions met, BUT isProgrammaticScroll.current is true. Skipping.");
+          }
         } else {
-            logger.debug("[BookView - Page Content Effect] A scroll is pending. Skipping automatic scroll to top.");
+          logger.debug("[BookView - Page Content Effect] A scroll is pending. Skipping automatic scroll to top.");
         }
       }
 
@@ -1991,6 +2034,11 @@ function BookView() {
     if (event) event.preventDefault();
     const pageNum = parseInt(pageInput, 10);
     if (!isNaN(pageNum) && pageNum >= 1 && pageNum <= totalPages) {
+      if (pageNum === currentPage) {
+        setPageInput(String(currentPage));
+        return;
+      }
+      beginExplicitPagination(pageNum);
       setCurrentPage(pageNum);
       // Refresh signed URLs when page changes
       refreshImageUrls();
@@ -2652,6 +2700,9 @@ function BookView() {
 
   // Effect to scroll to guide search highlight after content is rendered
   useEffect(() => {
+    if (explicitPaginationInFlightRef.current) {
+      return undefined;
+    }
     if ((guideSearchText || guideSearchGlobalOffset !== null) && bookPaneContainerRef.current && highlightedPageContent) {
       // Small delay to ensure DOM is updated with highlighted content
       const scrollTimeout = setTimeout(() => {
@@ -2830,23 +2881,25 @@ function BookView() {
   };
 
   const handlePreviousPage = () => {
-    skipBookScrollRestoreOnPageChangeRef.current = true;
-    setCurrentPage((prev) => {
-      const newPage = Math.max(1, prev - 1);
-      // Refresh signed URLs when page changes
-      refreshImageUrls();
-      return newPage;
-    });
+    const newPage = Math.max(1, currentPage - 1);
+    if (newPage === currentPage) {
+      return;
+    }
+    beginExplicitPagination(newPage);
+    setCurrentPage(newPage);
+    // Refresh signed URLs when page changes
+    refreshImageUrls();
   };
 
   const handleNextPage = () => {
-    skipBookScrollRestoreOnPageChangeRef.current = true;
-    setCurrentPage((prev) => {
-      const newPage = Math.min(totalPages, prev + 1);
-      // Refresh signed URLs when page changes
-      refreshImageUrls();
-      return newPage;
-    });
+    const newPage = Math.min(totalPages, currentPage + 1);
+    if (newPage === currentPage) {
+      return;
+    }
+    beginExplicitPagination(newPage);
+    setCurrentPage(newPage);
+    // Refresh signed URLs when page changes
+    refreshImageUrls();
   };
 
   const openAddBookmarkModal = () => {
@@ -3138,7 +3191,9 @@ function BookView() {
         >
           {outboxPendingCount > 0
             ? 'Offline — edits will sync when you’re back online.'
-            : 'Offline — showing cached book.'}
+            : (isOfflineSnapshot
+              ? 'Offline — showing cached book.'
+              : 'Offline — this tab can keep reading current content, but uncached books require one online load first.')}
         </div>
       )}
       {/* Main Content Area (Book/Guide and Notes) */}

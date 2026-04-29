@@ -24,8 +24,10 @@ app = FastAPI(title="Reading Pal Backend API")
 # It's used by Authlib to store temporary states (e.g., OAuth state parameter)
 SECRET_KEY_MAIN = os.getenv("SECRET_KEY", "a_very_secret_key_that_should_be_changed_in_production_main")
 if SECRET_KEY_MAIN == "a_very_secret_key_that_should_be_changed_in_production_main":
-    print("WARNING: main.py: SECRET_KEY is using its default insecure value. "
-          "Please generate a strong, unique key and set it in your .env file for production environments.")
+    logger.warning(
+        "main.py: SECRET_KEY is using its default insecure value. "
+        "Please set a strong, unique key in .env for production."
+    )
 app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY_MAIN)
 logger.info(f"SessionMiddleware initialized with SECRET_KEY_MAIN: {'********' if SECRET_KEY_MAIN and SECRET_KEY_MAIN != 'a_very_secret_key_that_should_be_changed_in_production_main' else 'USING_DEFAULT_OR_UNSET'}")
 
@@ -44,9 +46,8 @@ app.add_middleware(
 # Get environment variables
 BACKEND_PORT = int(os.getenv("BACKEND_PORT", 8000)) # Read BACKEND_PORT, default to 8000 if not set
 
-# Add print statements to debug the port value
-print(f"DEBUG: Raw BACKEND_PORT env var: {os.getenv('BACKEND_PORT')}")
-print(f"DEBUG: Parsed BACKEND_PORT for Uvicorn: {BACKEND_PORT}")
+logger.debug("Raw BACKEND_PORT env var: %s", os.getenv("BACKEND_PORT"))
+logger.debug("Parsed BACKEND_PORT for Uvicorn: %s", BACKEND_PORT)
 
 
 # Note: We don't mount /images statically anymore

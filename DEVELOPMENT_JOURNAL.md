@@ -29,6 +29,30 @@ Use a reverse-chronological list (newest first). Each entry should be short and 
 
 <!-- New entries go below this comment, newest first. -->
 
+## 2026-04-28 — Architecture and operations documentation refresh with targeted backend cleanup
+
+- **What:** Rewrote the root `README.md` to reflect the current multi-service stack and added `docs/architecture.md` and `docs/operations.md` covering service boundaries, request/data flow, run modes, env vars, and deployment caveats. Added `.cursor/rules/docs-architecture-ops-sync.mdc` so future architecture/ops changes require matching doc updates. Applied quick readability/efficiency fixes by removing verbose auth-header logging in the books auth dependency, routing PDF upload calls through the shared `backend/services/pdf_client.py` helper, aligning `backend/api/llm.py` markdown path with env configuration, and removing a duplicate `get_client_ip` definition in `image_server/app.py`.
+- **Why:** Current documentation had drifted from implemented behavior (networking, service roles, runtime paths), and several low-risk code cleanup opportunities were adding noise and maintenance overhead.
+- **Where:** `README.md`, `docs/architecture.md`, `docs/operations.md`, `.cursor/rules/docs-architecture-ops-sync.mdc`, `backend/api/books.py`, `backend/api/llm.py`, `backend/main.py`, `image_server/app.py`
+
+## 2026-04-28 — Paging top-scroll stabilized and offline expectations clarified
+
+- **What:** Added explicit pagination intent handling in Book View so `Previous`/`Next` and direct page jumps clear guide-jump transient scroll state and force deterministic top-of-page landing after page commit. Also gated guide-highlight auto-scroll and guide->original restore interactions so they no longer override explicit pagination. Hardened outbox replay to continue processing after per-entry failures and aligned queued note-create headers with authenticated requests. Added offline behavior notes to README and clearer Book View messaging when no cached copy exists.
+- **Why:** Page flips could land away from top due to effect races with guide-highlight/pending-scroll state, and offline behavior appeared unreliable because fallback/sync limits were not clearly surfaced.
+- **Where:** `frontend/src/pages/BookView.js`, `frontend/src/utils/outboxSync.js`, `README.md`
+
+## 2026-04-28 — Medium-width toolbar overlap prevented with row reflow
+
+- **What:** Added a medium breakpoint for the floating book toolbar header that changes layout from 3 columns to a 2-row grid (`left/right` controls on the first row, pagination on the second), and allows controlled wrapping in pagination/font controls.
+- **Why:** At medium widths, toolbar sections were competing for horizontal space and visually overlapping; row reflow preserves all controls without collisions.
+- **Where:** `frontend/src/pages/BookView.css`
+
+## 2026-04-28 — Author Shortcut length target set to 30%
+
+- **What:** Updated Author Shortcut generation guidance to target approximately 30% of the source passage length, including dynamic source and target word-count hints in the LLM prompt.
+- **Why:** Shortcut output needed a more consistent compression ratio so each rewrite is clearly shorter while still retaining core claims and tone.
+- **Where:** `backend/services/llm_service.py`
+
 ## 2026-04-26 — Note highlight replay anchored with generous fallback
 
 - **What:** Improved Book View note highlight replay by resolving note ranges via anchor-window text matching (`source_text` near `global_character_offset`) with exact then whitespace-normalized matching, plus a bounded generous fallback range when exact mapping fails. Also aligned selection offset capture to the latest page boundaries via a ref to reduce stale offset fallback and softened `.note-highlight` box model so visual bars better match text spans.

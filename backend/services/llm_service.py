@@ -951,18 +951,22 @@ Return ONLY valid JSON, no other text."""
             return None
 
         trimmed_source = source_excerpt.strip()[:6000]
+        source_word_count = len(trimmed_source.split())
+        target_word_count = max(45, int(source_word_count * 0.30))
         system_prompt = (
             "You are rewriting your own passage as the original author. "
-            "Produce a much shorter shortcut reading that preserves the same claims, perspective, and tone. "
+            "Produce an Author Shortcut that is about 30% of the source passage length while preserving the same claims, perspective, and tone. "
             "Keep the author's point of view and rhetorical stance, but remove repetition and non-essential detail. "
             "Do not switch to editor commentary, meta explanation, or study-guide voice. "
             "Do not add new facts, examples, or interpretations not supported by the source."
         )
         user_prompt = (
             f"CARD TITLE: {card_title}\n\n"
+            f"SOURCE WORD COUNT: {source_word_count}\n"
+            f"TARGET WORD COUNT (~30%): {target_word_count}\n\n"
             "SOURCE PASSAGE:\n"
             f"{trimmed_source}\n\n"
-            "Write an 'Author Shortcut' that is shorter than the source and easy to consume quickly. "
+            "Write an 'Author Shortcut' that is close to the target word count and easy to consume quickly. "
             "Prefer a single concise paragraph in 3-6 sentences. "
             "Return only the rewritten passage text."
         )

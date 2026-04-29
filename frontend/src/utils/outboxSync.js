@@ -28,6 +28,7 @@ export async function flushOutbox() {
 
   const entries = await getAllOutboxEntries();
   let processed = 0;
+  let failed = 0;
 
   for (const entry of entries) {
     const { id, type, bookId, payload } = entry;
@@ -67,7 +68,7 @@ export async function flushOutbox() {
         const { clientId, ...body } = payload;
         const res = await fetch('/api/notes/', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           body: JSON.stringify(body),
         });
         if (!res.ok) {
@@ -130,8 +131,12 @@ export async function flushOutbox() {
       }
     } catch (e) {
       console.warn('[outboxSync] flush failed for entry', entry, e);
-      break;
+      failed += 1;
     }
+  }
+
+  if (failed > 0) {
+    console.warn(`[outboxSync] flush completed with ${failed} failed entr${failed === 1 ? 'y' : 'ies'}`);
   }
 
   return processed;

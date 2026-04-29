@@ -759,6 +759,47 @@
   flex-wrap: wrap;
 }
 
+/* Medium widths: split controls into two rows to prevent overlap */
+@media (max-width: 1100px) and (min-width: 769px) {
+  .book-pane-controls-header {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas:
+      "left right"
+      "pagination pagination";
+    row-gap: 8px;
+  }
+
+  .left-controls-group {
+    grid-area: left;
+    justify-self: start;
+    width: 100%;
+  }
+
+  .right-controls-group {
+    grid-area: right;
+    justify-self: end;
+    width: 100%;
+  }
+
+  .right-controls-group .font-controls-group {
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+
+  .pagination-controls.header-pagination,
+  .pagination-controls-placeholder {
+    grid-area: pagination;
+    justify-self: center;
+    width: 100%;
+  }
+
+  .pagination-controls.header-pagination {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+}
+
 /* General .control-button (ensure it's robust) */
 .control-button { 
   display: inline-flex; 
