@@ -8,7 +8,7 @@ Defined in `docker-compose.yml`:
 
 - `backend` (FastAPI, host network)
 - `frontend` (React static build served in container)
-- `pdf_service` (FastAPI worker for PDF conversion)
+- `pdf_service` (FastAPI worker for multi-format document conversion)
 - `image_server` (FastAPI image upload/serving)
 
 MongoDB is external to this compose file and must already be running and reachable by `MONGO_URI`.
@@ -125,5 +125,5 @@ Before running:
 After startup:
 
 - Check backend health: `GET /health`
-- Upload a sample PDF and verify callback-driven status transition to completed/failed.
+- Upload a sample supported book file (PDF/EPUB/DOCX/TXT/HTML) and verify callback-driven status transition to completed/failed.
 - Verify app images load through backend image route, and public uploads load from `/images/public/...`.

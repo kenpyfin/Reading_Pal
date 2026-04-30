@@ -16,6 +16,14 @@ import asyncio # Import asyncio for background tasks
 import requests # Import requests for making HTTP calls in background task
 from google import genai
 from anthropic import Anthropic # Import Anthropic for formatting-specific LLM
+from parsers.document_parsers import (
+    detect_document_extension,
+    docx_bytes_to_markdown,
+    epub_bytes_to_markdown,
+    html_bytes_to_markdown,
+    mobi_or_azw_to_epub_bytes,
+    txt_bytes_to_markdown,
+)
 
 # PaddleOCR is optional at import time so non-OCR flows still work.
 try:
@@ -24,7 +32,7 @@ except Exception:  # pragma: no cover - optional dependency may be absent locall
     PaddleOCR = None  # type: ignore[assignment]
 
 # Initialize FastAPI app
-app = FastAPI(title="PDF Processing Service")
+app = FastAPI(title="Document Processing Service")
 
 # Configure logging using the LOG_LEVEL environment variable
 # Ensure this block is right after imports and app initialization
@@ -718,6 +726,49 @@ def process_text_pdf(pdf_bytes: bytes) -> str:
         raise
 
 
+def process_pdf_bytes(pdf_bytes: bytes, sanitized_title: str) -> Tuple[str, List[List[str]]]:
+    """Extract markdown and embedded images from a PDF document."""
+    if PDF_OCR_ENGINE == "text-only":
+        has_text = True
+    elif PDF_OCR_ENGINE == "none":
+        has_text = True
+    else:
+        has_text = pdf_has_text(pdf_bytes)
+
+    if has_text:
+        logger.info("PDF has text layer; using text extraction (no OCR).")
+        raw_md_text = process_text_pdf(pdf_bytes)
+    else:
+        logger.info("PDF appears scanned; using PaddleOCR.")
+        raw_md_text = process_scanned_pdf_with_paddleocr(pdf_bytes)
+
+    images_per_page = extract_pdf_images(pdf_bytes, sanitized_title, APP_IMAGES_PATH or "")
+    return raw_md_text, images_per_page
+
+
+def process_document_bytes(
+    source_bytes: bytes,
+    source_extension: str,
+    sanitized_title: str,
+) -> Tuple[str, List[List[str]]]:
+    """Route supported formats into markdown and optional per-page images."""
+    ext = source_extension.lower()
+    if ext == ".pdf":
+        return process_pdf_bytes(source_bytes, sanitized_title)
+    if ext == ".epub":
+        return epub_bytes_to_markdown(source_bytes), []
+    if ext in {".mobi", ".azw", ".azw3"}:
+        epub_bytes = mobi_or_azw_to_epub_bytes(source_bytes, ext)
+        return epub_bytes_to_markdown(epub_bytes), []
+    if ext == ".docx":
+        return docx_bytes_to_markdown(source_bytes), []
+    if ext in {".html", ".htm"}:
+        return html_bytes_to_markdown(source_bytes), []
+    if ext == ".txt":
+        return txt_bytes_to_markdown(source_bytes), []
+    raise ValueError(f"Unsupported document format: {ext}")
+
+
 # --- PaddleOCR singleton and scanned-PDF pipeline ---
 _paddle_ocr_instance: Optional[Any] = None
 
@@ -795,11 +846,16 @@ def process_scanned_pdf_with_paddleocr(pdf_bytes: bytes) -> str:
 
 
 # --- Background task function for PDF processing ---
-async def perform_pdf_processing(job_id: str, temp_pdf_path: str, sanitized_title: str):
+async def perform_pdf_processing(
+    job_id: str,
+    temp_input_path: str,
+    sanitized_title: str,
+    source_filename: str,
+):
     """
     Performs the actual PDF processing in a background task and sends a callback.
     """
-    logger.info(f"Job {job_id}: Starting background PDF processing for {temp_pdf_path}")
+    logger.info(f"Job {job_id}: Starting background document processing for {temp_input_path}")
 
     # Initialize local variables for callback data
     callback_status = "processing" # Default status
@@ -809,32 +865,24 @@ async def perform_pdf_processing(job_id: str, temp_pdf_path: str, sanitized_titl
     callback_images: List[Dict[str, str]] = []
 
     try:
-        # Read PDF bytes
-        logger.info(f"Job {job_id}: Reading PDF bytes from {temp_pdf_path}...")
-        with open(temp_pdf_path, "rb") as f:
-            pdf_bytes = f.read()
-        logger.info(f"Job {job_id}: PDF bytes read successfully.")
+        source_extension = detect_document_extension(source_filename)
+        logger.info(
+            f"Job {job_id}: Reading source bytes from {temp_input_path} "
+            f"(format={source_extension}, filename={source_filename})..."
+        )
+        with open(temp_input_path, "rb") as f:
+            source_bytes = f.read()
+        logger.info(f"Job {job_id}: Source bytes read successfully.")
 
-        # Text vs scan: route to text extraction or PaddleOCR
-        if PDF_OCR_ENGINE == "text-only":
-            has_text = True
-        elif PDF_OCR_ENGINE == "none":
-            has_text = True  # treat as text-only path, no OCR
-        else:
-            has_text = pdf_has_text(pdf_bytes)
+        raw_md_text_from_pipe, images_per_page = process_document_bytes(
+            source_bytes,
+            source_extension,
+            sanitized_title,
+        )
 
-        if has_text:
-            logger.info(f"Job {job_id}: PDF has text layer; using text extraction (no OCR).")
-            raw_md_text_from_pipe = process_text_pdf(pdf_bytes)
-        else:
-            logger.info(f"Job {job_id}: PDF appears scanned; using PaddleOCR.")
-            raw_md_text_from_pipe = process_scanned_pdf_with_paddleocr(pdf_bytes)
-
-        # Extract embedded images and inject markdown image links per page
-        images_per_page = extract_pdf_images(pdf_bytes, sanitized_title, APP_IMAGES_PATH or "")
         total_images = sum(len(imgs) for imgs in images_per_page)
         if total_images > 0:
-            logger.info(f"Job {job_id}: Extracted {total_images} images from PDF.")
+            logger.info(f"Job {job_id}: Extracted {total_images} images from source document.")
             raw_md_text_from_pipe = inject_image_links_into_markdown(
                 raw_md_text_from_pipe,
                 images_per_page,
@@ -852,6 +900,11 @@ async def perform_pdf_processing(job_id: str, temp_pdf_path: str, sanitized_titl
             )
         else:
             logger.info(f"Job {job_id}: No extractable embedded raster images found.")
+
+        if not raw_md_text_from_pipe.strip():
+            raise RuntimeError(
+                f"Document extraction produced no markdown content for '{source_filename}'."
+            )
 
         logger.info(f"Job {job_id}: Raw markdown content. Length: {len(raw_md_text_from_pipe)} chars.")
 
@@ -921,7 +974,7 @@ async def perform_pdf_processing(job_id: str, temp_pdf_path: str, sanitized_titl
             f.write(reformatted_md_text) # This now contains web-ready paths
 
         logger.info(f"Job {job_id}: Final markdown saved.")
-        logger.info(f"Job {job_id}: PDF processed and converted to markdown successfully")
+        logger.info(f"Job {job_id}: Document processed and converted to markdown successfully")
 
         # Update local variables for successful callback
         callback_status = "completed"
@@ -937,11 +990,11 @@ async def perform_pdf_processing(job_id: str, temp_pdf_path: str, sanitized_titl
     finally:
         # Cleanup temporary file regardless of success or failure
         try:
-            if os.path.exists(temp_pdf_path):
-                os.remove(temp_pdf_path)
-                logger.info(f"Job {job_id}: Cleaned up temporary file: {temp_pdf_path}")
+            if os.path.exists(temp_input_path):
+                os.remove(temp_input_path)
+                logger.info(f"Job {job_id}: Cleaned up temporary file: {temp_input_path}")
         except Exception as e:
-            logger.error(f"Job {job_id}: Failed to cleanup temp file {temp_pdf_path}: {e}")
+            logger.error(f"Job {job_id}: Failed to cleanup temp file {temp_input_path}: {e}")
 
     # Prepare and send callback
     logger.info(f"Job {job_id}: Attempting to send callback to backend with status: {callback_status}")
@@ -981,18 +1034,27 @@ async def process_pdf(
     title: Optional[str] = None
 ):
     """
-    Receives a PDF file, saves it temporarily, starts a background processing task,
+    Receives a supported document file, saves it temporarily, starts a background processing task,
     and immediately returns a job ID and status.
     """
-    logger.info(f"Received request to process PDF: {file.filename}")
+    logger.info(f"Received request to process document: {file.filename}")
     job_id = str(uuid.uuid4()) # Generate a unique job ID
     base_title = title if title else os.path.splitext(file.filename)[0]
     sanitized_title = sanitize_filename(base_title)
+    source_filename = file.filename or "upload.pdf"
 
-    logger.info(f"Created job {job_id} for file {file.filename} with sanitized title {sanitized_title}")
+    try:
+        source_extension = detect_document_extension(source_filename)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    logger.info(
+        f"Created job {job_id} for file {source_filename} "
+        f"(format={source_extension}) with sanitized title {sanitized_title}"
+    )
 
     # Save uploaded file using a job-scoped name to avoid collisions.
-    safe_upload_name = sanitize_filename(file.filename) or "upload.pdf"
+    safe_upload_name = sanitize_filename(source_filename) or f"upload{source_extension}"
     temp_filename = f"{job_id}_{safe_upload_name}"
     temp_path = os.path.join(PDF_STORAGE_PATH, temp_filename)
     logger.info(f"Job {job_id}: Saving temporary file to: {temp_path}")
@@ -1007,7 +1069,13 @@ async def process_pdf(
         raise HTTPException(status_code=500, detail=f"Failed to save temporary file: {e}")
 
     # Add the processing task to background tasks
-    background_tasks.add_task(perform_pdf_processing, job_id, temp_path, sanitized_title)
+    background_tasks.add_task(
+        perform_pdf_processing,
+        job_id,
+        temp_path,
+        sanitized_title,
+        source_filename,
+    )
     logger.info(f"Job {job_id}: Added background task for processing.")
 
     # Return immediate response with job ID

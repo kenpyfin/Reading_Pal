@@ -3130,7 +3130,7 @@ function BookView() {
         <h2>Book Not Found</h2>
         <p>The book with ID "{bookId}" could not be found.</p>
         <div style={{ marginTop: '20px' }}>
-          <Link to="/">Go back to the Book List</Link> | <Link to="/upload">Upload a New PDF</Link>
+          <Link to="/">Go back to the Book List</Link> | <Link to="/upload">Upload a New Book</Link>
         </div>
       </div>
     );
@@ -3147,7 +3147,7 @@ function BookView() {
           <p style={{ color: 'red' }}>Processing failed.</p>
         )}
         <div style={{ marginTop: '20px' }}>
-          <Link to="/">Go back to the Book List</Link> | <Link to="/upload">Upload a New PDF</Link>
+          <Link to="/">Go back to the Book List</Link> | <Link to="/upload">Upload a New Book</Link>
         </div>
       </div>
     );

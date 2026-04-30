@@ -32,7 +32,7 @@ from backend.db.mongodb import (
 )
 from backend.auth.auth_handler import auth_handler_instance # For decoding JWT
 from backend.services.llm_service import llm_service # For Reading Guide (Import instance)
-from backend.services.pdf_client import process_pdf_with_service
+from backend.services.pdf_client import process_document_with_service
 import json # For parsing LLM response for Reading Guide
 
 # Import new model and DB functions for page-specific reading guides
@@ -53,6 +53,18 @@ from backend.db.mongodb import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+SUPPORTED_BOOK_EXTENSIONS = {
+    ".pdf",
+    ".epub",
+    ".mobi",
+    ".azw",
+    ".azw3",
+    ".docx",
+    ".txt",
+    ".html",
+    ".htm",
+}
 
 
 # Dependency to get current user_id from token
@@ -134,48 +146,59 @@ def sanitize_filename(filename: str) -> str:
         sanitized = "sanitized_file"
     return sanitized
 
-# --- Helper function for PDF service call (keep as is) ---
-async def call_pdf_service_upload(file: UploadFile, title: Optional[str]):
+# --- Helper function for document service call ---
+async def call_document_service_upload(file: UploadFile, title: Optional[str]):
     try:
-        response_data = await run_in_threadpool(process_pdf_with_service, file, title)
-        logger.info(f"Received response from PDF service upload: {response_data}")
+        response_data = await run_in_threadpool(process_document_with_service, file, title)
+        logger.info(f"Received response from document service upload: {response_data}")
         return response_data
     except ValueError as e:
-        logger.error("PDF service configuration error: %s", e)
+        logger.error("Document service configuration error: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
     except RuntimeError as e:
-        logger.error("Error connecting to PDF service during upload: %s", e)
-        raise HTTPException(status_code=503, detail=f"Could not connect to PDF processing service: {e}")
+        logger.error("Error connecting to document service during upload: %s", e)
+        raise HTTPException(status_code=503, detail=f"Could not connect to document processing service: {e}")
     except Exception as e:
-        logger.error(f"Error in PDF service call: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Error calling PDF service: {e}")
+        logger.error(f"Error in document service call: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error calling document service: {e}")
 
 
 @router.post("/upload", response_model=Book)
-async def upload_pdf(
+async def upload_document(
     file: UploadFile = File(...),
     title: str = Form(None),
     current_user_id: str = Depends(get_current_user_id)
 ):
     """
-    Uploads a PDF file for the current user, sends it to the processing service to start background processing,
-    saves the initial book record with job_id and status, and returns the book data.
+    Uploads a supported document for the current user, sends it to the processing
+    service to start background processing, saves the initial book record with
+    job_id/status, and returns the new book data.
     """
     logger.info(f"Received upload request for file: {file.filename}")
     try:
-        processed_data = await call_pdf_service_upload(file, title)
+        file_ext = os.path.splitext(file.filename or "")[1].lower()
+        if file_ext not in SUPPORTED_BOOK_EXTENSIONS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Unsupported book format. "
+                    f"Supported formats: {', '.join(sorted(SUPPORTED_BOOK_EXTENSIONS))}"
+                ),
+            )
+
+        processed_data = await call_document_service_upload(file, title)
 
         if not processed_data or not processed_data.get("success"):
-             error_detail = processed_data.get("message", "PDF processing initiation failed")
-             logger.error(f"PDF service initiation failed: {error_detail}")
+             error_detail = processed_data.get("message", "Document processing initiation failed")
+             logger.error(f"Document service initiation failed: {error_detail}")
              raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=error_detail)
 
         job_id = processed_data.get("job_id")
         initial_status = processed_data.get("status", "pending")
 
         if not job_id:
-            logger.error("PDF service did not return a job_id.")
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="PDF processing service failed to return a job ID.")
+            logger.error("Document service did not return a job_id.")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Document processing service failed to return a job ID.")
 
         book_title = title if title else os.path.splitext(file.filename)[0]
         sanitized_book_title = sanitize_filename(book_title)
@@ -233,7 +256,7 @@ async def upload_pdf(
     except HTTPException as http_exc:
         raise http_exc
     except Exception as e:
-        logger.error(f"Unexpected error during PDF upload: {e}", exc_info=True)
+        logger.error(f"Unexpected error during document upload: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An unexpected error occurred during upload: {e}")
 
 

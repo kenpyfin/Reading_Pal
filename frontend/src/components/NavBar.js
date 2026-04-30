@@ -32,7 +32,7 @@ function NavBar({ onLogout, isAdmin }) { // Accept onLogout and isAdmin props
               <Link to="/" className="nav-link">Book List</Link>
             </li>
             <li>
-              <Link to="/upload" className="nav-link">Upload PDF</Link>
+              <Link to="/upload" className="nav-link">Upload Book</Link>
             </li>
             {/* Add more navigation links here if needed for regular users */}
           </ul>

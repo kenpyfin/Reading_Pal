@@ -29,6 +29,12 @@ Use a reverse-chronological list (newest first). Each entry should be short and 
 
 <!-- New entries go below this comment, newest first. -->
 
+## 2026-04-29 — Multi-format ebook ingestion in document worker
+
+- **What:** Extended the `pdf_service` worker to ingest common ebook/document formats (`pdf`, `epub`, `mobi`, `azw`, `azw3`, `docx`, `txt`, `html`) using format routing plus parser helpers, with strict-fail behavior for unsupported/failed extraction and unchanged callback contract. Added parser dependencies and Calibre runtime support for MOBI/AZW conversion, widened backend/frontend upload validation and file picker support, and refreshed architecture/operations/readme guidance plus smoke coverage for non-PDF formats.
+- **Why:** Upload flow was effectively PDF-only; users needed first-class ebook ingestion without fallback ambiguity and with explicit failure when extraction cannot be trusted.
+- **Where:** `pdf_service/app.py`, `pdf_service/parsers/document_parsers.py`, `pdf_service/requirements.txt`, `pdf_service/Dockerfile`, `pdf_service/scripts/smoke_test_pdf_pipeline.py`, `backend/services/pdf_client.py`, `backend/api/books.py`, `frontend/src/components/PdfUploadForm.js`, `frontend/src/components/NavBar.js`, `frontend/src/pages/BookList.js`, `frontend/src/pages/BookView.js`, `README.md`, `docs/architecture.md`, `docs/operations.md`, `AGENTS.md`
+
 ## 2026-04-28 — Architecture and operations documentation refresh with targeted backend cleanup
 
 - **What:** Rewrote the root `README.md` to reflect the current multi-service stack and added `docs/architecture.md` and `docs/operations.md` covering service boundaries, request/data flow, run modes, env vars, and deployment caveats. Added `.cursor/rules/docs-architecture-ops-sync.mdc` so future architecture/ops changes require matching doc updates. Applied quick readability/efficiency fixes by removing verbose auth-header logging in the books auth dependency, routing PDF upload calls through the shared `backend/services/pdf_client.py` helper, aligning `backend/api/llm.py` markdown path with env configuration, and removing a duplicate `get_client_ip` definition in `image_server/app.py`.

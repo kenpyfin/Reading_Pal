@@ -407,7 +407,7 @@ function BookList() {
       )}
       {error && <p style={{ color: 'red', marginBottom: '15px' }}>Error: {error}</p>} {/* Display error message above list */}
       {books.length === 0 && !loading ? (
-        <p>No books found. <Link to="/upload" style={{ color: '#007bff' }}>Upload a PDF</Link> to get started!</p>
+        <p>No books found. <Link to="/upload" style={{ color: '#007bff' }}>Upload a book</Link> to get started!</p>
       ) : (
         <ul style={{ listStyleType: 'none', paddingLeft: '0' }}>
           {books.map(book => (
@@ -553,7 +553,7 @@ function BookList() {
          }}
          onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#0056b3'}
          onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#007bff'}
-         >Upload a New PDF</Link>
+         >Upload a New Book</Link>
       </div>
     </div>
   );

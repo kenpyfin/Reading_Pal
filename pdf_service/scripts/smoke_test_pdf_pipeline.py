@@ -48,10 +48,58 @@ def make_minimal_text_pdf_bytes() -> bytes:
     return buf.getvalue()
 
 
+def make_txt_bytes() -> bytes:
+    return b"First line.\n\nSecond paragraph."
+
+
+def make_html_bytes() -> bytes:
+    return b"<html><body><h1>Chapter 1</h1><p>Hello from html.</p></body></html>"
+
+
+def make_docx_bytes() -> bytes:
+    from docx import Document
+
+    doc = Document()
+    doc.add_heading("Docx Title", level=1)
+    doc.add_paragraph("This is a DOCX smoke test paragraph.")
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
+def make_epub_bytes() -> bytes:
+    import tempfile
+    from ebooklib import epub
+
+    book = epub.EpubBook()
+    book.set_identifier("smoke-id")
+    book.set_title("Smoke EPUB")
+    book.set_language("en")
+    chapter = epub.EpubHtml(title="Intro", file_name="intro.xhtml", lang="en")
+    chapter.content = "<h1>Intro</h1><p>Hello from epub parser smoke test.</p>"
+    book.add_item(chapter)
+    book.toc = (chapter,)
+    book.spine = ["nav", chapter]
+    book.add_item(epub.EpubNcx())
+    book.add_item(epub.EpubNav())
+    with tempfile.NamedTemporaryFile(suffix=".epub", delete=False) as tmp:
+        epub_path = tmp.name
+    try:
+        epub.write_epub(epub_path, book)
+        with open(epub_path, "rb") as f:
+            return f.read()
+    finally:
+        try:
+            os.remove(epub_path)
+        except OSError:
+            pass
+
+
 def main():
     from app import (
         pdf_has_text,
         process_text_pdf,
+        process_document_bytes,
         extract_pdf_images,
         inject_image_links_into_markdown,
         PDF_OCR_ENGINE,
@@ -82,16 +130,32 @@ def main():
     assert injected.count("\n\n---\n\n") == 1, "Expected markdown separator to remain canonical"
     print("5. Image link injection smoke test passed.")
 
+    txt_md, txt_images = process_document_bytes(make_txt_bytes(), ".txt", "smoke_txt")
+    assert "Second paragraph" in txt_md and txt_images == [], "TXT extraction failed"
+    print("6. TXT extraction smoke test passed.")
+
+    html_md, html_images = process_document_bytes(make_html_bytes(), ".html", "smoke_html")
+    assert "Chapter 1" in html_md and "Hello from html" in html_md and html_images == [], "HTML extraction failed"
+    print("7. HTML extraction smoke test passed.")
+
+    docx_md, docx_images = process_document_bytes(make_docx_bytes(), ".docx", "smoke_docx")
+    assert "DOCX smoke test paragraph" in docx_md and docx_images == [], "DOCX extraction failed"
+    print("8. DOCX extraction smoke test passed.")
+
+    epub_md, epub_images = process_document_bytes(make_epub_bytes(), ".epub", "smoke_epub")
+    assert "epub parser smoke test" in epub_md and epub_images == [], "EPUB extraction failed"
+    print("9. EPUB extraction smoke test passed.")
+
     if PDF_OCR_ENGINE == "paddle":
         try:
             from app import process_scanned_pdf_with_paddleocr
             ocr_md = process_scanned_pdf_with_paddleocr(pdf_bytes)
-            print("6. process_scanned_pdf_with_paddleocr length:", len(ocr_md))
-            print("7. PaddleOCR pipeline smoke test passed.")
+            print("10. process_scanned_pdf_with_paddleocr length:", len(ocr_md))
+            print("11. PaddleOCR pipeline smoke test passed.")
         except Exception as e:
-            print("7. PaddleOCR skipped (no GPU or dependency):", e)
+            print("11. PaddleOCR skipped (no GPU or dependency):", e)
     else:
-        print("6. PaddleOCR skipped (PDF_OCR_ENGINE != paddle).")
+        print("10. PaddleOCR skipped (PDF_OCR_ENGINE != paddle).")
 
     print("Done.")
 

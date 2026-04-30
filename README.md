@@ -1,14 +1,14 @@
 # Reading Pal
 
-Reading Pal is a PDF reading application with LLM-assisted study workflows.
+Reading Pal is an ebook/document reading application with LLM-assisted study workflows.
 The stack is split across multiple services: React frontend, FastAPI backend,
-FastAPI PDF-processing worker, and FastAPI image server.
+FastAPI document-processing worker, and FastAPI image server.
 
 ## System At A Glance
 
 - `frontend/`: React 18 SPA (book list, book reader, notes, bookmarks, reading guide)
 - `backend/`: FastAPI API for auth, books, notes, bookmarks, and LLM endpoints
-- `pdf_service/`: FastAPI worker that converts PDFs to markdown/images and calls back to backend
+- `pdf_service/`: FastAPI worker that converts supported book formats (PDF, EPUB, MOBI/AZW3, DOCX, TXT, HTML) to markdown/images and calls back to backend
 - `image_server/`: FastAPI service for public image upload/serving and local app-image serving
 - `nginx/`: Production proxy routing (`/api`, `/images/public`, `/images/upload`, `/images/app`)
 

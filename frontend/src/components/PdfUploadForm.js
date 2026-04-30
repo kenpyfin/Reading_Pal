@@ -40,7 +40,7 @@ function PdfUploadForm() {
       return;
     }
     if (!selectedFile) {
-      setError("Please select a PDF file.");
+      setError("Please select a supported ebook/document file.");
       return;
     }
 
@@ -139,7 +139,7 @@ function PdfUploadForm() {
   return (
     // --- Use consistent styling from BookList ---
     <div className="book-list-container"> {/* Reuse container style */}
-      <h2>Upload New PDF</h2>
+      <h2>Upload New Book</h2>
       {!netOnline && (
         <p style={{
           marginBottom: '15px',
@@ -158,11 +158,11 @@ function PdfUploadForm() {
 
       {/* Form Fields Styling */}
       <div style={{ marginBottom: '15px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-        <label htmlFor="pdf-file" style={{ marginBottom: '5px', fontWeight: '500' }}>Choose PDF File:</label>
+        <label htmlFor="pdf-file" style={{ marginBottom: '5px', fontWeight: '500' }}>Choose ebook/document file:</label>
         <input
           type="file"
           id="pdf-file"
-          accept=".pdf"
+          accept=".pdf,.epub,.mobi,.azw,.azw3,.docx,.txt,.html,.htm"
           onChange={handleFileChange}
           disabled={uploading || !netOnline}
           style={{ border: '1px solid #ccc', padding: '8px', borderRadius: '4px', maxWidth: '400px', width: '100%' }}

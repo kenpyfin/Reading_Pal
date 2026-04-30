@@ -11,3 +11,8 @@ pymupdf
 pdf2image
 # PaddleOCR (GPU); install paddlepaddle-gpu in Dockerfile to match CUDA)
 paddleocr
+ebooklib
+beautifulsoup4
+markdownify
+python-docx
+charset-normalizer

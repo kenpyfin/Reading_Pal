@@ -7,7 +7,7 @@
 ## Project Structure & Module Organization
 - `backend/`: FastAPI API (`main.py`), routers in `api/`, persistence in `db/`, shared logic in `services/`, Pydantic models under `models/`.
 - `frontend/`: React app (`src/components`, `src/pages`, `src/utils`) with static assets in `public/` and Docker build in `frontend/Dockerfile`.
-- `pdf_service/`: Standalone FastAPI worker (`app.py`) for PDF-to-markdown: **PaddleOCR** (GPU) for scanned PDFs and **PyMuPDF** text extraction for digital PDFs. Produces files in `pdf_service/storage/{pdfs,images,output}`. Optional env: `PDF_OCR_ENGINE` (paddle|none|text-only), `PDF_OCR_LANG` (e.g. en), `PDF_PAGE_DPI`, `PDF_SERVICE_PORT` (default 8502).
+- `pdf_service/`: Standalone FastAPI worker (`app.py`) for document-to-markdown (PDF, EPUB, MOBI/AZW3, DOCX, TXT, HTML): **PaddleOCR** (GPU) for scanned PDFs and **PyMuPDF** text extraction for digital PDFs. Produces files in `pdf_service/storage/{pdfs,images,output}`. Optional env: `PDF_OCR_ENGINE` (paddle|none|text-only), `PDF_OCR_LANG` (e.g. en), `PDF_PAGE_DPI`, `PDF_SERVICE_PORT` (default 8502).
 - `image_server/`: Lightweight FastAPI server for generated images; mounts the same storage volume.
 - Helper scripts (`start_services.sh`, `deploy.sh`) coordinate local orchestration and release tasks.
 
@@ -26,7 +26,7 @@
 ## Testing Guidelines
 - Frontend: React Testing Library via `npm test --prefix frontend -- --watch=false`; name specs `Component.test.js` near implementation.
 - Backend: Create `backend/tests/` suites with `pytest`, using `httpx.AsyncClient` for endpoint tests and fixture data for Mongo collections.
-- Services: Validate PDF/image flows with smoke tests driven by sample assets in `pdf_service/storage`. Run the PDF pipeline smoke test: `python pdf_service/scripts/smoke_test_pdf_pipeline.py` (from project root; requires pdf_service deps and optional GPU for PaddleOCR).
+- Services: Validate document/image flows with smoke tests driven by sample assets in `pdf_service/storage`. Run the document pipeline smoke test: `python pdf_service/scripts/smoke_test_pdf_pipeline.py` (from project root; requires pdf_service deps and optional GPU for PaddleOCR).
 
 ## Environment & Configuration Tips
 - Maintain a `.env` in the repo root defining `MONGO_URI`, `PDF_CLIENT_URL`, and storage paths consumed by Docker Compose. For the PDF service: `PDF_OCR_ENGINE` (default `paddle`), `PDF_OCR_LANG` (e.g. `en`), `PDF_PAGE_DPI` (default `200`); optional `PDF_SERVICE_PORT` (default `8502`) when running pdf_service in Docker Compose.

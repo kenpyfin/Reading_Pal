@@ -34,13 +34,15 @@ Frontend calls backend endpoints under `/api/*` and renders book markdown with i
 
 Backend is the system-of-record service for user, book, note, bookmark, and reading-guide data.
 
-## PDF Service (`pdf_service/`)
+## Document Service (`pdf_service/`)
 
 - Entry point: `pdf_service/app.py`
 - Public API: `POST /process-pdf`
 - Internal responsibilities:
-  - Determine text PDF vs scanned PDF path
-  - Extract text/images
+  - Detect supported source format (`.pdf`, `.epub`, `.mobi`, `.azw`, `.azw3`, `.docx`, `.txt`, `.html`, `.htm`)
+  - Route to format-specific extraction/conversion
+  - Determine text PDF vs scanned PDF path for PDF uploads
+  - Extract text/images when available
   - Produce markdown output
   - Optionally reformat markdown through configured LLM
   - Callback to backend with processing result payload
@@ -74,16 +76,16 @@ flowchart LR
 
 ## Upload and processing flow
 
-1. Frontend uploads a PDF to `POST /api/books/upload` (backend).
+1. Frontend uploads a supported ebook/document to `POST /api/books/upload` (backend).
 2. Backend forwards the file to `POST {PDF_CLIENT_URL}/process-pdf`.
 3. PDF service returns a `job_id` and starts background processing.
 4. Backend stores initial book record with `job_id` and pending status.
-5. PDF service writes markdown/images and calls backend callback `POST /api/books/callback`.
+5. Worker writes markdown/images and calls backend callback `POST /api/books/callback`.
 6. Backend updates the matching book by `job_id` with status, markdown filename, and image metadata.
 
 ## Book image flow
 
-1. Markdown contains `/images/app/...` references produced by PDF processing.
+1. Markdown contains `/images/app/...` references produced during document processing.
 2. Frontend rewrites those paths to `/api/books/images/app/...`.
 3. Backend signs and validates app-image requests using `APP_IMAGE_SECRET` query parameters (or bearer auth fallback).
 4. Backend reads image files from mounted `IMAGES_PATH`.
@@ -92,7 +94,7 @@ flowchart LR
 
 Configured in root `.env` and mounted via `docker-compose.yml`:
 
-- `PDF_STORAGE_PATH`: raw uploaded PDFs
+- `PDF_STORAGE_PATH`: raw uploaded source files (pdf/epub/docx/txt/html/etc.)
 - `MARKDOWN_PATH`: generated markdown
 - `IMAGES_PATH`: extracted and uploaded images
 
