@@ -41,6 +41,7 @@ function RoadmapCard({
   onGuideTextLink,
   onGenerateGraph,
   onGenerateAlternativeReading,
+  isGeneratingAllAlternativeReadings = false,
   graphLoadingById,
   alternativeLoadingById,
   onOpenGraphImage,
@@ -121,6 +122,11 @@ function RoadmapCard({
         <details className="roadmap-alternative-reading">
           <summary>Author Shortcut</summary>
           <div className="roadmap-alternative-reading-content">
+            {Number.isFinite(item.alternative_source_word_count) && Number.isFinite(item.alternative_word_count) && (
+              <p className="roadmap-alternative-reading-stats">
+                Reference words: {item.alternative_source_word_count} | Shortcut words: {item.alternative_word_count}
+              </p>
+            )}
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.alternative_reading}</ReactMarkdown>
           </div>
         </details>
@@ -142,7 +148,12 @@ function RoadmapCard({
         <button
           className="guide-section-link secondary"
           type="button"
-          disabled={isAlternativeReadingLoading || serverActionsDisabled || !onGenerateAlternativeReading}
+          disabled={
+            isAlternativeReadingLoading ||
+            isGeneratingAllAlternativeReadings ||
+            serverActionsDisabled ||
+            !onGenerateAlternativeReading
+          }
           onClick={() => onGenerateAlternativeReading && onGenerateAlternativeReading(item.id)}
         >
           {isAlternativeReadingLoading ? 'Generating author shortcut...' : 'Author Shortcut'}
@@ -195,8 +206,10 @@ const ReadingGuidePane = ({
   onGuideTextLink,
   onGenerateGraph,
   onGenerateAlternativeReading,
+  onGenerateAllAlternativeReadings,
   graphLoadingById = {},
   alternativeLoadingById = {},
+  isGeneratingAllAlternativeReadings = false,
   isLoading,
   isGenerating,
   error,
@@ -309,11 +322,21 @@ const ReadingGuidePane = ({
         <button
           type="button"
           onClick={onGenerateRoadmap}
-          disabled={isLoading || isGenerating || serverActionsDisabled}
+          disabled={isLoading || isGenerating || isGeneratingAllAlternativeReadings || serverActionsDisabled}
           className="generate-guide-btn"
         >
           {isGenerating ? 'Generating...' : (roadmap ? 'Regenerate Roadmap' : 'Generate Roadmap')}
         </button>
+        {roadmap?.items?.length > 0 && (
+          <button
+            type="button"
+            onClick={onGenerateAllAlternativeReadings}
+            disabled={isLoading || isGenerating || isGeneratingAllAlternativeReadings || serverActionsDisabled || !onGenerateAllAlternativeReadings}
+            className="generate-guide-btn generate-shortcuts-btn"
+          >
+            {isGeneratingAllAlternativeReadings ? 'Generating all shortcuts...' : 'Generate All Shortcuts'}
+          </button>
+        )}
         {totalItems > 0 && (
           <div className="reading-guide-progress">
             <span className="progress-text">{completedIds.length} / {totalItems} completed ({progressPct}%)</span>
@@ -339,6 +362,7 @@ const ReadingGuidePane = ({
                 onGuideTextLink={onGuideTextLink}
                 onGenerateGraph={onGenerateGraph}
                 onGenerateAlternativeReading={onGenerateAlternativeReading}
+                isGeneratingAllAlternativeReadings={isGeneratingAllAlternativeReadings}
                 graphLoadingById={graphLoadingById}
                 alternativeLoadingById={alternativeLoadingById}
                 onOpenGraphImage={handleOpenGraph}

@@ -96,6 +96,15 @@
   cursor: not-allowed;
 }
 
+.generate-shortcuts-btn {
+  margin-top: 8px;
+  background-color: #6c757d;
+}
+
+.generate-shortcuts-btn:hover {
+  background-color: #5a6268;
+}
+
 .reading-guide-content {
   padding: 15px;
   overflow-y: auto; /* Allow content to scroll */
@@ -425,6 +434,12 @@
 
 .roadmap-alternative-reading-content {
   margin-top: 8px;
+}
+
+.roadmap-alternative-reading-stats {
+  margin: 0 0 8px 0;
+  font-size: 0.82em;
+  color: #5b6b7a;
 }
 
 .roadmap-alternative-reading-content p {

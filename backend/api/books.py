@@ -797,12 +797,26 @@ def _set_roadmap_item_graph(items: List[Dict[str, Any]], item_id: str, graph_url
     return False
 
 
-def _set_roadmap_item_alternative_reading(items: List[Dict[str, Any]], item_id: str, alternative_reading: str) -> bool:
+def _set_roadmap_item_alternative_reading(
+    items: List[Dict[str, Any]],
+    item_id: str,
+    alternative_reading: str,
+    source_word_count: Optional[int] = None,
+    shortcut_word_count: Optional[int] = None,
+) -> bool:
     for item in items or []:
         if item.get("id") == item_id:
             item["alternative_reading"] = alternative_reading
+            item["alternative_source_word_count"] = source_word_count
+            item["alternative_word_count"] = shortcut_word_count
             return True
-        if _set_roadmap_item_alternative_reading(item.get("children") or [], item_id, alternative_reading):
+        if _set_roadmap_item_alternative_reading(
+            item.get("children") or [],
+            item_id,
+            alternative_reading,
+            source_word_count,
+            shortcut_word_count,
+        ):
             return True
     return False
 
@@ -1615,20 +1629,33 @@ async def generate_roadmap_card_alternative_reading(
     if end <= start:
         end = min(len(full_markdown), start + 1800)
     source_excerpt = full_markdown[max(0, start):min(len(full_markdown), end)]
+    source_word_count = len(source_excerpt.split())
     alternative_reading = await llm_service.generate_alternative_reading(
         card_title=item.get("title", "Section"),
         source_excerpt=source_excerpt,
     )
     if not alternative_reading:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Alternative reading generation failed.")
+    shortcut_word_count = len(alternative_reading.split())
 
     items = [i.model_dump() for i in guide.items]
-    _set_roadmap_item_alternative_reading(items, card_id, alternative_reading)
+    _set_roadmap_item_alternative_reading(
+        items,
+        card_id,
+        alternative_reading,
+        source_word_count=source_word_count,
+        shortcut_word_count=shortcut_word_count,
+    )
     saved_guide = await upsert_reading_guide(book_id=book_id, user_id=current_user_id, items=items)
     if not saved_guide:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to persist alternative reading.")
 
-    return {"card_id": card_id, "alternative_reading": alternative_reading}
+    return {
+        "card_id": card_id,
+        "alternative_reading": alternative_reading,
+        "source_word_count": source_word_count,
+        "shortcut_word_count": shortcut_word_count,
+    }
 
 
 # Shared secret for app image HMAC signing (<img> cannot send Bearer). Set in .env for production.

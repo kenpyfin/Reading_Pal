@@ -566,6 +566,7 @@ function BookView() {
   const [completedRoadmapIds, setCompletedRoadmapIds] = useState([]);
   const [graphLoadingById, setGraphLoadingById] = useState({});
   const [alternativeLoadingById, setAlternativeLoadingById] = useState({});
+  const [isGeneratingAllAlternativeReadings, setIsGeneratingAllAlternativeReadings] = useState(false);
 
   const [isOfflineSnapshot, setIsOfflineSnapshot] = useState(false);
   const [outboxPendingCount, setOutboxPendingCount] = useState(0);
@@ -640,6 +641,8 @@ function BookView() {
   const beginExplicitPagination = useCallback((targetPage) => {
     explicitPaginationInFlightRef.current = true;
     explicitPaginationTargetPageRef.current = targetPage;
+    // Reset stale page marker so explicit pagination always re-applies top scroll.
+    lastScrollToTopPageRef.current = null;
     skipBookScrollRestoreOnPageChangeRef.current = true;
     navigatingFromGuideTextLinkRef.current = false;
     clearGuideDrivenScrollState();
@@ -1342,12 +1345,49 @@ function BookView() {
     }
   };
 
-  const handleGenerateAlternativeReading = async (cardId) => {
-    if (!bookId || !cardId) return;
-    if (!navigator.onLine || isOfflineSnapshot) {
-      setGuideError('Author Shortcut generation requires an internet connection.');
-      return;
+  const updateRoadmapAlternativeReading = useCallback((cardId, data) => {
+    const alternativeReading = data?.alternative_reading;
+    const sourceWordCount = Number.isFinite(data?.source_word_count) ? data.source_word_count : null;
+    const shortcutWordCount = Number.isFinite(data?.shortcut_word_count) ? data.shortcut_word_count : null;
+    if (!(typeof alternativeReading === 'string' && alternativeReading.trim())) {
+      return false;
     }
+
+    const setAlternative = (nodes) => (nodes || []).map((n) => ({
+      ...n,
+      alternative_reading: n.id === cardId ? alternativeReading : n.alternative_reading,
+      alternative_source_word_count: n.id === cardId ? sourceWordCount : n.alternative_source_word_count,
+      alternative_word_count: n.id === cardId ? shortcutWordCount : n.alternative_word_count,
+      children: setAlternative(n.children),
+    }));
+
+    setReadingRoadmap((prev) => {
+      if (!prev) return prev;
+      const updated = { ...prev, items: setAlternative(prev.items) };
+      (async () => {
+        try {
+          const gSnap = await getGuide(bookId);
+          await putGuide(bookId, {
+            roadmap: updated,
+            completedIds: gSnap?.completedIds ?? completedRoadmapIds,
+          });
+        } catch (_e) { /* ignore */ }
+      })();
+      return updated;
+    });
+    return true;
+  }, [bookId, completedRoadmapIds]);
+
+  const generateAlternativeReadingForCard = useCallback(async (cardId, options = {}) => {
+    const { surfaceError = true } = options;
+    if (!bookId || !cardId) return false;
+    if (!navigator.onLine || isOfflineSnapshot) {
+      if (surfaceError) {
+        setGuideError('Author Shortcut generation requires an internet connection.');
+      }
+      return false;
+    }
+
     setAlternativeLoadingById((prev) => ({ ...prev, [cardId]: true }));
     try {
       const token = localStorage.getItem('authToken');
@@ -1360,34 +1400,61 @@ function BookView() {
         const errorData = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
         throw new Error(errorData.detail || "Failed to generate alternative reading");
       }
+
       const data = await response.json();
-      const alternativeReading = data.alternative_reading;
-      if (typeof alternativeReading === 'string' && alternativeReading.trim()) {
-        const setAlternative = (nodes) => (nodes || []).map((n) => ({
-          ...n,
-          alternative_reading: n.id === cardId ? alternativeReading : n.alternative_reading,
-          children: setAlternative(n.children),
-        }));
-        setReadingRoadmap((prev) => {
-          if (!prev) return prev;
-          const updated = { ...prev, items: setAlternative(prev.items) };
-          (async () => {
-            try {
-              const gSnap = await getGuide(bookId);
-              await putGuide(bookId, {
-                roadmap: updated,
-                completedIds: gSnap?.completedIds ?? completedRoadmapIds,
-              });
-            } catch (_e) { /* ignore */ }
-          })();
-          return updated;
-        });
-      }
+      return updateRoadmapAlternativeReading(cardId, data);
     } catch (err) {
-      logger.error("[BookView - handleGenerateAlternativeReading] Failed:", err);
-      setGuideError(err.message);
+      logger.error("[BookView - generateAlternativeReadingForCard] Failed:", err);
+      if (surfaceError) {
+        setGuideError(err.message);
+      }
+      return false;
     } finally {
       setAlternativeLoadingById((prev) => ({ ...prev, [cardId]: false }));
+    }
+  }, [bookId, isOfflineSnapshot, updateRoadmapAlternativeReading]);
+
+  const handleGenerateAlternativeReading = async (cardId) => {
+    await generateAlternativeReadingForCard(cardId, { surfaceError: true });
+  };
+
+  const handleGenerateAllAlternativeReadings = async () => {
+    if (!bookId || !readingRoadmap?.items?.length) return;
+    if (!navigator.onLine || isOfflineSnapshot) {
+      setGuideError('Author Shortcut generation requires an internet connection.');
+      return;
+    }
+
+    const collectItemIds = (nodes) => {
+      const ids = [];
+      const walk = (list) => {
+        for (const node of list || []) {
+          if (node?.id != null) ids.push(node.id);
+          if (Array.isArray(node?.children) && node.children.length > 0) {
+            walk(node.children);
+          }
+        }
+      };
+      walk(nodes);
+      return ids;
+    };
+
+    const cardIds = collectItemIds(readingRoadmap.items);
+    if (!cardIds.length) return;
+
+    setGuideError(null);
+    setIsGeneratingAllAlternativeReadings(true);
+    try {
+      let failed = 0;
+      for (const cardId of cardIds) {
+        const ok = await generateAlternativeReadingForCard(cardId, { surfaceError: false });
+        if (!ok) failed += 1;
+      }
+      if (failed > 0) {
+        setGuideError(`Generated ${cardIds.length - failed}/${cardIds.length} shortcuts. ${failed} failed.`);
+      }
+    } finally {
+      setIsGeneratingAllAlternativeReadings(false);
     }
   };
 
@@ -1961,7 +2028,7 @@ function BookView() {
           explicitPaginationInFlightRef.current &&
           explicitPaginationTargetPageRef.current === currentPage;
 
-        if (isExplicitPaginationPage && pageActuallyChanged) {
+        if (isExplicitPaginationPage) {
           logger.debug("[BookView - Page Content Effect] Explicit pagination landed on page", currentPage, ". Forcing scroll to top.");
           lastScrollToTopPageRef.current = currentPage;
           isProgrammaticScroll.current = true;
@@ -3408,7 +3475,9 @@ function BookView() {
                   onGenerateGraph={handleGenerateCardGraph}
                   graphLoadingById={graphLoadingById}
                   onGenerateAlternativeReading={handleGenerateAlternativeReading}
+                  onGenerateAllAlternativeReadings={handleGenerateAllAlternativeReadings}
                   alternativeLoadingById={alternativeLoadingById}
+                  isGeneratingAllAlternativeReadings={isGeneratingAllAlternativeReadings}
                   onSwitchToOriginal={() => {
                     if (guideScrollContainerRef.current) setGuideScrollPositionByPage(prev => ({ ...prev, [currentPage]: guideScrollContainerRef.current.scrollTop }));
                     setViewMode('original');

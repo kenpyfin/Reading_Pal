@@ -29,6 +29,30 @@ Use a reverse-chronological list (newest first). Each entry should be short and 
 
 <!-- New entries go below this comment, newest first. -->
 
+## 2026-05-01 — Explicit pagination top-scroll restored after guide jumps
+
+- **What:** Hardened explicit pagination (`Previous`/`Next`/page input) to always force original-pane top scroll on target-page render by resetting stale top-scroll page markers at pagination start and removing an over-strict `pageActuallyChanged` gate on explicit-pagination landing.
+- **Why:** After navigating from Reading Guide into Original text, stale page-tracking state could prevent explicit pagination from re-applying the expected top-of-page landing behavior.
+- **Where:** `frontend/src/pages/BookView.js`
+
+## 2026-05-01 — Added bulk Author Shortcut generation button
+
+- **What:** Added a `Generate All Shortcuts` action in the roadmap panel that iterates all roadmap cards and triggers Author Shortcut generation sequentially. Shared the single-card update path so word counts and shortcut text are persisted in roadmap state/cached guide consistently; disabled per-card shortcut buttons while bulk generation is running.
+- **Why:** Generating shortcuts one card at a time is slow and repetitive for large roadmaps; bulk generation makes the workflow practical for full-book coverage.
+- **Where:** `frontend/src/pages/BookView.js`, `frontend/src/components/ReadingGuidePane.js`, `frontend/src/components/ReadingGuidePane.css`
+
+## 2026-04-30 — Author Shortcut panel shows source/output word counts
+
+- **What:** Added `alternative_source_word_count` and `alternative_word_count` to roadmap items, computed and returned these counts from the Author Shortcut generation endpoint, and surfaced them in the expanded Author Shortcut details UI.
+- **Why:** Readers need quick visibility into how compressed the generated shortcut is relative to its reference text.
+- **Where:** `backend/api/books.py`, `backend/models/reading_guide.py`, `frontend/src/pages/BookView.js`, `frontend/src/components/ReadingGuidePane.js`, `frontend/src/components/ReadingGuidePane.css`
+
+## 2026-04-30 — Author Shortcut now uses full source passage
+
+- **What:** Removed the 6000-character cap in Author Shortcut generation so the LLM receives the full selected source passage from the roadmap card offsets.
+- **Why:** Truncation could exclude later context from long sections and made shortcut generation depend only on the first part of the source.
+- **Where:** `backend/services/llm_service.py`
+
 ## 2026-04-29 — Multi-format ebook ingestion in document worker
 
 - **What:** Extended the `pdf_service` worker to ingest common ebook/document formats (`pdf`, `epub`, `mobi`, `azw`, `azw3`, `docx`, `txt`, `html`) using format routing plus parser helpers, with strict-fail behavior for unsupported/failed extraction and unchanged callback contract. Added parser dependencies and Calibre runtime support for MOBI/AZW conversion, widened backend/frontend upload validation and file picker support, and refreshed architecture/operations/readme guidance plus smoke coverage for non-PDF formats.

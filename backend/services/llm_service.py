@@ -950,7 +950,7 @@ Return ONLY valid JSON, no other text."""
             logger.warning("Alternative reading generation skipped: no guide client available.")
             return None
 
-        trimmed_source = source_excerpt.strip()[:6000]
+        trimmed_source = source_excerpt.strip()
         source_word_count = len(trimmed_source.split())
         target_word_count = max(45, int(source_word_count * 0.30))
         system_prompt = (
