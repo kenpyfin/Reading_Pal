@@ -29,6 +29,48 @@ Use a reverse-chronological list (newest first). Each entry should be short and 
 
 <!-- New entries go below this comment, newest first. -->
 
+## 2026-05-04 — Explicit pagination now always resets to page start
+
+- **What:** Hardened explicit pagination in Book View to clear stale initial-scroll restore state and force top-of-page landing for target pages in both Original and Guide modes, while zeroing per-page cached scroll for the target page.
+- **Why:** `Previous`/`Next` and direct page jumps could still reopen the destination page at an old offset due to competing restore state, so readers did not reliably land at the beginning of the new page.
+- **Where:** `frontend/src/pages/BookView.js`
+
+## 2026-05-04 — Deploy volume purge changed to opt-in
+
+- **What:** Made `deploy.sh` preserve Docker volumes by default, and added `--purge-volumes` to explicitly enable destructive volume removal. The script now uses non-volume `docker compose down` and `docker system prune` unless this flag is provided.
+- **Why:** Default-safe deploy behavior avoids accidental data loss for useful stopped-container or named-volume data while still allowing full cleanup on demand.
+- **Where:** `deploy.sh`
+
+## 2026-05-04 — Deploy script now purges unused Docker storage
+
+- **What:** Expanded `deploy.sh` cleanup to run a full unused Docker storage purge (`docker system prune -af --volumes`) plus builder cache prune before the no-cache rebuild.
+- **Why:** The prior script only cleared builder cache, which could still leave stale unused containers/images/networks/volumes consuming space and occasionally interfering with clean deploy expectations.
+- **Where:** `deploy.sh`
+
+## 2026-05-01 — Roadmap card reference excerpt with leading context
+
+- **What:** Reference preview (`preview_text`) now prepends up to ~140 characters of segment text immediately before the first meaningful sentence (trimmed at a prior sentence boundary when possible), optionally followed by short continuation; the card blockquote shows `preview_text` when present. `key_quote` remains sentence-only so “View in original text” highlighting still anchors on that sentence first.
+- **Why:** Showing only the headline sentence felt abrupt; readers expect a brief lead-in from the passage before the anchor sentence on the roadmap card.
+- **Where:** `backend/services/llm_service.py`, `frontend/src/components/ReadingGuidePane.js`
+
+## 2026-05-01 — Next/Prev top scroll after guide jump (stale highlight scroll)
+
+- **What:** Added `bookPaneScrollEpochRef` bumped on explicit pagination so delayed guide-highlight `scrollIntoView` timeouts cannot run after page changes; switched highlight scroll to `behavior: 'auto'`; sync `bookScrollPositionByPage` to `0` on explicit pagination and re-apply top via nested `requestAnimationFrame`. Explicit-pagination top scroll now runs even when `viewMode` is still `guide` (same scroll container).
+- **Why:** Guide search used a 200ms timeout and smooth scrolling; explicit pagination cleared guards synchronously, so a stale timeout could move the pane after `scrollTop = 0`, making Next/Prev appear broken after jumping from the roadmap.
+- **Where:** `frontend/src/pages/BookView.js`
+
+## 2026-05-01 — PDF service image now bundles parser package
+
+- **What:** Updated the `pdf_service` Docker image build to copy the `parsers/` package into `/app` so `app.py` can import `parsers.document_parsers` at startup.
+- **Why:** The container was starting with `ModuleNotFoundError: No module named 'parsers'`, which kept `pdf_service` down and caused backend uploads to fail with 503/connection-refused errors.
+- **Where:** `pdf_service/Dockerfile`
+
+## 2026-05-01 — Roadmap cutoff marker and deterministic reference sentence
+
+- **What:** Made roadmap card reference text deterministic by extracting the first meaningful sentence from each segment source excerpt, and used that sentence as the card quote/reference baseline. Added a visible inline cutoff marker in Original Text mode at the roadmap segment `end_offset` when navigating from `View in original text`.
+- **Why:** Users needed a reliable, source-grounded reference sentence on every card and a clear visual indicator in-book showing where each roadmap segment ends.
+- **Where:** `backend/services/llm_service.py`, `frontend/src/pages/BookView.js`, `frontend/src/pages/BookView.css`
+
 ## 2026-05-01 — Explicit pagination top-scroll restored after guide jumps
 
 - **What:** Hardened explicit pagination (`Previous`/`Next`/page input) to always force original-pane top scroll on target-page render by resetting stale top-scroll page markers at pagination start and removing an over-strict `pageActuallyChanged` gate on explicit-pagination landing.

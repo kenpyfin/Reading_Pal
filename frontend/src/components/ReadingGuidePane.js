@@ -131,7 +131,9 @@ function RoadmapCard({
           </div>
         </details>
       )}
-      {item.key_quote && <blockquote className="roadmap-quote">"{item.key_quote}"</blockquote>}
+      {(item.preview_text || item.key_quote) && (
+        <blockquote className="roadmap-quote">{item.preview_text || item.key_quote}</blockquote>
+      )}
 
       <div className="roadmap-card-actions">
         <button className="guide-section-link" type="button" onClick={handleViewOriginal}>

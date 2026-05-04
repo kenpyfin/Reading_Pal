@@ -11,11 +11,17 @@ usage() {
 Usage: ./deploy.sh [options]
 
 Options:
-  -h, --help        Show this help message.
+  -h, --help           Show this help message.
+  --purge-volumes      Also remove Docker volumes (destructive; opt-in).
 
 Behavior:
-  Stop existing stack, remove stale containers/volumes/images cache, rebuild images with --no-cache,
+  Stop existing stack, purge unused Docker cache/storage (containers, images, networks, builder cache),
+  rebuild images with --no-cache,
   then start the full Compose stack with forced recreation.
+
+Notes:
+  Volumes are preserved by default for safer deploys. Use --purge-volumes only when you
+  explicitly want to remove unused/compose-managed volumes.
 EOF
 }
 
@@ -24,11 +30,28 @@ cleanup() {
   docker compose down || true
 }
 
+purge_unused_docker_storage() {
+  if [ "$PURGE_VOLUMES" = "true" ]; then
+    echo "INFO: Purging unused Docker cache/storage (including volumes)..."
+    docker system prune -af --volumes || true
+  else
+    echo "INFO: Purging unused Docker cache/storage (excluding volumes)..."
+    docker system prune -af || true
+  fi
+  docker builder prune -af || true
+}
+
+PURGE_VOLUMES="false"
+
 while [ $# -gt 0 ]; do
   case "$1" in
     -h|--help)
       usage
       exit 0
+      ;;
+    --purge-volumes)
+      PURGE_VOLUMES="true"
+      shift
       ;;
     *)
       echo "ERROR: Unknown option: $1"
@@ -41,11 +64,15 @@ done
 trap cleanup SIGINT SIGTERM EXIT
 
 echo "INFO: Starting clean deployment with no Docker build cache..."
-echo "INFO: Bringing down existing stack (including orphan containers and volumes)..."
-docker compose down --remove-orphans --volumes || true
+if [ "$PURGE_VOLUMES" = "true" ]; then
+  echo "INFO: Bringing down existing stack (including orphan containers and volumes)..."
+  docker compose down --remove-orphans --volumes || true
+else
+  echo "INFO: Bringing down existing stack (including orphan containers; preserving volumes)..."
+  docker compose down --remove-orphans || true
+fi
 
-echo "INFO: Pruning builder cache to avoid stale layers..."
-docker builder prune -af || true
+purge_unused_docker_storage
 
 echo "INFO: Rebuilding all images with --no-cache..."
 docker compose build --no-cache

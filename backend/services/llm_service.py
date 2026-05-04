@@ -707,6 +707,110 @@ Return ONLY valid JSON, no other text."""
         except Exception:
             return None
 
+    def _extract_first_meaningful_sentence(self, source_text: str) -> str:
+        """
+        Return the first meaningful sentence from a segment.
+        Skips obvious heading/list-only noise and normalizes whitespace.
+        """
+        if not source_text:
+            return ""
+
+        meaningful_lines: List[str] = []
+        for raw_line in source_text.splitlines():
+            line = (raw_line or "").strip()
+            if not line:
+                continue
+            if line.startswith("#"):
+                continue
+            if re.fullmatch(r"[-*_`~\s]+", line):
+                continue
+            if line.lower() in {"contents", "table of contents"}:
+                continue
+            # Remove common list markers so list entries can still be meaningful.
+            line = re.sub(r"^([*\-+]\s+|\d+[\.\)]\s+)", "", line).strip()
+            if len(line) < 3:
+                continue
+            meaningful_lines.append(line)
+
+        normalized = re.sub(r"\s+", " ", " ".join(meaningful_lines)).strip()
+        if not normalized:
+            return ""
+
+        match = re.search(r"[^.!?]+[.!?](?:\s|$)", normalized)
+        sentence = (match.group(0) if match else normalized).strip()
+
+        if len(sentence) > 260:
+            sentence = sentence[:260].rsplit(" ", 1)[0].strip()
+            if not sentence.endswith(("...", ".", "!", "?")):
+                sentence = f"{sentence}..."
+        return sentence
+
+    def _prepend_reasonable_context(self, source_text: str, reference_sentence: str, max_prefix: int = 140) -> str:
+        """
+        Return reference_sentence prefixed with a bounded slice of text that
+        appears immediately before it in the segment (sentence boundary when sensible).
+        """
+        ref = (reference_sentence or "").strip()
+        if not ref:
+            return ""
+        source_normalized = re.sub(r"\s+", " ", (source_text or "")).strip()
+        if not source_normalized:
+            return ref
+        idx = source_normalized.find(ref)
+        if idx < 0 and ref:
+            words = ref.split()
+            stub = " ".join(words[: min(6, len(words))]) if len(words) >= 2 else (words[0] if words else "")
+            idx = source_normalized.find(stub) if stub else -1
+        if idx <= 0:
+            return ref
+        before = source_normalized[:idx].rstrip()
+        if not before:
+            return ref
+        # Prefer starting after prior sentence boundary for a cleaner excerpt.
+        window_start = max(0, len(before) - max_prefix)
+        candidate = before[window_start:].strip()
+        sentence_break = None
+        for m in re.finditer(r"[.!?]\s+", candidate):
+            sentence_break = m.end()
+        if sentence_break is not None and sentence_break < len(candidate) - 15:
+            prefix = candidate[sentence_break:].strip()
+        else:
+            prefix = candidate.strip()
+        if prefix and prefix[-1] in ".!?":
+            prefix = prefix[:-1].rstrip()
+        if not prefix:
+            return ref
+        return f"{prefix} {ref}".strip()
+
+    def _build_reference_preview(self, source_text: str, reference_sentence: str) -> str:
+        """
+        Build preview text with a short prefix before the reference sentence,
+        then optional continuation after it for navigation fallback.
+        """
+        source_normalized = re.sub(r"\s+", " ", (source_text or "")).strip()
+        ref = (reference_sentence or "").strip()
+        if not ref:
+            return source_normalized[:420]
+        if not source_normalized:
+            return ref
+
+        anchored = self._prepend_reasonable_context(source_text, ref)
+
+        continuation = ""
+        ref_idx = source_normalized.find(ref)
+        if ref_idx >= 0:
+            after = source_normalized[ref_idx + len(ref) :].strip()
+            if after:
+                continuation = after[:220].strip()
+
+        tail = f"{anchored} {continuation}".strip() if continuation else anchored
+
+        if len(tail) > 420:
+            tail = tail[:420].rsplit(" ", 1)[0].strip()
+            if not tail.endswith(("...", ".", "!", "?")):
+                tail = f"{tail}..."
+        return tail
+
     async def _generate_guide_json(
         self,
         system_prompt: str,
@@ -869,6 +973,9 @@ Return ONLY valid JSON, no other text."""
             reading_bullets = [str(step).strip() for step in reading_bullets if str(step).strip()][:5]
 
             takeaway = card_data.get("key_idea")
+            reference_sentence = self._extract_first_meaningful_sentence(source_text)
+            key_quote = reference_sentence or card_data.get("quote") or ""
+            preview_text = self._build_reference_preview(source_text, reference_sentence) or key_quote
 
             cards.append({
                 "id": seg.get("id") or f"seg{idx + 1}",
@@ -877,8 +984,8 @@ Return ONLY valid JSON, no other text."""
                 "thought_process": thought_process,
                 "reading_summary": (card_data.get("reading_summary") or "").strip() or None,
                 "reading_bullets": reading_bullets,
-                "key_quote": card_data.get("quote"),
-                "preview_text": card_data.get("reference_paragraph") or card_data.get("quote") or "",
+                "key_quote": key_quote,
+                "preview_text": preview_text,
                 "start_offset": start_offset,
                 "end_offset": end_offset,
                 "level": 1,

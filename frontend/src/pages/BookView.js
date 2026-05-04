@@ -554,6 +554,8 @@ function BookView() {
   const skipBookScrollRestoreOnPageChangeRef = useRef(false);
   const explicitPaginationInFlightRef = useRef(false);
   const explicitPaginationTargetPageRef = useRef(null);
+  /** Bumped on explicit pagination so delayed scroll helpers (e.g. guide highlight) do not run stale timeouts. */
+  const bookPaneScrollEpochRef = useRef(0);
   // Remember book (original) pane scroll per page when switching to guide so we can restore when switching back
   const [bookScrollPositionByPage, setBookScrollPositionByPage] = useState({});
 
@@ -596,6 +598,7 @@ function BookView() {
   const [guideSearchText, setGuideSearchText] = useState(null); // Text to search and highlight from reading guide
   const [guideSearchGlobalOffset, setGuideSearchGlobalOffset] = useState(null); // Stable offset target for guide highlight fallback
   const [guideSearchEndOffset, setGuideSearchEndOffset] = useState(null); // Stable end offset for exact quote highlight
+  const [guideSegmentCutoffOffset, setGuideSegmentCutoffOffset] = useState(null); // Segment boundary marker in original text
   const guideSearchHighlightRef = useRef(null); // Ref for the highlighted element to scroll to
   // --- END State for Reading Guide Search/Highlight ---
 
@@ -633,16 +636,24 @@ function BookView() {
     setGuideSearchText(null);
     setGuideSearchGlobalOffset(null);
     setGuideSearchEndOffset(null);
+    setGuideSegmentCutoffOffset(null);
     setPendingScrollOffsetInPage(null);
     setPendingScrollToPercentage(null);
     setScrollToGlobalOffset(null);
   }, []);
 
   const beginExplicitPagination = useCallback((targetPage) => {
+    bookPaneScrollEpochRef.current += 1;
     explicitPaginationInFlightRef.current = true;
     explicitPaginationTargetPageRef.current = targetPage;
     // Reset stale page marker so explicit pagination always re-applies top scroll.
     lastScrollToTopPageRef.current = null;
+    // Prevent stale initial-position restore from overriding explicit page-top intent.
+    setInitialScrollTop(null);
+    // Explicit pagination should always land from the beginning of the target page.
+    setGuideScrollToRestoreOnBack(null);
+    setGuideScrollPositionByPage((prev) => ({ ...prev, [targetPage]: 0 }));
+    setBookScrollPositionByPage((prev) => ({ ...prev, [targetPage]: 0 }));
     skipBookScrollRestoreOnPageChangeRef.current = true;
     navigatingFromGuideTextLinkRef.current = false;
     clearGuideDrivenScrollState();
@@ -1532,6 +1543,13 @@ function BookView() {
       end_offset > start_offset &&
       (end_offset - start_offset) <= 600;
     setGuideSearchEndOffset(hasUsableExactRange ? end_offset : null);
+    const hasUsableCutoff =
+      typeof end_offset === 'number' &&
+      !isNaN(end_offset) &&
+      typeof start_offset === 'number' &&
+      !isNaN(start_offset) &&
+      end_offset > start_offset;
+    setGuideSegmentCutoffOffset(hasUsableCutoff ? end_offset : null);
 
     logger.info(`[BookView - handleGuideTextLink] Navigating to offset ${navigationOffset} (raw: ${start_offset}) with preview: "${preview_text?.substring(0, 50)}..."`);
 
@@ -1973,6 +1991,43 @@ function BookView() {
         return b.end - a.end; // Longer highlights first if same start
       });
 
+      const cutoffInPage =
+        guideSegmentCutoffOffset !== null &&
+        guideSegmentCutoffOffset !== undefined &&
+        guideSegmentCutoffOffset >= pageStartGlobalOffset &&
+        guideSegmentCutoffOffset <= pageEndGlobalOffset
+          ? Math.max(0, Math.min(plainPageText.length, guideSegmentCutoffOffset - pageStartGlobalOffset))
+          : null;
+      const cutoffMarkerHtml = '<span class="roadmap-cutoff-indicator" role="note" aria-label="Roadmap segment cutoff">Roadmap segment cutoff</span>';
+      const escapeHtml = (text) => String(text || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+      let cutoffInserted = false;
+      const buildSegmentText = (start, end, shouldEscape = false) => {
+        if (end <= start) return '';
+        const normalizedStart = Math.max(0, Math.min(start, plainPageText.length));
+        const normalizedEnd = Math.max(normalizedStart, Math.min(end, plainPageText.length));
+        const hasCutoff =
+          cutoffInPage !== null &&
+          !cutoffInserted &&
+          cutoffInPage >= normalizedStart &&
+          cutoffInPage <= normalizedEnd;
+        if (!hasCutoff) {
+          const chunk = plainPageText.substring(normalizedStart, normalizedEnd);
+          return shouldEscape ? escapeHtml(chunk) : chunk;
+        }
+        const split = Math.max(normalizedStart, Math.min(cutoffInPage, normalizedEnd));
+        const before = plainPageText.substring(normalizedStart, split);
+        const after = plainPageText.substring(split, normalizedEnd);
+        cutoffInserted = true;
+        const left = shouldEscape ? escapeHtml(before) : before;
+        const right = shouldEscape ? escapeHtml(after) : after;
+        return `${left}${cutoffMarkerHtml}${right}`;
+      };
+
       // Apply highlights to text
       if (highlights.length > 0) {
         let highlightedText = '';
@@ -1983,29 +2038,18 @@ function BookView() {
             continue; // Skip overlapping highlights
           }
 
-          highlightedText += plainPageText.substring(lastIndex, highlight.start);
+          highlightedText += buildSegmentText(lastIndex, highlight.start, false);
           
           if (highlight.type === 'note') {
             const textToHighlight = plainPageText.substring(highlight.start, Math.min(highlight.end, plainPageText.length));
             if (textToHighlight) {
-              const escapedText = textToHighlight
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;')
-                .replace(/'/g, '&#039;');
+              const escapedText = buildSegmentText(highlight.start, Math.min(highlight.end, plainPageText.length), true);
               highlightedText += `<mark class="note-highlight" data-note-id="${highlight.id}">${escapedText}</mark>`;
             }
           } else if (highlight.type === 'guide-search') {
             const textToHighlight = plainPageText.substring(highlight.start, Math.min(highlight.end, plainPageText.length));
             if (textToHighlight) {
-              // Escape HTML in the text to highlight
-              const escapedText = textToHighlight
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;')
-                .replace(/'/g, '&#039;');
+              const escapedText = buildSegmentText(highlight.start, Math.min(highlight.end, plainPageText.length), true);
               highlightedText += `<mark class="guide-search-highlight">${escapedText}</mark>`;
             }
           }
@@ -2014,32 +2058,56 @@ function BookView() {
         }
 
         if (lastIndex < plainPageText.length) {
-          highlightedText += plainPageText.substring(lastIndex);
+          highlightedText += buildSegmentText(lastIndex, plainPageText.length, false);
+        } else if (!cutoffInserted && cutoffInPage === plainPageText.length) {
+          highlightedText += cutoffMarkerHtml;
         }
 
         setHighlightedPageContent(highlightedText);
       } else {
-        setHighlightedPageContent(plainPageText);
+        const plainWithCutoff = buildSegmentText(0, plainPageText.length, false);
+        setHighlightedPageContent(
+          !cutoffInserted && cutoffInPage === plainPageText.length
+            ? `${plainWithCutoff}${cutoffMarkerHtml}`
+            : plainWithCutoff
+        );
       }
       
-      if (bookPaneContainerRef.current && viewMode === 'original') {
-        const pageActuallyChanged = lastScrollToTopPageRef.current !== currentPage;
-        const isExplicitPaginationPage =
-          explicitPaginationInFlightRef.current &&
-          explicitPaginationTargetPageRef.current === currentPage;
+      const pageActuallyChanged = lastScrollToTopPageRef.current !== currentPage;
+      const isExplicitPaginationPage =
+        explicitPaginationInFlightRef.current &&
+        explicitPaginationTargetPageRef.current === currentPage;
 
-        if (isExplicitPaginationPage) {
-          logger.debug("[BookView - Page Content Effect] Explicit pagination landed on page", currentPage, ". Forcing scroll to top.");
-          lastScrollToTopPageRef.current = currentPage;
-          isProgrammaticScroll.current = true;
-          bookPaneContainerRef.current.scrollTop = 0;
-          explicitPaginationInFlightRef.current = false;
-          explicitPaginationTargetPageRef.current = null;
-          setTimeout(() => {
-            isProgrammaticScroll.current = false;
-            logger.debug("[BookView - Page Content Effect] Reset isProgrammaticScroll after explicit pagination top scroll.");
-          }, 120);
-        } else if (pendingScrollOffsetInPage === null && pendingScrollToPercentage === null) {
+      if (isExplicitPaginationPage) {
+        logger.debug("[BookView - Page Content Effect] Explicit pagination landed on page", currentPage, ". Forcing scroll to top.");
+        lastScrollToTopPageRef.current = currentPage;
+        isProgrammaticScroll.current = true;
+        const pane = viewMode === 'guide' ? guideScrollContainerRef.current : bookPaneContainerRef.current;
+        if (pane) {
+          pane.scrollTop = 0;
+          requestAnimationFrame(() => {
+            const nextPane = viewMode === 'guide' ? guideScrollContainerRef.current : bookPaneContainerRef.current;
+            if (!nextPane) return;
+            nextPane.scrollTop = 0;
+            requestAnimationFrame(() => {
+              const finalPane = viewMode === 'guide' ? guideScrollContainerRef.current : bookPaneContainerRef.current;
+              if (finalPane) finalPane.scrollTop = 0;
+            });
+          });
+        }
+        if (viewMode === 'guide') {
+          setGuideScrollPositionByPage((prev) => ({ ...prev, [currentPage]: 0 }));
+        } else {
+          setBookScrollPositionByPage((prev) => ({ ...prev, [currentPage]: 0 }));
+        }
+        explicitPaginationInFlightRef.current = false;
+        explicitPaginationTargetPageRef.current = null;
+        setTimeout(() => {
+          isProgrammaticScroll.current = false;
+          logger.debug("[BookView - Page Content Effect] Reset isProgrammaticScroll after explicit pagination top scroll.");
+        }, 120);
+      } else if (bookPaneContainerRef.current && viewMode === 'original') {
+        if (pendingScrollOffsetInPage === null && pendingScrollToPercentage === null) {
           if (pageActuallyChanged && !isProgrammaticScroll.current) {
               logger.debug("[BookView - Page Content Effect] Page changed to", currentPage, ". Scrolling to top.");
               lastScrollToTopPageRef.current = currentPage;
@@ -2072,7 +2140,7 @@ function BookView() {
       setCurrentPageContent('');
       setHighlightedPageContent('');
     }
-  }, [fullMarkdownContent, currentPage, notes, pendingScrollOffsetInPage, pendingScrollToPercentage, guideSearchText, guideSearchGlobalOffset, guideSearchEndOffset, scrollToGlobalOffset, viewMode]);
+  }, [fullMarkdownContent, currentPage, notes, pendingScrollOffsetInPage, pendingScrollToPercentage, guideSearchText, guideSearchGlobalOffset, guideSearchEndOffset, guideSegmentCutoffOffset, scrollToGlobalOffset, viewMode]);
 
 
   // Effect to apply initial scroll once content is ready
@@ -2771,16 +2839,21 @@ function BookView() {
       return undefined;
     }
     if ((guideSearchText || guideSearchGlobalOffset !== null) && bookPaneContainerRef.current && highlightedPageContent) {
+      const epochAtSchedule = bookPaneScrollEpochRef.current;
       // Small delay to ensure DOM is updated with highlighted content
       const scrollTimeout = setTimeout(() => {
+        if (bookPaneScrollEpochRef.current !== epochAtSchedule) return;
+        if (explicitPaginationInFlightRef.current) return;
         const highlightElement = bookPaneContainerRef.current?.querySelector('.guide-search-highlight');
         if (highlightElement) {
           logger.info(`[BookView - GuideSearchScroll] Scrolling to guide search highlight`);
-          highlightElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          // Use instant scroll so a later page change is not overridden by smooth scrolling.
+          highlightElement.scrollIntoView({ behavior: 'auto', block: 'center' });
           // Store ref for potential future use
           guideSearchHighlightRef.current = highlightElement;
         } else {
-          logger.warn(`[BookView - GuideSearchScroll] Guide search highlight element not found. Search text: "${guideSearchText.substring(0, 50)}"`);
+          const preview = typeof guideSearchText === 'string' ? guideSearchText.substring(0, 50) : '';
+          logger.warn(`[BookView - GuideSearchScroll] Guide search highlight element not found. Search text: "${preview}"`);
         }
       }, 200);
       
@@ -2790,14 +2863,15 @@ function BookView() {
 
   // Keep guide highlight around long enough to be visible, then clear it.
   useEffect(() => {
-    if (!guideSearchText && guideSearchGlobalOffset === null) return undefined;
+    if (!guideSearchText && guideSearchGlobalOffset === null && guideSegmentCutoffOffset === null) return undefined;
     const cleanupTimer = setTimeout(() => {
       setGuideSearchText(null);
       setGuideSearchGlobalOffset(null);
       setGuideSearchEndOffset(null);
+      setGuideSegmentCutoffOffset(null);
     }, 8000);
     return () => clearTimeout(cleanupTimer);
-  }, [guideSearchText, guideSearchGlobalOffset]);
+  }, [guideSearchText, guideSearchGlobalOffset, guideSegmentCutoffOffset]);
 
   useEffect(() => {
     // This effect applies scrolling when a pendingScrollToPercentage is set,

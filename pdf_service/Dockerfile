@@ -31,6 +31,7 @@ RUN mkdir -p /app/models
 ENV HOME=/app
 
 COPY app.py ./
+COPY parsers ./parsers
 
 ENV PORT=8502
 EXPOSE 8502
