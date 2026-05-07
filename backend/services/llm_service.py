@@ -15,6 +15,8 @@ import json # Import json for DeepSeek requests
 import re # Import re for regular expressions
 import time
 import base64
+from backend.models.reading_guide import ReadingGuideItem
+from backend.services.knowledge_mapper import KnowledgeMapper
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -822,23 +824,76 @@ Return ONLY valid JSON, no other text."""
         if not client or not model_name:
             logger.warning("No guide Gemini client available.")
             return None
-        try:
-            response = await client.aio.models.generate_content(
-                model=model_name,
-                contents=user_prompt,
-                config=types.GenerateContentConfig(
-                    system_instruction=system_prompt,
-                    max_output_tokens=max_output_tokens,
-                ),
+
+    async def _generate_signposts_for_nodes(self, nodes: List[Dict[str, Any]]) -> Dict[str, str]:
+        """Best-effort LLM signpost generation for roadmap nodes."""
+        client, model_name = self._select_guide_gemini()
+        if not client or not model_name or not nodes:
+            return {}
+
+        compact_nodes = []
+        for node in nodes:
+            compact_nodes.append(
+                {
+                    "id": node.get("id"),
+                    "title": node.get("title"),
+                    "level": node.get("level"),
+                    "snippet": (node.get("snippet") or "")[:280],
+                    "hub_score": int(node.get("hub_score", 0)),
+                }
             )
-            response_text = response.text if response and response.text else ""
-            parsed = self._normalize_json_response(response_text)
-            if not parsed:
-                logger.warning(f"Guide JSON parse failed. Raw response: {response_text[:800]}")
-            return parsed
-        except Exception as e:
-            logger.error(f"Guide LLM call failed: {e}", exc_info=True)
-            return None
+
+        system_prompt = (
+            "You are a reading-map assistant. "
+            "Write one concise purpose sentence per heading node. "
+            "Purpose should describe why the section matters to understanding the book."
+        )
+        user_prompt = (
+            "Return JSON only with this shape:\n"
+            '{ "purposes": [{"id": "km-1", "purpose": "..." }] }\n'
+            "Keep each purpose under 20 words and grounded in the snippet.\n\n"
+            f"NODES:\n{json.dumps(compact_nodes, ensure_ascii=True)}"
+        )
+        parsed = await self._generate_guide_json(system_prompt, user_prompt, max_output_tokens=3072)
+        if not parsed:
+            return {}
+        purposes = parsed.get("purposes", [])
+        if not isinstance(purposes, list):
+            return {}
+
+        mapped: Dict[str, str] = {}
+        for item in purposes:
+            if not isinstance(item, dict):
+                continue
+            node_id = str(item.get("id", "")).strip()
+            purpose = str(item.get("purpose", "")).strip()
+            if node_id and purpose:
+                mapped[node_id] = purpose
+        return mapped
+
+    async def generate_roadmap(self, markdown_text: str) -> List[ReadingGuideItem]:
+        """
+        Build a hierarchical roadmap from markdown using KnowledgeMapper as semantic backbone.
+        """
+        mapper = KnowledgeMapper()
+        nodes = mapper.extract_knowledge_map(markdown_text or "")
+        if not nodes:
+            return []
+
+        flat_nodes: List[Dict[str, Any]] = []
+
+        def _collect(current_nodes: List[Dict[str, Any]]) -> None:
+            for current in current_nodes:
+                flat_nodes.append(current)
+                _collect(current.get("children", []))
+
+        _collect(nodes)
+        missing_purpose_nodes = [n for n in flat_nodes if not n.get("purpose")]
+        if missing_purpose_nodes:
+            purposes = await self._generate_signposts_for_nodes(missing_purpose_nodes)
+            mapper.apply_purposes(nodes, purposes)
+
+        return mapper.nodes_to_reading_guide_items(nodes)
 
     async def generate_whole_book_reading_roadmap(
         self,

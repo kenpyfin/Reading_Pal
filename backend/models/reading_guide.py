@@ -94,6 +94,8 @@ class ReadingGuideItem(BaseModel):
     graph_image_url: Optional[str] = Field(None, description="Signed URL to generated concept graph image")
     graph_status: Optional[str] = Field(None, description="Graph generation status: idle|generating|ready|failed")
     graph_prompt: Optional[str] = Field(None, description="Prompt used to generate concept graph")
+    hub_score: Optional[int] = Field(0, description="Cross-reference count that marks this section as a knowledge hub")
+    purpose: Optional[str] = Field(None, description="Signpost sentence for why this section matters")
 
 
 class ReadingGuide(BaseModel):

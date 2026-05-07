@@ -1466,16 +1466,11 @@ async def generate_whole_book_reading_guide(
     if not full_markdown:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Markdown content not found.")
 
-    heading_nodes = _extract_whole_book_heading_nodes(full_markdown)
-    if not heading_nodes:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No valid book content sections found.")
-
-    items = await llm_service.generate_whole_book_reading_roadmap(
-        heading_nodes=heading_nodes,
-        book_title=book.title,
-        full_markdown=full_markdown,
-    )
-    if not items:
+    roadmap_items = await llm_service.generate_roadmap(full_markdown)
+    if not roadmap_items:
+        heading_nodes = _extract_whole_book_heading_nodes(full_markdown)
+        if not heading_nodes:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No valid book content sections found.")
         # deterministic fallback
         items = [{
             "id": n["id"],
@@ -1491,7 +1486,11 @@ async def generate_whole_book_reading_guide(
             "children": [],
             "key_term": None,
             "enriched": False,
+            "hub_score": 0,
+            "purpose": None,
         } for n in heading_nodes]
+    else:
+        items = [item.model_dump() for item in roadmap_items]
 
     db_guide = await upsert_reading_guide(book_id=book_id, user_id=current_user_id, items=items)
     if not db_guide:

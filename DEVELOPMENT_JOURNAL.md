@@ -274,3 +274,10 @@ Use a reverse-chronological list (newest first). Each entry should be short and 
 - **Why:** The book list UI read `X-Total-Count` and showed “Total: 0 books” because the backend never sent the header; pagination query params were ignored.
 - **Where:** `backend/db/mongodb.py`, `backend/api/books.py` (`list_books`), `backend/main.py` (CORS `expose_headers`).
 - **Notes:** Default `limit` remains 100 when query params are omitted (backward compatible).
+
+## 2026-05-07 — Knowledge mapping backbone for whole-book roadmap
+
+- **What:** Refactored `knowledge_mapper.py` into a `KnowledgeMapper` class with structured heading-tree extraction, reference mapping, `hub_score` computation, and conversion to `ReadingGuideItem`. Added `ReadingGuideItem.hub_score` and `ReadingGuideItem.purpose`. Added `LLMService.generate_roadmap()` to build roadmap items from the mapper and optionally fill missing node purposes via guide Gemini JSON output.
+- **Why:** Whole-book roadmap generation needed a deterministic hierarchical semantic backbone from markdown structure while retaining LLM enrichment for signposts.
+- **Where:** `backend/services/knowledge_mapper.py`, `backend/models/reading_guide.py`, `backend/services/llm_service.py`, `backend/api/books.py`, `tests/test_knowledge_mapping.py`.
+- **Notes:** Whole-book API route now prefers `generate_roadmap()` and keeps deterministic fallback logic. Added tests for hierarchy, hub scoring, and roadmap-item presence in API response payload.
