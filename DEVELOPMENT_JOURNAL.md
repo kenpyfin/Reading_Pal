@@ -29,6 +29,12 @@ Use a reverse-chronological list (newest first). Each entry should be short and 
 
 <!-- New entries go below this comment, newest first. -->
 
+## 2026-05-07 — Roadmap UI surfaces knowledge hubs and signposts
+
+- **What:** Updated roadmap cards to display `purpose` as a signpost under the title and show a `Knowledge Hub` badge when `hub_score` is positive. Refined card spacing and badge/signpost styling, and avoided duplicate takeaway rendering when it matches the signpost.
+- **Why:** Knowledge Mapping now emits hub scores and signpost purpose text, and readers need those fields visible in the roadmap hierarchy.
+- **Where:** `frontend/src/components/ReadingGuidePane.js`, `frontend/src/components/ReadingGuidePane.css`
+
 ## 2026-05-05 — Deploy detached run no longer auto-shuts down
 
 - **What:** Updated `deploy.sh` to stop trapping `EXIT` for cleanup and only trap `SIGINT`/`SIGTERM`, so the final `docker compose up --force-recreate -d` keeps containers running after successful script completion.

@@ -51,6 +51,11 @@ function RoadmapCard({
   depth = 0,
   mustExpandIds,
 }) {
+  const {
+    hub_score: hubScoreRaw,
+    purpose,
+    title,
+  } = item;
   const idStr = String(item.id);
   const mustExpand = mustExpandIds && mustExpandIds.has(idStr);
   const [expanded, setExpanded] = useState(() => depth < 2 || !!mustExpand);
@@ -59,6 +64,12 @@ function RoadmapCard({
   const isGraphLoading = !!graphLoadingById[item.id];
   const isAlternativeReadingLoading = !!alternativeLoadingById[item.id];
   const isOutsiderGuideLoading = !!outsiderLoadingById[item.id];
+  const hubScore = Number(hubScoreRaw);
+  const hasHubScore = Number.isFinite(hubScore) && hubScore > 0;
+  const signpost = typeof purpose === 'string' ? purpose.trim() : '';
+  const showTakeaway = item.takeaway && (
+    typeof item.takeaway !== 'string' || item.takeaway.trim() !== signpost
+  );
 
   useEffect(() => {
     if (mustExpand) setExpanded(true);
@@ -99,11 +110,18 @@ function RoadmapCard({
               onChange={(e) => onToggleProgress(item.id, e.target.checked)}
             />
           </label>
-          <h4 className="guide-section-title roadmap-title">{item.title}</h4>
+          <h4 className="guide-section-title roadmap-title">
+            <span>{title}</span>
+            {hasHubScore && (
+              <span className="roadmap-hub-badge">Knowledge Hub ({hubScore})</span>
+            )}
+          </h4>
         </div>
       </div>
 
-      {item.takeaway && (
+      {signpost && <p className="roadmap-signpost">{signpost}</p>}
+
+      {showTakeaway && (
         <div className="guide-section-content">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.takeaway}</ReactMarkdown>
         </div>
