@@ -69,6 +69,18 @@ class ReadingGuideItem(BaseModel):
         None,
         description="Word count of the generated Author Shortcut text",
     )
+    outsider_guide: Optional[str] = Field(
+        None,
+        description="Beginner-oriented rewrite in the source author's style for topic outsiders",
+    )
+    outsider_source_word_count: Optional[int] = Field(
+        None,
+        description="Word count of the source excerpt used to generate Outsider Guide",
+    )
+    outsider_word_count: Optional[int] = Field(
+        None,
+        description="Word count of the generated Outsider Guide text",
+    )
     reading_summary: Optional[str] = Field(None, description="Quick 1-2 sentence absorption summary for this section")
     reading_bullets: Optional[List[str]] = Field(None, description="Short bullet points for quick reading absorption")
     start_offset: int = Field(..., description="Character offset in original markdown where this section starts")

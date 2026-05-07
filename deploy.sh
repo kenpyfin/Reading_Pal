@@ -61,7 +61,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-trap cleanup SIGINT SIGTERM EXIT
+trap cleanup SIGINT SIGTERM
 
 echo "INFO: Starting clean deployment with no Docker build cache..."
 if [ "$PURGE_VOLUMES" = "true" ]; then
@@ -78,4 +78,4 @@ echo "INFO: Rebuilding all images with --no-cache..."
 docker compose build --no-cache
 
 echo "INFO: Starting full Docker Compose stack (including pdf_service) with forced recreation..."
-docker compose up --force-recreate
+docker compose up --force-recreate -d

@@ -29,6 +29,25 @@ Use a reverse-chronological list (newest first). Each entry should be short and 
 
 <!-- New entries go below this comment, newest first. -->
 
+## 2026-05-05 — Deploy detached run no longer auto-shuts down
+
+- **What:** Updated `deploy.sh` to stop trapping `EXIT` for cleanup and only trap `SIGINT`/`SIGTERM`, so the final `docker compose up --force-recreate -d` keeps containers running after successful script completion.
+- **Why:** Detached mode was immediately undone because normal script exit triggered `cleanup()`, which called `docker compose down`.
+- **Where:** `deploy.sh`
+
+## 2026-05-04 — Added Outsider Guide generation per roadmap card
+
+- **What:** Added a new roadmap-card action and expandable section named `Outsider Guide`, including backend generation endpoint (`POST /api/books/{book_id}/reading-guide/cards/{card_id}/outsider-guide`), roadmap persistence fields (`outsider_guide`, `outsider_source_word_count`, `outsider_word_count`), and frontend state/UI wiring to generate and display the content alongside Author Shortcut.
+- **Why:** Readers who are new to a topic need a guided, easier-entry rewrite that still keeps the original author’s style, distinct from the shorter Author Shortcut compression goal.
+- **Where:** `backend/services/llm_service.py`, `backend/api/books.py`, `backend/models/reading_guide.py`, `frontend/src/pages/BookView.js`, `frontend/src/components/ReadingGuidePane.js`, `frontend/src/components/ReadingGuidePane.css`
+
+## 2026-05-04 — Timestamp-based offline/online reconciliation
+
+- **What:** Added timestamp-aware reconnect reconciliation so cached notes/bookmarks merge with server state by `updated_at || created_at` instead of blindly overwriting local snapshots. Outbox bookmark creates now remap local IDs to server IDs and keep canonical server timestamps after replay. Guide progress cache now stores local touch metadata and reconciles with server progress on refresh.
+- **Why:** Reconnect flows could overwrite newer offline state with stale server snapshots and could leave temporary local/server duplicates for bookmarks after delayed outbox replay.
+- **Where:** `frontend/src/utils/syncReconciler.js`, `frontend/src/pages/BookView.js`, `frontend/src/utils/outboxSync.js`, `frontend/src/utils/offlineBookCache.js`, `backend/db/mongodb.py`
+- **Notes:** Backend note inserts now always set `created_at` and `updated_at` defaults so frontend/server comparisons are stable.
+
 ## 2026-05-04 — Explicit pagination now always resets to page start
 
 - **What:** Hardened explicit pagination in Book View to clear stale initial-scroll restore state and force top-of-page landing for target pages in both Original and Guide modes, while zeroing per-page cached scroll for the target page.

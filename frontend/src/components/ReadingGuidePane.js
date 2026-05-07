@@ -41,9 +41,11 @@ function RoadmapCard({
   onGuideTextLink,
   onGenerateGraph,
   onGenerateAlternativeReading,
+  onGenerateOutsiderGuide,
   isGeneratingAllAlternativeReadings = false,
   graphLoadingById,
   alternativeLoadingById,
+  outsiderLoadingById,
   onOpenGraphImage,
   serverActionsDisabled = false,
   depth = 0,
@@ -56,6 +58,7 @@ function RoadmapCard({
   const isCompleted = completedIds.includes(item.id);
   const isGraphLoading = !!graphLoadingById[item.id];
   const isAlternativeReadingLoading = !!alternativeLoadingById[item.id];
+  const isOutsiderGuideLoading = !!outsiderLoadingById[item.id];
 
   useEffect(() => {
     if (mustExpand) setExpanded(true);
@@ -131,6 +134,19 @@ function RoadmapCard({
           </div>
         </details>
       )}
+      {typeof item.outsider_guide === 'string' && item.outsider_guide.trim() && (
+        <details className="roadmap-outsider-guide">
+          <summary>Outsider Guide</summary>
+          <div className="roadmap-outsider-guide-content">
+            {Number.isFinite(item.outsider_source_word_count) && Number.isFinite(item.outsider_word_count) && (
+              <p className="roadmap-outsider-guide-stats">
+                Reference words: {item.outsider_source_word_count} | Guide words: {item.outsider_word_count}
+              </p>
+            )}
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.outsider_guide}</ReactMarkdown>
+          </div>
+        </details>
+      )}
       {(item.preview_text || item.key_quote) && (
         <blockquote className="roadmap-quote">{item.preview_text || item.key_quote}</blockquote>
       )}
@@ -160,6 +176,14 @@ function RoadmapCard({
         >
           {isAlternativeReadingLoading ? 'Generating author shortcut...' : 'Author Shortcut'}
         </button>
+        <button
+          className="guide-section-link secondary"
+          type="button"
+          disabled={isOutsiderGuideLoading || serverActionsDisabled || !onGenerateOutsiderGuide}
+          onClick={() => onGenerateOutsiderGuide && onGenerateOutsiderGuide(item.id)}
+        >
+          {isOutsiderGuideLoading ? 'Generating outsider guide...' : 'Outsider Guide'}
+        </button>
       </div>
 
       {item.graph_image_url && (
@@ -186,8 +210,10 @@ function RoadmapCard({
               onGuideTextLink={onGuideTextLink}
               onGenerateGraph={onGenerateGraph}
               onGenerateAlternativeReading={onGenerateAlternativeReading}
+              onGenerateOutsiderGuide={onGenerateOutsiderGuide}
               graphLoadingById={graphLoadingById}
               alternativeLoadingById={alternativeLoadingById}
+              outsiderLoadingById={outsiderLoadingById}
               onOpenGraphImage={onOpenGraphImage}
               serverActionsDisabled={serverActionsDisabled}
               depth={depth + 1}
@@ -208,9 +234,11 @@ const ReadingGuidePane = ({
   onGuideTextLink,
   onGenerateGraph,
   onGenerateAlternativeReading,
+  onGenerateOutsiderGuide,
   onGenerateAllAlternativeReadings,
   graphLoadingById = {},
   alternativeLoadingById = {},
+  outsiderLoadingById = {},
   isGeneratingAllAlternativeReadings = false,
   isLoading,
   isGenerating,
@@ -364,9 +392,11 @@ const ReadingGuidePane = ({
                 onGuideTextLink={onGuideTextLink}
                 onGenerateGraph={onGenerateGraph}
                 onGenerateAlternativeReading={onGenerateAlternativeReading}
+                onGenerateOutsiderGuide={onGenerateOutsiderGuide}
                 isGeneratingAllAlternativeReadings={isGeneratingAllAlternativeReadings}
                 graphLoadingById={graphLoadingById}
                 alternativeLoadingById={alternativeLoadingById}
+                outsiderLoadingById={outsiderLoadingById}
                 onOpenGraphImage={handleOpenGraph}
                 serverActionsDisabled={serverActionsDisabled}
                 mustExpandIds={mustExpandIds}

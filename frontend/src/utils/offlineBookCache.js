@@ -300,12 +300,14 @@ export function isRecoverableListFetchError(err) {
   return msg.includes('Failed to fetch');
 }
 
-export async function putGuide(bookId, { roadmap, completedIds }) {
+export async function putGuide(bookId, { roadmap, completedIds, progressTouchedAt }) {
   const db = await openDb();
+  const previous = await getGuide(bookId);
   const rec = {
     bookId,
     roadmap: roadmap ? JSON.parse(JSON.stringify(roadmap)) : null,
     completedIds: completedIds || [],
+    progressTouchedAt: progressTouchedAt || previous?.progressTouchedAt || {},
     cachedAt: Date.now(),
   };
   return new Promise((resolve, reject) => {

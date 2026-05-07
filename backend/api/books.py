@@ -821,6 +821,30 @@ def _set_roadmap_item_alternative_reading(
     return False
 
 
+def _set_roadmap_item_outsider_guide(
+    items: List[Dict[str, Any]],
+    item_id: str,
+    outsider_guide: str,
+    source_word_count: Optional[int] = None,
+    outsider_word_count: Optional[int] = None,
+) -> bool:
+    for item in items or []:
+        if item.get("id") == item_id:
+            item["outsider_guide"] = outsider_guide
+            item["outsider_source_word_count"] = source_word_count
+            item["outsider_word_count"] = outsider_word_count
+            return True
+        if _set_roadmap_item_outsider_guide(
+            item.get("children") or [],
+            item_id,
+            outsider_guide,
+            source_word_count,
+            outsider_word_count,
+        ):
+            return True
+    return False
+
+
 def _extract_graph_filepath(graph_image_url: Optional[str]) -> Optional[str]:
     """Normalize stored graph URL/path to relative filepath under /images/app/."""
     if not graph_image_url or not isinstance(graph_image_url, str):
@@ -1655,6 +1679,75 @@ async def generate_roadmap_card_alternative_reading(
         "alternative_reading": alternative_reading,
         "source_word_count": source_word_count,
         "shortcut_word_count": shortcut_word_count,
+    }
+
+
+@router.post("/{book_id}/reading-guide/cards/{card_id}/outsider-guide")
+async def generate_roadmap_card_outsider_guide(
+    book_id: str,
+    card_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+):
+    """Generate and persist outsider-oriented guide text for one roadmap card."""
+    if not ObjectId.is_valid(book_id):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid book ID format.")
+    guide = await get_reading_guide(book_id=book_id, user_id=current_user_id)
+    if not guide:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reading roadmap not found.")
+
+    item = _find_roadmap_item([i.model_dump() for i in guide.items], card_id)
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Card not found in roadmap.")
+
+    book_data_doc = await get_book(book_id, current_user_id)
+    if not book_data_doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found or not owned by user")
+    book = Book.model_validate(book_data_doc)
+    markdown_file_path = os.path.join(CONTAINER_MARKDOWN_PATH, book.markdown_filename) if CONTAINER_MARKDOWN_PATH else None
+    if not markdown_file_path:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Server configuration error.")
+
+    def read_file_sync(path):
+        if not os.path.exists(path):
+            return None
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+
+    full_markdown = await run_in_threadpool(read_file_sync, markdown_file_path)
+    if not full_markdown:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Markdown content not found.")
+
+    start = int(item.get("start_offset", 0))
+    end = int(item.get("end_offset", min(len(full_markdown), start + 1800)))
+    if end <= start:
+        end = min(len(full_markdown), start + 1800)
+    source_excerpt = full_markdown[max(0, start):min(len(full_markdown), end)]
+    source_word_count = len(source_excerpt.split())
+    outsider_guide = await llm_service.generate_outsider_guide(
+        card_title=item.get("title", "Section"),
+        source_excerpt=source_excerpt,
+    )
+    if not outsider_guide:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Outsider guide generation failed.")
+    outsider_word_count = len(outsider_guide.split())
+
+    items = [i.model_dump() for i in guide.items]
+    _set_roadmap_item_outsider_guide(
+        items,
+        card_id,
+        outsider_guide,
+        source_word_count=source_word_count,
+        outsider_word_count=outsider_word_count,
+    )
+    saved_guide = await upsert_reading_guide(book_id=book_id, user_id=current_user_id, items=items)
+    if not saved_guide:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to persist outsider guide.")
+
+    return {
+        "card_id": card_id,
+        "outsider_guide": outsider_guide,
+        "source_word_count": source_word_count,
+        "outsider_word_count": outsider_word_count,
     }
 
 

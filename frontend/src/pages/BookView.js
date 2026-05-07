@@ -35,6 +35,11 @@ import {
   removePendingCreateBookmark,
 } from '../utils/offlineBookCache';
 import { flushOutbox } from '../utils/outboxSync';
+import {
+  mergeAnnotationsByTimestamp,
+  applyLocalProgressToggle,
+  reconcileGuideProgressState,
+} from '../utils/syncReconciler';
 
 // Virtual "pages" when splitting full markdown for reading (smaller = less text per page, more page numbers).
 const APPROX_CHARS_PER_PAGE = 8000;
@@ -568,6 +573,7 @@ function BookView() {
   const [completedRoadmapIds, setCompletedRoadmapIds] = useState([]);
   const [graphLoadingById, setGraphLoadingById] = useState({});
   const [alternativeLoadingById, setAlternativeLoadingById] = useState({});
+  const [outsiderLoadingById, setOutsiderLoadingById] = useState({});
   const [isGeneratingAllAlternativeReadings, setIsGeneratingAllAlternativeReadings] = useState(false);
 
   const [isOfflineSnapshot, setIsOfflineSnapshot] = useState(false);
@@ -934,11 +940,18 @@ function BookView() {
       });
 
       processedBookmarks.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-      setBookmarks(processedBookmarks);
-      logger.info("Processed and set bookmarks:", processedBookmarks);
       try {
         const ann = await getAnnotations(bookId);
-        await putAnnotations(bookId, { bookmarks: processedBookmarks, notes: ann?.notes || [] });
+        const merged = mergeAnnotationsByTimestamp({
+          localBookmarks: ann?.bookmarks || [],
+          localNotes: ann?.notes || [],
+          serverBookmarks: processedBookmarks,
+          serverNotes: ann?.notes || [],
+        });
+        setBookmarks(merged.bookmarks);
+        setNotes(merged.notes);
+        await putAnnotations(bookId, merged);
+        logger.info("Processed and reconciled bookmarks:", merged.bookmarks);
       } catch (_e) { /* ignore */ }
 
     } catch (err) {
@@ -1100,17 +1113,25 @@ function BookView() {
         }),
       ]);
 
-      let completedIds = [];
+      const localGuide = await getGuide(bookId);
+      let completedIds = localGuide?.completedIds || [];
+      let progressTouchedAt = localGuide?.progressTouchedAt || {};
       if (progressResp.ok) {
         const progressData = await progressResp.json();
-        completedIds = progressData.completed_ids || [];
+        const reconciledProgress = reconcileGuideProgressState({
+          localCompletedIds: localGuide?.completedIds || [],
+          localProgressTouchedAt: localGuide?.progressTouchedAt || {},
+          serverCompletedIds: progressData.completed_ids || [],
+        });
+        completedIds = reconciledProgress.completedIds;
+        progressTouchedAt = reconciledProgress.progressTouchedAt;
       }
       setCompletedRoadmapIds(completedIds);
 
       if (guideResp.ok) {
         const data = await guideResp.json();
         try {
-          await putGuide(bookId, { roadmap: data, completedIds });
+          await putGuide(bookId, { roadmap: data, completedIds, progressTouchedAt });
           await cacheRoadmapGraphImages(bookId, data);
         } catch (_e) { /* ignore */ }
         const hydrated = await hydrateRoadmapWithCachedGraphs(bookId, data, registerBlobUrl);
@@ -1165,19 +1186,46 @@ function BookView() {
         await flushOutbox();
         await refreshOutboxCount();
         if (!bookId || !localStorage.getItem('authToken')) return;
-        fetchBookmarks();
         const token = localStorage.getItem('authToken');
-        const res = await fetch(`/api/notes/${bookId}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (res.ok) {
-          const notesData = await res.json();
-          notesData.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-          setNotes(notesData);
-          try {
+        const [bookmarksRes, notesRes] = await Promise.all([
+          fetch(`/api/bookmarks/book/${bookId}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          }),
+          fetch(`/api/notes/${bookId}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          }),
+        ]);
+        if (bookmarksRes.ok && notesRes.ok) {
+          const [bookmarksData, notesData] = await Promise.all([
+            bookmarksRes.json(),
+            notesRes.json(),
+          ]);
+          const ann = await getAnnotations(bookId);
+          const merged = mergeAnnotationsByTimestamp({
+            localBookmarks: ann?.bookmarks || [],
+            localNotes: ann?.notes || [],
+            serverBookmarks: bookmarksData || [],
+            serverNotes: notesData || [],
+          });
+          setBookmarks(merged.bookmarks);
+          setNotes(merged.notes);
+          await putAnnotations(bookId, merged);
+        } else {
+          if (bookmarksRes.ok) fetchBookmarks();
+          if (notesRes.ok) {
+            const notesData = await notesRes.json();
+            notesData.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
             const ann = await getAnnotations(bookId);
-            await putAnnotations(bookId, { bookmarks: ann?.bookmarks || [], notes: notesData });
-          } catch (_e) { /* ignore */ }
+            const merged = mergeAnnotationsByTimestamp({
+              localBookmarks: ann?.bookmarks || [],
+              localNotes: ann?.notes || [],
+              serverBookmarks: ann?.bookmarks || [],
+              serverNotes: notesData,
+            });
+            setBookmarks(merged.bookmarks);
+            setNotes(merged.notes);
+            await putAnnotations(bookId, merged);
+          }
         }
         if (viewMode === 'guide') {
           fetchReadingRoadmap();
@@ -1259,14 +1307,22 @@ function BookView() {
   const handleToggleRoadmapProgress = async (itemId, completed) => {
     if (!bookId || !itemId) return;
     if (!navigator.onLine || isOfflineSnapshot) {
-      const s = new Set(completedRoadmapIds);
-      if (completed) s.add(itemId); else s.delete(itemId);
-      const nextIds = [...s];
-      setCompletedRoadmapIds(nextIds);
       try {
         const g = await getGuide(bookId);
+        const localProgress = applyLocalProgressToggle({
+          completedIds: completedRoadmapIds,
+          progressTouchedAt: g?.progressTouchedAt || {},
+          itemId,
+          completed,
+        });
+        const nextIds = localProgress.completedIds;
+        setCompletedRoadmapIds(nextIds);
         if (g?.roadmap) {
-          await putGuide(bookId, { roadmap: g.roadmap, completedIds: nextIds });
+          await putGuide(bookId, {
+            roadmap: g.roadmap,
+            completedIds: nextIds,
+            progressTouchedAt: localProgress.progressTouchedAt,
+          });
         }
         await addOutboxEntry({
           type: 'roadmap_progress',
@@ -1292,11 +1348,20 @@ function BookView() {
       });
       if (!response.ok) return;
       const data = await response.json();
-      setCompletedRoadmapIds(data.completed_ids || []);
+      const g = await getGuide(bookId);
+      const reconciledProgress = reconcileGuideProgressState({
+        localCompletedIds: g?.completedIds || [],
+        localProgressTouchedAt: g?.progressTouchedAt || {},
+        serverCompletedIds: data.completed_ids || [],
+      });
+      setCompletedRoadmapIds(reconciledProgress.completedIds);
       try {
-        const g = await getGuide(bookId);
         if (g?.roadmap) {
-          await putGuide(bookId, { roadmap: g.roadmap, completedIds: data.completed_ids || [] });
+          await putGuide(bookId, {
+            roadmap: g.roadmap,
+            completedIds: reconciledProgress.completedIds,
+            progressTouchedAt: reconciledProgress.progressTouchedAt,
+          });
         }
       } catch (_e) { /* ignore */ }
     } catch (err) {
@@ -1427,6 +1492,79 @@ function BookView() {
 
   const handleGenerateAlternativeReading = async (cardId) => {
     await generateAlternativeReadingForCard(cardId, { surfaceError: true });
+  };
+
+  const updateRoadmapOutsiderGuide = useCallback((cardId, data) => {
+    const outsiderGuide = data?.outsider_guide;
+    const sourceWordCount = Number.isFinite(data?.source_word_count) ? data.source_word_count : null;
+    const outsiderWordCount = Number.isFinite(data?.outsider_word_count) ? data.outsider_word_count : null;
+    if (!(typeof outsiderGuide === 'string' && outsiderGuide.trim())) {
+      return false;
+    }
+
+    const setOutsiderGuide = (nodes) => (nodes || []).map((n) => ({
+      ...n,
+      outsider_guide: n.id === cardId ? outsiderGuide : n.outsider_guide,
+      outsider_source_word_count: n.id === cardId ? sourceWordCount : n.outsider_source_word_count,
+      outsider_word_count: n.id === cardId ? outsiderWordCount : n.outsider_word_count,
+      children: setOutsiderGuide(n.children),
+    }));
+
+    setReadingRoadmap((prev) => {
+      if (!prev) return prev;
+      const updated = { ...prev, items: setOutsiderGuide(prev.items) };
+      (async () => {
+        try {
+          const gSnap = await getGuide(bookId);
+          await putGuide(bookId, {
+            roadmap: updated,
+            completedIds: gSnap?.completedIds ?? completedRoadmapIds,
+          });
+        } catch (_e) { /* ignore */ }
+      })();
+      return updated;
+    });
+    return true;
+  }, [bookId, completedRoadmapIds]);
+
+  const generateOutsiderGuideForCard = useCallback(async (cardId, options = {}) => {
+    const { surfaceError = true } = options;
+    if (!bookId || !cardId) return false;
+    if (!navigator.onLine || isOfflineSnapshot) {
+      if (surfaceError) {
+        setGuideError('Outsider Guide generation requires an internet connection.');
+      }
+      return false;
+    }
+
+    setOutsiderLoadingById((prev) => ({ ...prev, [cardId]: true }));
+    try {
+      const token = localStorage.getItem('authToken');
+      if (!token) throw new Error("Authentication token not found.");
+      const response = await fetch(`/api/books/${bookId}/reading-guide/cards/${encodeURIComponent(cardId)}/outsider-guide`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+        throw new Error(errorData.detail || "Failed to generate outsider guide");
+      }
+
+      const data = await response.json();
+      return updateRoadmapOutsiderGuide(cardId, data);
+    } catch (err) {
+      logger.error("[BookView - generateOutsiderGuideForCard] Failed:", err);
+      if (surfaceError) {
+        setGuideError(err.message);
+      }
+      return false;
+    } finally {
+      setOutsiderLoadingById((prev) => ({ ...prev, [cardId]: false }));
+    }
+  }, [bookId, isOfflineSnapshot, updateRoadmapOutsiderGuide]);
+
+  const handleGenerateOutsiderGuide = async (cardId) => {
+    await generateOutsiderGuideForCard(cardId, { surfaceError: true });
   };
 
   const handleGenerateAllAlternativeReadings = async () => {
@@ -1768,10 +1906,17 @@ function BookView() {
         const notesData = await response.json();
         // Sort notes by creation date or another relevant field if needed for consistent highlighting
         notesData.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-        setNotes(notesData);
         try {
           const ann = await getAnnotations(bookId);
-          await putAnnotations(bookId, { bookmarks: ann?.bookmarks || [], notes: notesData });
+          const merged = mergeAnnotationsByTimestamp({
+            localBookmarks: ann?.bookmarks || [],
+            localNotes: ann?.notes || [],
+            serverBookmarks: ann?.bookmarks || [],
+            serverNotes: notesData,
+          });
+          setBookmarks(merged.bookmarks);
+          setNotes(merged.notes);
+          await putAnnotations(bookId, merged);
         } catch (_e) { /* ignore */ }
       } catch (err) {
         logger.error('Error fetching notes:', err);
@@ -3090,6 +3235,8 @@ function BookView() {
           ...bookmarkData,
           id: clientId,
           created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          _localClientId: clientId,
         };
         setBookmarks((prev) => [...prev, localBookmark].sort((a, b) => new Date(a.created_at) - new Date(b.created_at)));
         try {
@@ -3551,6 +3698,8 @@ function BookView() {
                   onGenerateAlternativeReading={handleGenerateAlternativeReading}
                   onGenerateAllAlternativeReadings={handleGenerateAllAlternativeReadings}
                   alternativeLoadingById={alternativeLoadingById}
+                  onGenerateOutsiderGuide={handleGenerateOutsiderGuide}
+                  outsiderLoadingById={outsiderLoadingById}
                   isGeneratingAllAlternativeReadings={isGeneratingAllAlternativeReadings}
                   onSwitchToOriginal={() => {
                     if (guideScrollContainerRef.current) setGuideScrollPositionByPage(prev => ({ ...prev, [currentPage]: guideScrollContainerRef.current.scrollTop }));

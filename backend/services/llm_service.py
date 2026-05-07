@@ -1099,6 +1099,70 @@ Return ONLY valid JSON, no other text."""
             logger.error(f"Alternative reading generation failed: {e}", exc_info=True)
             return None
 
+    async def generate_outsider_guide(
+        self,
+        card_title: str,
+        source_excerpt: str,
+    ) -> Optional[str]:
+        """
+        Generate a beginner-oriented rewrite in the source author's style.
+        Returns plain text or None when generation fails.
+        """
+        if not source_excerpt or not source_excerpt.strip():
+            return None
+
+        client, model_name = self._select_guide_gemini()
+        if not client or not model_name:
+            logger.warning("Outsider guide generation skipped: no guide client available.")
+            return None
+
+        trimmed_source = source_excerpt.strip()
+        source_word_count = len(trimmed_source.split())
+        target_word_count = max(55, int(source_word_count * 0.40))
+        system_prompt = (
+            "You are rewriting your own passage as the original author, but for a reader who is completely new to this topic. "
+            "Write an Outsider Guide that keeps the author's voice, perspective, and core claims, while making the ideas easy for a first-time reader to follow. "
+            "Preserve factual meaning from the source passage. "
+            "Keep the same authorial stance and tone; do not switch to editor or teacher meta voice. "
+            "Assume zero prior topic exposure. "
+            "Explain specialized terms in plain language when needed. "
+            "Prefer concrete, direct wording over abstract shorthand. "
+            "Remove repetition and non-essential detail. "
+            "Do not add facts, examples, or interpretations not supported by the source. "
+            "Output only the final rewritten passage text with no title, bullets, or commentary."
+        )
+        user_prompt = (
+            f"CARD TITLE: {card_title}\n\n"
+            f"SOURCE WORD COUNT: {source_word_count}\n"
+            f"TARGET WORD COUNT (~40%): {target_word_count}\n\n"
+            "SOURCE PASSAGE:\n"
+            f"{trimmed_source}\n\n"
+            "Write an Outsider Guide that is close to the target word count and optimized for fast comprehension by a reader new to this subject. "
+            "Prefer one concise paragraph in 4-8 sentences. "
+            "Return only the rewritten passage text."
+        )
+
+        try:
+            response = await client.aio.models.generate_content(
+                model=model_name,
+                contents=user_prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_prompt,
+                    max_output_tokens=1024,
+                ),
+            )
+            response_text = self._remove_think_tags(response.text if response and response.text else "").strip()
+            if response_text.startswith("```"):
+                first_newline = response_text.find("\n")
+                if first_newline != -1:
+                    response_text = response_text[first_newline + 1:].strip()
+                if response_text.endswith("```"):
+                    response_text = response_text[:-3].strip()
+            return response_text or None
+        except Exception as e:
+            logger.error(f"Outsider guide generation failed: {e}", exc_info=True)
+            return None
+
 
 # Instantiate the service as a singleton
 llm_service = LLMService(

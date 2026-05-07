@@ -44,6 +44,23 @@ export async function flushOutbox() {
           const err = await res.json().catch(() => ({}));
           throw new Error(err.detail || `HTTP ${res.status}`);
         }
+        const saved = await res.json();
+        const ann = await getAnnotations(bookId);
+        if (ann) {
+          let replaced = false;
+          const bookmarks = (ann.bookmarks || []).map((b) => {
+            const bid = b.id || b._id;
+            if (b._localClientId === clientId || bid === clientId) {
+              replaced = true;
+              return { ...saved, id: saved.id || saved._id };
+            }
+            return b;
+          });
+          if (!replaced) {
+            bookmarks.push({ ...saved, id: saved.id || saved._id });
+          }
+          await putAnnotations(bookId, { bookmarks, notes: ann.notes || [] });
+        }
         await removeOutboxEntry(id);
         processed += 1;
       } else if (type === 'delete_bookmark') {

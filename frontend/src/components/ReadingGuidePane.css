@@ -446,6 +446,34 @@
   margin: 0;
 }
 
+.roadmap-outsider-guide {
+  margin-top: 10px;
+  border: 1px solid #e1e7ef;
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: #fcfdff;
+}
+
+.roadmap-outsider-guide summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: #34495e;
+}
+
+.roadmap-outsider-guide-content {
+  margin-top: 8px;
+}
+
+.roadmap-outsider-guide-stats {
+  margin: 0 0 8px 0;
+  font-size: 0.82em;
+  color: #5b6b7a;
+}
+
+.roadmap-outsider-guide-content p {
+  margin: 0;
+}
+
 .roadmap-quote {
   margin: 8px 0;
   padding: 8px 10px;

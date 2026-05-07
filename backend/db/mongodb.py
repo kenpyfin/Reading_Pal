@@ -518,6 +518,11 @@ async def save_note(note_data: dict):
         return None
     # The input note_data dict should contain fields like 'book_id', 'content', etc.
     # MongoDB will automatically add the _id field as an ObjectId upon insertion.
+    # Ensure note timestamps exist so offline/online reconciliation can compare records reliably.
+    now = datetime.utcnow()
+    note_data.setdefault("created_at", now)
+    note_data.setdefault("updated_at", now)
+
     try:
         result = await database.notes.insert_one(note_data)
         # Return the inserted document's _id (which is an ObjectId)
