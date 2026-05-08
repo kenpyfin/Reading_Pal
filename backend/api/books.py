@@ -1475,6 +1475,7 @@ async def generate_whole_book_reading_guide(
         items = [{
             "id": n["id"],
             "title": n["title"],
+            "purpose": None,
             "takeaway": (n.get("snippet") or "")[:500],
             "thought_process": [],
             "reading_summary": (n.get("snippet") or "")[:280],
@@ -1486,8 +1487,8 @@ async def generate_whole_book_reading_guide(
             "children": [],
             "key_term": None,
             "enriched": False,
-            "hub_score": 0,
-            "purpose": None,
+            "hub_score": int(n.get("hub_score", 0)),
+            "key_quote": None,
         } for n in heading_nodes]
     else:
         items = [item.model_dump() for item in roadmap_items]

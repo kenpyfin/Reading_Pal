@@ -29,6 +29,12 @@ Use a reverse-chronological list (newest first). Each entry should be short and 
 
 <!-- New entries go below this comment, newest first. -->
 
+## 2026-05-07 — Multi-Layer Fragment Filtering & Documentation
+
+- **What:** Implemented a four-layer filtering strategy (Hard Heuristics, Metadata Skip-List, LLM Architectural Discard, and Mentor Hallucination Guard) and documented the logic.
+- **Why:** To eliminate "bad" titles (single words like "The", "One") and prevent LLM hallucination of deep meaning for non-substantive layout fragments in poorly parsed PDFs.
+- **Where:** `backend/services/knowledge_mapper.py`, `backend/services/llm_service.py`, `docs/knowledge_mapping.md`
+
 ## 2026-05-07 — Roadmap UI surfaces knowledge hubs and signposts
 
 - **What:** Updated roadmap cards to display `purpose` as a signpost under the title and show a `Knowledge Hub` badge when `hub_score` is positive. Refined card spacing and badge/signpost styling, and avoided duplicate takeaway rendering when it matches the signpost.

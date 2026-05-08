@@ -42,6 +42,31 @@ def test_knowledge_mapper_hub_score_for_internal_references():
     assert items[0].children[0].children[0].hub_score > 0
 
 
+def test_normalize_semantic_segments_preserves_pillars_and_fills_gaps():
+    """Architect path: partial LLM pillars keep semantic grouping; omitted headings get gap segments in order."""
+    mapper = KnowledgeMapper()
+    nodes = [
+        {"id": "km-1", "level": 1, "title": "A", "start_offset": 0, "end_offset": 10, "snippet": "", "hub_score": 0},
+        {"id": "km-2", "level": 1, "title": "B", "start_offset": 10, "end_offset": 20, "snippet": "", "hub_score": 0},
+        {"id": "km-3", "level": 1, "title": "C", "start_offset": 20, "end_offset": 30, "snippet": "", "hub_score": 0},
+    ]
+    raw = [
+        {
+            "id": "p1",
+            "title": "Setup",
+            "is_book_content": True,
+            "source_section_ids": ["km-1", "km-2"],
+            "why": "A and B open the arc.",
+        }
+    ]
+    out = mapper.normalize_semantic_segments(nodes, raw)
+    assert len(out) == 2
+    assert out[0]["source_section_ids"] == ["km-1", "km-2"]
+    assert out[0].get("why") == "A and B open the arc."
+    assert out[1]["id"] == "km-3-arch-gap"
+    assert out[1]["source_section_ids"] == ["km-3"]
+
+
 @pytest.mark.asyncio
 async def test_api_generate_whole_book_reading_guide_returns_items(monkeypatch):
     fake_book_id = ObjectId()

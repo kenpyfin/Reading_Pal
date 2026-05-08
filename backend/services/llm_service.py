@@ -1,5 +1,3 @@
-print("DEBUG: Executing backend/services/llm_service.py module")
-
 import os
 from dotenv import load_dotenv
 import logging
@@ -824,6 +822,183 @@ Return ONLY valid JSON, no other text."""
         if not client or not model_name:
             logger.warning("No guide Gemini client available.")
             return None
+        try:
+            response = await client.aio.models.generate_content(
+                model=model_name,
+                contents=user_prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_prompt,
+                    max_output_tokens=max_output_tokens,
+                ),
+            )
+            response_text = response.text if response and response.text else ""
+            return self._normalize_json_response(response_text)
+        except Exception as e:
+            logger.error(f"_generate_guide_json failed: {e}", exc_info=True)
+            return None
+
+    @staticmethod
+    def _infer_book_title(markdown_text: str) -> str:
+        m = re.search(r"^#\s+(.+)$", markdown_text or "", re.MULTILINE)
+        return (m.group(1).strip() if m else "") or "this book"
+
+    async def _build_semantic_reading_guide_items(
+        self,
+        heading_nodes: List[Dict[str, Any]],
+        book_title: str,
+        full_markdown: str,
+    ) -> List[ReadingGuideItem]:
+        """
+        Two-pass semantic roadmap: LLM clusters headings into pillars, then fills guide fields per pillar.
+        """
+        if not heading_nodes:
+            return []
+
+        id_to_node = {n["id"]: n for n in heading_nodes}
+        section_lines = []
+        for n in heading_nodes:
+            snippet = (n.get("snippet") or "")[:700]
+            section_lines.append(
+                f'[{n["id"]}] level={n.get("level", 1)} title="{n.get("title", "")}"\n'
+                f"snippet: {snippet}"
+            )
+        sections_block = "\n\n".join(section_lines)
+
+        segmentation_system = (
+            "You are the book's structural architect. Your job is to reveal the manuscript's LOGICAL ARCHITECTURE: "
+            "a small set of movements, arcs, or argumentative pillars—how the author builds meaning across the text. "
+            "Each segment is an architectural pillar: name it for the role it plays in the whole (e.g. stakes, turn, synthesis), "
+            "not as a mechanical mirror of headings. "
+            "Group adjacent headings when they jointly advance ONE movement or phase; split when the argument shifts. "
+            "Use headings only as evidence for where movements begin and end—never treat 'chapter breaks' as pillars by default. "
+            "CRITICAL: Discard 'Parse Noise'. If a section contains only a single word, layout fragment, metadata, or boilerplate "
+            "(e.g., 'The', 'One', 'Publisher Info', 'Table of Contents'), mark its 'is_book_content' as false or simply omit its ID from any pillar. "
+            "Do not try to find deep meaning in layout artifacts."
+        )
+        segmentation_user = (
+            f'BOOK: "{book_title}"\n\n'
+            "INPUT SECTIONS (use the exact id strings in brackets in source_section_ids):\n"
+            f"{sections_block}\n\n"
+            "Return JSON only in this shape:\n"
+            '{\n'
+            '  "segments": [\n'
+            '    {\n'
+            '      "id": "pillar1",\n'
+            '      "title": "Short pillar name: the movement\'s function in the book\'s architecture",\n'
+            '      "is_book_content": true,\n'
+            '      "source_section_ids": ["km-1","km-2"],\n'
+            '      "why": "one line: why these sections belong to the same movement / pillar"\n'
+            "    }\n"
+            "  ]\n"
+            "}\n"
+            "Rules: preserve reading order; every substantive section id must appear in exactly one segment; "
+            "prefer fewer, richer pillars over many shallow ones; "
+            "do not merge distant or unrelated ideas; "
+            'anchor titles in the author\'s logic, not the table of contents.'
+        )
+        seg_data = await self._generate_guide_json(segmentation_system, segmentation_user, max_output_tokens=12288)
+        raw_segments = seg_data.get("segments", []) if seg_data else []
+
+        mapper = KnowledgeMapper()
+        valid_segments = mapper.normalize_semantic_segments(heading_nodes, raw_segments)
+
+        cards: List[ReadingGuideItem] = []
+        for idx, seg in enumerate(valid_segments):
+            nodes = [id_to_node[sid] for sid in seg["source_section_ids"] if sid in id_to_node]
+            if not nodes:
+                continue
+            start_offset = min(n["start_offset"] for n in nodes)
+            end_offset = max(n["end_offset"] for n in nodes)
+            hub_total = sum(int(n.get("hub_score", 0)) for n in nodes)
+            source_text = full_markdown[start_offset:end_offset]
+            source_text = source_text[:6000]
+
+            card_system = (
+                "You are an experienced reading mentor sitting beside the reader—warm, clear, and substantive. "
+                "No filler, no generic study-guide boilerplate. Ground every sentence in the SOURCE TEXT. "
+                "You MUST keep two different roles explicit at all times: "
+                "(1) purpose = the signpost: why this stretch of the book matters for the reader's map of the whole work—orientation, stakes, or pivot; "
+                "(2) takeaway = the substance: what the text actually establishes, argues, or unfolds here—claims, developments, payoffs the reader should carry forward. "
+                "Purpose answers 'why read this now'; takeaway answers 'what do I leave with'. "
+                "They may share vocabulary but must not be the same sentence or paraphrase; takeaway should be materially more concrete than purpose. "
+                "If the source text is non-substantive or purely metadata that slipped through filtering, do not hallucinate a deep meaning; "
+                "instead, provide a very brief, honest description or leave the fields empty."
+            )
+            card_user = (
+                f'BOOK: "{book_title}"\n'
+                f'SEGMENT TITLE: "{seg.get("title", f"Segment {idx + 1}")}"\n'
+                f"PILLAR RATIONALE (from segmentation): {seg.get('why', '') or '—'}\n"
+                f"SOURCE TEXT:\n{source_text}\n\n"
+                "Return JSON only:\n"
+                '{\n'
+                '  "title": "refined card title (may match segment title)",\n'
+                '  "purpose": "one signpost sentence in mentor voice: why this segment matters in the arc of the book",\n'
+                '  "takeaway": "2–3 sentences: specific substance—claims, reasoning moves, or developments the passage delivers",\n'
+                '  "reading_summary": "1–2 sentences: how to read this segment—pace, focus, or what to notice (actionable)",\n'
+                '  "reading_bullets": ["short bullet", "short bullet", "short bullet"],\n'
+                '  "thought_process": ["optional reasoning step 1", "step 2"],\n'
+                '  "quote": "verbatim 1–3 sentence quote from source",\n'
+                '  "reference_paragraph": "optional longer excerpt for context"\n'
+                "}\n"
+                "If a field has no good value, use an empty string or []. "
+                "Always fill purpose and takeaway when the source supports it; make them clearly different in role even if themes overlap."
+            )
+
+            card_data = await self._generate_guide_json(card_system, card_user, max_output_tokens=4096)
+            if not card_data:
+                excerpt = (source_text[:260] + "...") if len(source_text) > 260 else source_text
+                card_data = {
+                    "title": seg.get("title", f"Segment {idx + 1}"),
+                    "purpose": "",
+                    "takeaway": excerpt,
+                    "thought_process": [],
+                    "reading_summary": (source_text[:220] + "...") if len(source_text) > 220 else source_text,
+                    "reading_bullets": [],
+                    "quote": "",
+                    "reference_paragraph": source_text[:900],
+                }
+
+            thought_process = card_data.get("thought_process") or []
+            if not isinstance(thought_process, list):
+                thought_process = []
+            thought_process = [str(step).strip() for step in thought_process if str(step).strip()][:5]
+
+            reading_bullets = card_data.get("reading_bullets") or []
+            if not isinstance(reading_bullets, list):
+                reading_bullets = []
+            reading_bullets = [str(b).strip() for b in reading_bullets if str(b).strip()][:8]
+
+            purpose = (card_data.get("purpose") or "").strip() or None
+            takeaway = (card_data.get("takeaway") or card_data.get("key_idea") or "").strip() or None
+
+            reading_summary = (card_data.get("reading_summary") or "").strip() or None
+
+            reference_sentence = self._extract_first_meaningful_sentence(source_text)
+            key_quote = (card_data.get("quote") or "").strip() or reference_sentence or ""
+            preview_text = self._build_reference_preview(source_text, reference_sentence) or key_quote
+
+            title = (card_data.get("title") or "").strip() or seg.get("title") or f"Segment {idx + 1}"
+
+            cards.append(
+                ReadingGuideItem(
+                    id=str(seg.get("id") or f"seg{idx + 1}"),
+                    title=title,
+                    purpose=purpose,
+                    takeaway=takeaway,
+                    thought_process=thought_process or None,
+                    reading_summary=reading_summary,
+                    reading_bullets=reading_bullets or None,
+                    key_quote=key_quote or None,
+                    preview_text=preview_text,
+                    start_offset=start_offset,
+                    end_offset=end_offset,
+                    level=1,
+                    children=[],
+                    hub_score=hub_total,
+                    enriched=True,
+                )
+            )
+        return cards
 
     async def _generate_signposts_for_nodes(self, nodes: List[Dict[str, Any]]) -> Dict[str, str]:
         """Best-effort LLM signpost generation for roadmap nodes."""
@@ -873,27 +1048,27 @@ Return ONLY valid JSON, no other text."""
 
     async def generate_roadmap(self, markdown_text: str) -> List[ReadingGuideItem]:
         """
-        Build a hierarchical roadmap from markdown using KnowledgeMapper as semantic backbone.
+        Build a semantic pillar roadmap: cluster headings with an LLM, then enrich each pillar.
         """
         mapper = KnowledgeMapper()
-        nodes = mapper.extract_knowledge_map(markdown_text or "")
-        if not nodes:
+        md = markdown_text or ""
+        heading_nodes = mapper.flatten_document_sections_for_roadmap(md)
+        if not heading_nodes and md.strip():
+            heading_nodes = [
+                {
+                    "id": "km-fallback",
+                    "level": 1,
+                    "title": "Book content",
+                    "start_offset": 0,
+                    "end_offset": len(md),
+                    "snippet": md[:700],
+                    "hub_score": 0,
+                }
+            ]
+        if not heading_nodes:
             return []
-
-        flat_nodes: List[Dict[str, Any]] = []
-
-        def _collect(current_nodes: List[Dict[str, Any]]) -> None:
-            for current in current_nodes:
-                flat_nodes.append(current)
-                _collect(current.get("children", []))
-
-        _collect(nodes)
-        missing_purpose_nodes = [n for n in flat_nodes if not n.get("purpose")]
-        if missing_purpose_nodes:
-            purposes = await self._generate_signposts_for_nodes(missing_purpose_nodes)
-            mapper.apply_purposes(nodes, purposes)
-
-        return mapper.nodes_to_reading_guide_items(nodes)
+        book_title = self._infer_book_title(md)
+        return await self._build_semantic_reading_guide_items(heading_nodes, book_title, md)
 
     async def generate_whole_book_reading_roadmap(
         self,
@@ -902,153 +1077,11 @@ Return ONLY valid JSON, no other text."""
         full_markdown: str,
     ) -> List[Dict[str, Any]]:
         """
-        Two-pass semantic roadmap generation:
-        1) Segment and filter non-book content.
-        2) Generate a card per semantic segment.
+        Same semantic two-pass pipeline as generate_roadmap, returning plain dicts for callers
+        that do not use ReadingGuideItem directly.
         """
-        if not heading_nodes:
-            return []
-
-        id_to_node = {n["id"]: n for n in heading_nodes}
-        section_lines = []
-        for n in heading_nodes:
-            snippet = (n.get("snippet") or "")[:700]
-            section_lines.append(
-                f'[{n["id"]}] level={n.get("level", 1)} title="{n.get("title", "")}"\n'
-                f"snippet: {snippet}"
-            )
-        sections_block = "\n\n".join(section_lines)
-
-        segmentation_system = (
-            "You are an expert editor. Create semantic segments for a learning roadmap from section outlines. "
-            "Filter out front-matter and non-book-content when appropriate."
-        )
-        segmentation_user = (
-            f'BOOK: "{book_title}"\n\n'
-            "INPUT SECTIONS:\n"
-            f"{sections_block}\n\n"
-            "Return JSON only in this shape:\n"
-            '{\n'
-            '  "segments": [\n'
-            '    {\n'
-            '      "id": "seg1",\n'
-            '      "title": "Semantic concept title",\n'
-            '      "is_book_content": true,\n'
-            '      "source_section_ids": ["s1","s2"],\n'
-            '      "why": "short reason"\n'
-            "    }\n"
-            "  ]\n"
-            "}\n"
-            "Rules: preserve source order, include all substantive sections, avoid tiny segments, avoid oversized segments."
-        )
-        seg_data = await self._generate_guide_json(segmentation_system, segmentation_user, max_output_tokens=12288)
-        raw_segments = seg_data.get("segments", []) if seg_data else []
-
-        valid_segments: List[Dict[str, Any]] = []
-        for i, seg in enumerate(raw_segments):
-            if not isinstance(seg, dict):
-                continue
-            source_ids = [sid for sid in (seg.get("source_section_ids") or []) if sid in id_to_node]
-            if not source_ids:
-                continue
-            if seg.get("is_book_content") is False:
-                continue
-            # Split overly large segments by section count.
-            if len(source_ids) > 8:
-                for j in range(0, len(source_ids), 6):
-                    chunk = source_ids[j:j + 6]
-                    valid_segments.append({
-                        "id": f'{seg.get("id") or f"seg{i+1}"}.p{j//6 + 1}',
-                        "title": seg.get("title") or f"Segment {i + 1}",
-                        "source_section_ids": chunk,
-                    })
-            else:
-                valid_segments.append({
-                    "id": seg.get("id") or f"seg{i + 1}",
-                    "title": seg.get("title") or f"Segment {i + 1}",
-                    "source_section_ids": source_ids,
-                })
-
-        if not valid_segments:
-            # Safe fallback: derive one segment per heading node
-            valid_segments = [
-                {"id": f"seg{i+1}", "title": n.get("title", f"Section {i+1}"), "source_section_ids": [n["id"]]}
-                for i, n in enumerate(heading_nodes)
-            ]
-
-        cards: List[Dict[str, Any]] = []
-        for idx, seg in enumerate(valid_segments):
-            nodes = [id_to_node[sid] for sid in seg["source_section_ids"] if sid in id_to_node]
-            if not nodes:
-                continue
-            start_offset = min(n["start_offset"] for n in nodes)
-            end_offset = max(n["end_offset"] for n in nodes)
-            source_text = full_markdown[start_offset:end_offset]
-            source_text = source_text[:6000]
-
-            card_system = (
-                "You are a close-reading mentor. Generate concise semantic study cards from source text."
-            )
-            card_user = (
-                f'BOOK: "{book_title}"\n'
-                f'SEGMENT TITLE: "{seg.get("title", f"Segment {idx+1}")}"\n'
-                f"SOURCE TEXT:\n{source_text}\n\n"
-                "Return JSON only:\n"
-                '{\n'
-                '  "title": "card title",\n'
-                '  "key_idea": "1-2 sentences",\n'
-                '  "thought_process": ["step 1", "step 2", "step 3"],\n'
-                '  "reading_summary": "1-2 sentence quick absorption for this segment",\n'
-                '  "reading_bullets": ["bullet 1", "bullet 2", "bullet 3"],\n'
-                '  "quote": "verbatim 1-3 sentence quote from source",\n'
-                '  "reference_paragraph": "a fuller 4-8 sentence paragraph-style excerpt from source that contains the quote context"\n'
-                "}\n"
-                "Keep each card substantial but not overloaded."
-            )
-            card_data = await self._generate_guide_json(card_system, card_user, max_output_tokens=4096)
-            if not card_data:
-                card_data = {
-                    "title": seg.get("title", f"Segment {idx + 1}"),
-                    "key_idea": (source_text[:260] + "...") if len(source_text) > 260 else source_text,
-                    "thought_process": [],
-                    "reading_summary": (source_text[:220] + "...") if len(source_text) > 220 else source_text,
-                    "reading_bullets": [],
-                    "quote": "",
-                    "reference_paragraph": source_text[:900],
-                }
-
-            thought_process = card_data.get("thought_process") or []
-            if not isinstance(thought_process, list):
-                thought_process = []
-            thought_process = [str(step).strip() for step in thought_process if str(step).strip()][:5]
-
-            reading_bullets = card_data.get("reading_bullets") or []
-            if not isinstance(reading_bullets, list):
-                reading_bullets = []
-            reading_bullets = [str(step).strip() for step in reading_bullets if str(step).strip()][:5]
-
-            takeaway = card_data.get("key_idea")
-            reference_sentence = self._extract_first_meaningful_sentence(source_text)
-            key_quote = reference_sentence or card_data.get("quote") or ""
-            preview_text = self._build_reference_preview(source_text, reference_sentence) or key_quote
-
-            cards.append({
-                "id": seg.get("id") or f"seg{idx + 1}",
-                "title": card_data.get("title") or seg.get("title") or f"Segment {idx + 1}",
-                "takeaway": takeaway,
-                "thought_process": thought_process,
-                "reading_summary": (card_data.get("reading_summary") or "").strip() or None,
-                "reading_bullets": reading_bullets,
-                "key_quote": key_quote,
-                "preview_text": preview_text,
-                "start_offset": start_offset,
-                "end_offset": end_offset,
-                "level": 1,
-                "children": [],
-                "key_term": None,
-                "enriched": True,
-            })
-        return cards
+        items = await self._build_semantic_reading_guide_items(heading_nodes, book_title, full_markdown)
+        return [item.model_dump() for item in items]
 
     async def generate_graph_image_bytes(
         self,

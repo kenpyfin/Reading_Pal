@@ -16,6 +16,7 @@ Architecture and operations details live in:
 
 - `docs/architecture.md`
 - `docs/operations.md`
+- `docs/knowledge_mapping.md` (Semantic mapping & filtering logic)
 
 ## Core Runtime Model
 

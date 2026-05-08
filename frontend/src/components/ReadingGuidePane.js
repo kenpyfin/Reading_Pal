@@ -67,9 +67,15 @@ function RoadmapCard({
   const hubScore = Number(hubScoreRaw);
   const hasHubScore = Number.isFinite(hubScore) && hubScore > 0;
   const signpost = typeof purpose === 'string' ? purpose.trim() : '';
-  const showTakeaway = item.takeaway && (
-    typeof item.takeaway !== 'string' || item.takeaway.trim() !== signpost
-  );
+  const takeawayRaw = typeof item.takeaway === 'string' ? item.takeaway.trim() : item.takeaway;
+  const takeawayText = takeawayRaw && String(takeawayRaw).trim();
+  const showTakeaway = !!takeawayText;
+  const hasReadingSummary = !!(item.reading_summary && String(item.reading_summary).trim());
+  const hasReadingBullets = Array.isArray(item.reading_bullets) && item.reading_bullets.length > 0;
+  const showThoughtProcess =
+    Array.isArray(item.thought_process) &&
+    item.thought_process.length > 0 &&
+    !String(item.thought_process[0] || '').startsWith('reference::');
 
   useEffect(() => {
     if (mustExpand) setExpanded(true);
@@ -119,24 +125,51 @@ function RoadmapCard({
         </div>
       </div>
 
-      {signpost && <p className="roadmap-signpost">{signpost}</p>}
-
-      {showTakeaway && (
-        <div className="guide-section-content">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.takeaway}</ReactMarkdown>
+      {signpost && (
+        <div className="roadmap-signpost-block">
+          <span className="roadmap-field-label">Signpost</span>
+          <p className="roadmap-signpost">{signpost}</p>
         </div>
       )}
-      {item.reading_summary && (
-        <div className="roadmap-reading">
-          <h5 className="roadmap-subtitle">Reading</h5>
-          <p className="roadmap-reading-summary">{item.reading_summary}</p>
-          {Array.isArray(item.reading_bullets) && item.reading_bullets.length > 0 && (
-            <ul className="roadmap-reading-bullets">
-              {item.reading_bullets.map((bullet, idx) => (
-                <li key={`${item.id}-reading-${idx}`}>{bullet}</li>
-              ))}
-            </ul>
+
+      {(hasReadingSummary || hasReadingBullets) && (
+        <div className="roadmap-reading roadmap-reading-prominent">
+          <h5 className="roadmap-subtitle roadmap-reading-heading">How to read this segment</h5>
+          {hasReadingSummary && (
+            <div className="roadmap-reading-summary-block">
+              <span className="roadmap-field-label">Summary</span>
+              <p className="roadmap-reading-summary">{item.reading_summary}</p>
+            </div>
           )}
+          {hasReadingBullets && (
+            <div className="roadmap-reading-bullets-block">
+              <span className="roadmap-field-label">Quick points</span>
+              <ul className="roadmap-reading-bullets">
+                {item.reading_bullets.map((bullet, idx) => (
+                  <li key={`${item.id}-reading-${idx}`}>{bullet}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
+      {showTakeaway && (
+        <div className="roadmap-takeaway-block guide-section-content">
+          <span className="roadmap-field-label">Takeaway</span>
+          <div className="roadmap-takeaway-body">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.takeaway}</ReactMarkdown>
+          </div>
+        </div>
+      )}
+      {showThoughtProcess && (
+        <div className="roadmap-thought-process">
+          <span className="roadmap-field-label">Follow the thread</span>
+          <ol className="roadmap-thought-steps">
+            {item.thought_process.map((step, idx) => (
+              <li key={`${item.id}-tp-${idx}`}>{step}</li>
+            ))}
+          </ol>
         </div>
       )}
       {typeof item.alternative_reading === 'string' && item.alternative_reading.trim() && (
