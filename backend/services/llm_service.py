@@ -865,14 +865,15 @@ Return ONLY valid JSON, no other text."""
         sections_block = "\n\n".join(section_lines)
 
         segmentation_system = (
-            "You are the book's structural architect. Your job is to reveal the manuscript's LOGICAL ARCHITECTURE: "
-            "a small set of movements, arcs, or argumentative pillars—how the author builds meaning across the text. "
+            "You are the book's structural architect. Your job is to reveal the manuscript's LOGICAL ARCHITECTURE in high fidelity. "
+            "Create a comprehensive, high-resolution set of movements, arcs, or argumentative pillars—capturing the full depth of the book's structure. "
             "Each segment is an architectural pillar: name it for the role it plays in the whole (e.g. stakes, turn, synthesis), "
-            "not as a mechanical mirror of headings. "
-            "Group adjacent headings when they jointly advance ONE movement or phase; split when the argument shifts. "
-            "Use headings only as evidence for where movements begin and end—never treat 'chapter breaks' as pillars by default. "
+            "but prioritize specificity and detail. "
+            "Split pillars whenever a new distinct idea, sub-topic, lesson, or story begins. "
+            "Only group adjacent headings when they are strictly part of the exact same narrow point. "
+            "Headings and chapter breaks are strong signals for pillar boundaries; use them as primary guides unless they are clearly repetitive layout noise (like page numbers or headers/footers). "
             "CRITICAL: Preserve the core narrative and all instructional content. Only discard absolute 'Parse Noise' and 'Boilerplate Fragments' that provide zero value (e.g., page numbers, repetitive author/book names that appear on every page, or ISBN metadata). "
-            "If a section is just a title or header with very little content, MERGE it into the next substantive pillar so that its context is preserved for the reader. "
+            "If a section has very little standalone content, keep it as its own pillar unless it is obvious layout noise (for example repeated headers/footers or page labels). "
             "Do not omit section IDs that contain actual book content, however brief."
         )
         segmentation_user = (
@@ -892,9 +893,10 @@ Return ONLY valid JSON, no other text."""
             "  ]\n"
             "}\n"
             "Rules: preserve reading order; every substantive section id must appear in exactly one segment; "
-            "prefer fewer, richer pillars over many shallow ones; "
-            "do not merge distant or unrelated ideas; "
-            'anchor titles in the author\'s logic, not the table of contents.'
+            "Aim for high granularity—every distinct sub-topic, lesson, or logical movement should be its own pillar. "
+            "Do NOT group independent ideas just to keep the list small. We prefer a long, detailed list of pillars over a condensed one. "
+            "If in doubt, preserve the section as a separate pillar rather than merging it. "
+            'Anchor titles in the author\'s logic, not the table of contents.'
         )
         seg_data = await self._generate_guide_json(segmentation_system, segmentation_user, max_output_tokens=12288)
         raw_segments = seg_data.get("segments", []) if seg_data else []
@@ -918,7 +920,7 @@ Return ONLY valid JSON, no other text."""
                 KnowledgeMapper.is_structural_heading(str(n.get("title") or "")) for n in nodes
             )
             segment_word_count = len(source_text.split())
-            if segment_word_count < 10 and not merged_structural:
+            if segment_word_count < 5 and not merged_structural:
                 logger.info(
                     "Skipping thin non-structural segment: id=%s title=%r words=%s",
                     seg.get("id"),

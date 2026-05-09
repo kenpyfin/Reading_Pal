@@ -147,6 +147,15 @@ class KnowledgeMapper:
             "prologue",
             "epilogue",
             "afterword",
+            "secret",
+            "story",
+            "lesson",
+            "step",
+            "law",
+            "principle",
+            "rule",
+            "conclusion",
+            "summary",
         }
     )
 
@@ -230,13 +239,13 @@ class KnowledgeMapper:
                 if canon and canon in repetitive_canonical:
                     continue
                 # Substance gate: skip very shallow fragments (unless structural)
-                if content_len < 40:
+                if content_len < 20:
                     continue
                 # Skip if title is tiny and content is almost non-existent
-                if (title_len <= 3 and content_len < 20) or (title_len <= 10 and content_len < 5):
+                if (title_len <= 2 and content_len < 10) or (title_len <= 10 and content_len < 3):
                     continue
                 # Skip numeric-only or "Segment X" titles if they have no content
-                if re.match(r"^(Segment|Page|Section)?\s*\d+$", title, re.I) and content_len < 50:
+                if re.match(r"^(Segment|Page|Section)?\s*\d+$", title, re.I) and content_len < 15:
                     continue
 
             low = f"{title}\n{content[:500]}".lower()

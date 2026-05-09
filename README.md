@@ -63,8 +63,10 @@ Default endpoints:
 - Fast reload for changed services:
 
   ```bash
-  ./reload_dev.sh
+  ./redeploy_app.sh
   ```
+
+  This detects changed services from your local edits and latest commit by default.
 
 - Run PDF service standalone (outside Compose) and keep others in Compose:
 
@@ -85,7 +87,8 @@ Default endpoints:
 
 ## Useful Scripts
 
+- `./redeploy_app.sh`: targeted redeploy for changed services (recommended for day-to-day fixes/features)
 - `./reload_dev.sh`: rebuild/restart only affected services
-- `./deploy.sh`: full clean rebuild/recreate workflow (destructive to compose volumes)
+- `./deploy.sh`: full clean rebuild/recreate workflow (volumes preserved unless `--purge-volumes`)
 
 Read `docs/operations.md` before using `deploy.sh` in environments with persistent data expectations.

@@ -80,6 +80,26 @@ When using split mode:
 
 ## Scripts
 
+## `redeploy_app.sh`
+
+Targeted redeploy for normal development iteration and post-pull refresh:
+
+- Detects changed files from:
+  - current git working tree
+  - latest commit (`HEAD~1..HEAD`) by default
+  - custom range via `--since-ref <ref> --until-ref <ref>`
+- Maps changed paths to compose services
+- Runs targeted `docker compose up -d --build --no-deps ...`
+
+Useful options:
+
+- `--service <name>` explicit service selection
+- `--all` all services
+- `--no-build` restart only
+- `--with-deps` include dependencies
+- `--no-last-commit` disable default `HEAD~1..HEAD` detection
+- `--dry-run` show command only
+
 ## `reload_dev.sh`
 
 Fast developer reload:
@@ -100,12 +120,13 @@ Useful options:
 
 Clean rebuild/recreate flow:
 
-1. `docker compose down --remove-orphans --volumes`
-2. `docker builder prune -af`
-3. `docker compose build --no-cache`
-4. `docker compose up --force-recreate`
+1. `docker compose down --remove-orphans` (or `--volumes` only when `--purge-volumes` is provided)
+2. `docker system prune -af` (and `--volumes` only when `--purge-volumes`)
+3. `docker builder prune -af`
+4. `docker compose build --no-cache`
+5. `docker compose up --force-recreate -d`
 
-Caution: this is destructive for compose-managed volumes and should not be used casually in data-sensitive environments.
+Caution: this is a heavy cleanup/rebuild flow and should not be used casually in data-sensitive environments. Only use `--purge-volumes` when explicit volume removal is intended.
 
 ## `start_services.sh` (legacy helper)
 

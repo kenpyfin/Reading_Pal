@@ -29,6 +29,24 @@ Use a reverse-chronological list (newest first). Each entry should be short and 
 
 <!-- New entries go below this comment, newest first. -->
 
+## 2026-05-09 — Added targeted redeploy helper for faster update rollout
+
+- **What:** Added `redeploy_app.sh`, a lightweight redeploy script that rebuilds/restarts only affected Docker Compose services instead of full stack teardown/recreate. Change detection now considers both current working-tree edits and latest commit diff (`HEAD~1..HEAD`) by default, with optional custom ref range flags.
+- **Why:** Development and post-pull refresh workflows needed a faster path than `deploy.sh` while still reliably applying newly developed fixes/features to running services.
+- **Where:** `redeploy_app.sh`, `README.md`, `docs/operations.md`
+- **Notes:** `deploy.sh` remains the clean rebuild path; use `redeploy_app.sh` for normal incremental redeploy.
+
+## 2026-05-08 — Relaxed Roadmap Filtering & Granularity
+
+- **What:** Significantly relaxed "Substance Gate" and "Thin Segment" thresholds and adjusted Architect prompt to increase roadmap granularity.
+    - Reduced `content_len` filter from 40 to 20 chars in `KnowledgeMapper`.
+    - Reduced `segment_word_count` skip threshold from 10 to 5 words in `LLMService`.
+    - Expanded `STRUCTURAL_KEYWORDS` to include "Secret", "Story", "Lesson", "Step", "Law", "Principle", "Rule".
+    - Updated Architect prompt to aim for 10-15 pillars for a book and treat headings as primary signals for boundaries.
+- **Why:** Previous thresholds were too aggressive, causing whole books (like "The One Minute Manager") to generate only 4-6 cards.
+- **Where:** `backend/services/knowledge_mapper.py`, `backend/services/llm_service.py`
+- **Notes:** Balanced to reduce layout noise while preserving narrative detail.
+
 ## 2026-05-08 — Book pane flex chain: internal scroll vs 9000px-tall body
 
 - **What:** Fixed the flex/min-height chain so `.book-pane-body` stays viewport-bounded and scrolls internally (`flex: 1 1 0%`, `min-height: 0` / `min-width: 0` on `main-content-area`, `book-pane-area`, `book-pane-wrapper`, `book-pane-container`, and `book-pane-body`). Removed `height: 100%` + `flexShrink: 0` on `book-pane-area` that let the pane grow to full content height (~9000px) so `scrollTop` on the scroller stayed useless and the scroll-to-top FAB never appeared.
