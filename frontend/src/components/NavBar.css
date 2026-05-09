@@ -3,6 +3,7 @@
     padding: 10px 20px; /* Vertical and horizontal padding */
     color: white; /* White text color */
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); /* Subtle shadow */
+    flex-shrink: 0; /* Keep NavBar from collapsing when App uses column flex */
 }
 
 .navbar-container {

@@ -3,44 +3,50 @@
 .book-view-container {
   display: flex;
   flex-direction: row; /* Ensure horizontal layout */
-  height: 100vh; /* Full viewport height, adjust if you have a global header/navbar */
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%; /* Fill App shell below NavBar; avoid 100vh + NavBar double-scroll */
   width: 100%;
-  overflow: hidden; 
+  overflow: hidden;
 }
 
 /* New styles for the resizable areas */
 .book-pane-area {
   /* flex-basis is set by inline style */
-  /* flex-shrink: 0; is set by inline style */
   /* display: flex; Important for its children to fill it */ /* Flex is now on parent */
   flex-direction: column;
   overflow: hidden; /* Prevent this area from causing scrollbars */
   position: relative; /* If needed for child positioning */
+  min-height: 0; /* Allow nested flex children to shrink so .book-pane-body scrolls internally */
+  min-width: 0;
 }
 
 /* Ensure book pane wrapper fills its parent */
 .book-pane-wrapper {
-  flex-grow: 1;
+  flex: 1 1 0%;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   min-height: 0;
+  min-width: 0;
 }
 
 /* Column: toolbar does not scroll; only .book-pane-body scrolls (reliable vs sticky + overflow:hidden ancestors) */
 .book-pane-container {
-  flex: 1 1 auto;
+  flex: 1 1 0%;
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;
   overflow: hidden;
   padding: 0;
   box-sizing: border-box;
 }
 
 .book-pane-body {
-  flex: 1 1 auto;
+  flex: 1 1 0%;
   min-height: 0;
+  min-width: 0;
   overflow-y: auto;
   overflow-x: hidden;
   padding: 20px;
@@ -876,10 +882,11 @@
 
 .main-content-area {
   /* Styles are applied inline in BookView.js for flex behavior */
-  /* e.g., flex: 1 1 auto; */
   display: flex;
   flex-direction: row; /* BookPane and NotePane side-by-side */
-  height: 100%;
+  flex: 1 1 0%;
+  min-height: 0;
+  min-width: 0;
   overflow: hidden; /* Important to contain children */
 }
 
@@ -1323,4 +1330,55 @@
 .back-to-guide-floating-btn:hover {
   background-color: #0056b3;
   transform: translateY(-2px);
+}
+
+.scroll-to-top-floating-btn {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: 999px;
+  background-color: #212529;
+  color: #fff;
+  font-size: 1.15rem;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  z-index: 20000;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: transform 0.15s ease, background-color 0.2s ease;
+}
+
+.scroll-to-top-floating-btn__icon {
+  display: block;
+  margin-top: -1px;
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
+.scroll-to-top-floating-btn:hover {
+  background-color: #111418;
+  transform: translateY(-2px);
+}
+
+.scroll-to-top-floating-btn.with-back-guide-btn {
+  bottom: 86px;
+}
+
+@media (max-width: 768px) {
+  .scroll-to-top-floating-btn {
+    right: 16px;
+    bottom: 16px;
+    width: 40px;
+    height: 40px;
+  }
+
+  .scroll-to-top-floating-btn.with-back-guide-btn {
+    bottom: 76px;
+  }
 }

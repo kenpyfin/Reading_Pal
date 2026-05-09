@@ -1468,10 +1468,13 @@ async def generate_whole_book_reading_guide(
 
     roadmap_items = await llm_service.generate_roadmap(full_markdown)
     if not roadmap_items:
-        heading_nodes = _extract_whole_book_heading_nodes(full_markdown)
+        # deterministic fallback using the refined KnowledgeMapper logic
+        from backend.services.knowledge_mapper import KnowledgeMapper
+        mapper = KnowledgeMapper()
+        heading_nodes = mapper.flatten_document_sections_for_roadmap(full_markdown)
         if not heading_nodes:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No valid book content sections found.")
-        # deterministic fallback
+        
         items = [{
             "id": n["id"],
             "title": n["title"],

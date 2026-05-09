@@ -109,41 +109,134 @@ class KnowledgeMapper:
         "isbn",
         "published by",
         "table of contents",
+        "contents",
         "title page",
         "about the author",
         "praise for",
         "also by",
+        "dedication",
+        "acknowledgements",
+        "acknowledgments",
+        "bibliography",
+        "works cited",
+        "list of figures",
+        "list of tables",
+        "list of illustrations",
+        "notes",
+        "endnotes",
+        "footnotes",
+        "publisher",
+        "imprint",
+        "printed in",
+        "first edition",
     )
+
+    # Substance gate + LLM thin-segment checks: keep in sync with flatten_document_sections_for_roadmap.
+    STRUCTURAL_KEYWORDS = frozenset(
+        {
+            "chapter",
+            "part",
+            "section",
+            "book",
+            "volume",
+            "preface",
+            "introduction",
+            "foreword",
+            "appendix",
+            "index",
+            "prologue",
+            "epilogue",
+            "afterword",
+        }
+    )
+
+    _trailing_page_indicator_re = re.compile(
+        r"(?i)\s+(page|pg\.?|p\.)\s*\d+(\s*[-–]\s*\d+)?\s*$"
+    )
+    _trailing_segment_label_re = re.compile(
+        r"(?i)\s+(segment|section|sect\.?|ch\.?|chapter)\s+\d+\s*$"
+    )
+    _trailing_digits_re = re.compile(r"\s+\d+\s*$")
+
+    @classmethod
+    def _canonical_title_for_frequency(cls, title: str) -> str:
+        """
+        Normalize headings so repeated page headers/footers and numbered variants
+        (e.g. 'Segment 12', 'Chapter 3') bucket together for repetition detection.
+        """
+        t = " ".join((title or "").split()).strip()
+        if not t:
+            return ""
+        t = cls._trailing_page_indicator_re.sub("", t)
+        t = cls._trailing_segment_label_re.sub("", t)
+        t = cls._trailing_digits_re.sub("", t)
+        t = " ".join(t.split()).strip()
+        return t.casefold()
+
+    @classmethod
+    def is_structural_heading(cls, title: str) -> bool:
+        """True if the heading looks like real document structure (chapter, part, …)."""
+        t = (title or "").strip()
+        if not t:
+            return False
+        if re.match(r"^[IVXLCDM\d\.]+$", t):
+            return True
+        tokens = set(re.findall(r"[a-z]+", t.lower()))
+        return bool(tokens & cls.STRUCTURAL_KEYWORDS)
 
     def flatten_document_sections_for_roadmap(self, markdown_text: str) -> List[Dict[str, Any]]:
         """
         Flat heading-aligned sections in reading order for semantic segmentation.
         Skips common front-matter / boilerplate blocks using the same heuristic as the API.
-        Also filters out non-substantive fragments (very short titles with minimal content).
+        Also filters out non-substantive fragments (very short titles with minimal content)
+        and repetitive layout artifacts (page headers/footers).
         """
         roots = self.extract_knowledge_map(markdown_text or "")
         if not roots:
             return []
         flat = self._flatten_nodes(roots)
+
+        # Frequency analysis: identify repetitive titles (likely page headers/footers)
+        title_counts: Dict[str, int] = {}
+        for node in flat:
+            title = str(node.get("title", "")).strip()
+            if not title:
+                continue
+            key = self._canonical_title_for_frequency(title)
+            if not key:
+                continue
+            title_counts[key] = title_counts.get(key, 0) + 1
+
+        repetitive_canonical = {k for k, c in title_counts.items() if c > 3}
+
         out: List[Dict[str, Any]] = []
         for node in flat:
             start = int(node["start_offset"])
             end = int(node["end_offset"])
             title = str(node.get("title", "")).strip()
             content = (markdown_text or "")[start:end]
-            
+
             # Substantive check: Skip if title is tiny/fragmented and content is effectively empty
             # (e.g. single words like "The", "One", "A" that are often layout artifacts)
             # But keep structural headings (Chapter 1, Preface, etc.) even if they have no direct content.
-            clean_content = re.sub(r"[#\s*_\-\[\]\(\)]+", "", content[len(title)+1:])
+            clean_content = re.sub(r"[#\s*_\-\[\]\(\)]+", "", content[len(title) + 1 :])
             title_len = len(title)
             content_len = len(clean_content)
-            
-            structural_keywords = {"chapter", "part", "section", "book", "volume", "preface", "introduction", "foreword", "appendix", "index"}
-            is_structural = any(k in title.lower() for k in structural_keywords) or re.match(r"^[IVXLCDM\d\.]+$", title)
-            
+
+            is_structural = self.is_structural_heading(title)
+
             if not is_structural:
-                if (title_len <= 3 and content_len < 50) or (title_len <= 10 and content_len < 10):
+                canon = self._canonical_title_for_frequency(title)
+                if canon and canon in repetitive_canonical:
+                    continue
+                # Substance gate: skip very shallow fragments (unless structural)
+                if content_len < 40:
+                    continue
+                # Skip if title is tiny and content is almost non-existent
+                if (title_len <= 3 and content_len < 20) or (title_len <= 10 and content_len < 5):
+                    continue
+                # Skip numeric-only or "Segment X" titles if they have no content
+                if re.match(r"^(Segment|Page|Section)?\s*\d+$", title, re.I) and content_len < 50:
                     continue
 
             low = f"{title}\n{content[:500]}".lower()
@@ -187,6 +280,7 @@ class KnowledgeMapper:
             ]
 
         valid_segments: List[Dict[str, Any]] = []
+        rejected_ids = set()
         for i, seg in enumerate(raw_segments):
             if not isinstance(seg, dict):
                 continue
@@ -194,6 +288,7 @@ class KnowledgeMapper:
             if not source_ids:
                 continue
             if seg.get("is_book_content") is False:
+                rejected_ids.update(source_ids)
                 continue
             base_id = seg.get("id") or f"seg{i + 1}"
             base_title = seg.get("title") or f"Segment {i + 1}"
@@ -244,7 +339,7 @@ class KnowledgeMapper:
         gap_segments: List[Dict[str, Any]] = []
         for n in heading_nodes:
             nid = n["id"]
-            if nid in used_ids:
+            if nid in used_ids or nid in rejected_ids:
                 continue
             gap_segments.append(
                 {

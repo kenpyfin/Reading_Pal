@@ -871,9 +871,9 @@ Return ONLY valid JSON, no other text."""
             "not as a mechanical mirror of headings. "
             "Group adjacent headings when they jointly advance ONE movement or phase; split when the argument shifts. "
             "Use headings only as evidence for where movements begin and end—never treat 'chapter breaks' as pillars by default. "
-            "CRITICAL: Discard 'Parse Noise'. If a section contains only a single word, layout fragment, metadata, or boilerplate "
-            "(e.g., 'The', 'One', 'Publisher Info', 'Table of Contents'), mark its 'is_book_content' as false or simply omit its ID from any pillar. "
-            "Do not try to find deep meaning in layout artifacts."
+            "CRITICAL: Preserve the core narrative and all instructional content. Only discard absolute 'Parse Noise' and 'Boilerplate Fragments' that provide zero value (e.g., page numbers, repetitive author/book names that appear on every page, or ISBN metadata). "
+            "If a section is just a title or header with very little content, MERGE it into the next substantive pillar so that its context is preserved for the reader. "
+            "Do not omit section IDs that contain actual book content, however brief."
         )
         segmentation_user = (
             f'BOOK: "{book_title}"\n\n'
@@ -911,7 +911,21 @@ Return ONLY valid JSON, no other text."""
             end_offset = max(n["end_offset"] for n in nodes)
             hub_total = sum(int(n.get("hub_score", 0)) for n in nodes)
             source_text = full_markdown[start_offset:end_offset]
-            source_text = source_text[:6000]
+            source_text = source_text[:10000]
+
+            seg_title = str(seg.get("title") or "")
+            merged_structural = KnowledgeMapper.is_structural_heading(seg_title) or any(
+                KnowledgeMapper.is_structural_heading(str(n.get("title") or "")) for n in nodes
+            )
+            segment_word_count = len(source_text.split())
+            if segment_word_count < 10 and not merged_structural:
+                logger.info(
+                    "Skipping thin non-structural segment: id=%s title=%r words=%s",
+                    seg.get("id"),
+                    (seg_title[:120] + "...") if len(seg_title) > 120 else seg_title,
+                    segment_word_count,
+                )
+                continue
 
             card_system = (
                 "You are an experienced reading mentor sitting beside the reader—warm, clear, and substantive. "
@@ -920,9 +934,13 @@ Return ONLY valid JSON, no other text."""
                 "(1) purpose = the signpost: why this stretch of the book matters for the reader's map of the whole work—orientation, stakes, or pivot; "
                 "(2) takeaway = the substance: what the text actually establishes, argues, or unfolds here—claims, developments, payoffs the reader should carry forward. "
                 "Purpose answers 'why read this now'; takeaway answers 'what do I leave with'. "
-                "They may share vocabulary but must not be the same sentence or paraphrase; takeaway should be materially more concrete than purpose. "
+                "Takeaway must be DETAILED and SUBSTANTIVE (3-5 sentences). Cite specific concepts, steps, or evidence found in the text. "
+                "Avoid generic summaries. If the author gives 3 rules, mention the rules. If they tell a story, mention the lesson. "
+                "Takeaway should be materially more concrete than purpose. "
                 "If the source text is non-substantive or purely metadata that slipped through filtering, do not hallucinate a deep meaning; "
-                "instead, provide a very brief, honest description or leave the fields empty."
+                "instead, provide a very brief, honest description or leave the fields empty. "
+                "If you find yourself repeating the same general advice for multiple thin segments, stop. "
+                "Only provide a takeaway if the text offers specific, new information."
             )
             card_user = (
                 f'BOOK: "{book_title}"\n'
@@ -933,9 +951,9 @@ Return ONLY valid JSON, no other text."""
                 '{\n'
                 '  "title": "refined card title (may match segment title)",\n'
                 '  "purpose": "one signpost sentence in mentor voice: why this segment matters in the arc of the book",\n'
-                '  "takeaway": "2–3 sentences: specific substance—claims, reasoning moves, or developments the passage delivers",\n'
+                '  "takeaway": "3–5 detailed sentences: the specific substance—detailed claims, reasoning moves, or developments the passage delivers. Be concrete.",\n'
                 '  "reading_summary": "1–2 sentences: how to read this segment—pace, focus, or what to notice (actionable)",\n'
-                '  "reading_bullets": ["short bullet", "short bullet", "short bullet"],\n'
+                '  "reading_bullets": ["specific bullet 1", "specific bullet 2", "specific bullet 3", "specific bullet 4", "specific bullet 5"],\n'
                 '  "thought_process": ["optional reasoning step 1", "step 2"],\n'
                 '  "quote": "verbatim 1–3 sentence quote from source",\n'
                 '  "reference_paragraph": "optional longer excerpt for context"\n'
@@ -1147,7 +1165,13 @@ Return ONLY valid JSON, no other text."""
 
         trimmed_source = source_excerpt.strip()
         source_word_count = len(trimmed_source.split())
-        target_word_count = max(45, int(source_word_count * 0.30))
+        if source_word_count < 50:
+            logger.info(
+                "Author shortcut skipped: source excerpt too short (%s words).",
+                source_word_count,
+            )
+            return None
+        target_word_count = int(source_word_count * 0.30)
         system_prompt = (
             "You are rewriting your own passage as the original author. "
             "Produce an Author Shortcut that is about 30% of the source passage length while preserving the same claims, perspective, and tone. "
@@ -1206,7 +1230,13 @@ Return ONLY valid JSON, no other text."""
 
         trimmed_source = source_excerpt.strip()
         source_word_count = len(trimmed_source.split())
-        target_word_count = max(55, int(source_word_count * 0.40))
+        if source_word_count < 50:
+            logger.info(
+                "Outsider guide skipped: source excerpt too short (%s words).",
+                source_word_count,
+            )
+            return None
+        target_word_count = int(source_word_count * 0.40)
         system_prompt = (
             "You are rewriting your own passage as the original author, but for a reader who is completely new to this topic. "
             "Write an Outsider Guide that keeps the author's voice, perspective, and core claims, while making the ideas easy for a first-time reader to follow. "

@@ -29,6 +29,31 @@ Use a reverse-chronological list (newest first). Each entry should be short and 
 
 <!-- New entries go below this comment, newest first. -->
 
+## 2026-05-08 — Book pane flex chain: internal scroll vs 9000px-tall body
+
+- **What:** Fixed the flex/min-height chain so `.book-pane-body` stays viewport-bounded and scrolls internally (`flex: 1 1 0%`, `min-height: 0` / `min-width: 0` on `main-content-area`, `book-pane-area`, `book-pane-wrapper`, `book-pane-container`, and `book-pane-body`). Removed `height: 100%` + `flexShrink: 0` on `book-pane-area` that let the pane grow to full content height (~9000px) so `scrollTop` on the scroller stayed useless and the scroll-to-top FAB never appeared.
+- **Why:** User devtools showed `.book-pane-body` with height equal to full page text; the floating button tracks scroll containers—if the “scroller” is the document or the element never gets a bounded height, the control stays hidden and reading feels broken.
+- **Where:** `frontend/src/pages/BookView.js`, `frontend/src/pages/BookView.css`
+
+## 2026-05-08 — App shell height + window scroll for scroll-to-top FAB
+
+- **What:** Gave authenticated routes a flex column shell (`html`/`body`/`#root` height chain, `.App` + `.app-content-shell`, NavBar `flex-shrink: 0`) so Book View fills the area below the NavBar instead of using `height: 100vh` on the book root (which stacked under the bar and caused document scrolling). Removed duplicate `100vh` `.book-view-container` rule from `index.css`, set `.book-view-container` to `height: 100%` + flex growth in `BookView.css`, and wired the FAB to `window` scroll/resize plus `window.scrollTo` on click. FAB `z-index` raised so it stays above incidental overlays.
+- **Why:** Users were scrolling the **window** while inner pane `scrollTop` stayed 0, so the FAB never met its visibility condition and appeared “missing” in both guide and original modes.
+- **Where:** `frontend/src/index.css`, `frontend/src/App.js`, `frontend/src/components/NavBar.css`, `frontend/src/pages/BookView.js`, `frontend/src/pages/BookView.css`
+
+## 2026-05-08 — Scroll-to-top FAB visibility and scroll-source unification
+
+- **What:** Unified Book View scroll-source handling so the floating scroll-to-top button uses effective scroll state across both outer (`.book-pane-body`) and guide inner (`.reading-guide-content`) containers. Simplified reveal behavior to a predictable low threshold and updated scroll-dependent flows (initial restore, debounced reading-position save, bookmark save/jump) to use the same active container logic by mode.
+- **Why:** The button could remain hidden when users were scrolling a different active container than the one being measured, especially in guide/original transitions and low-overflow scenarios.
+- **Where:** `frontend/src/pages/BookView.js`, `frontend/src/components/ReadingGuidePane.css`
+
+## 2026-05-08 — Book view floating scroll-to-top button
+
+- **What:** Added a floating scroll-to-top button in Book View that appears after the user scrolls down in either Guide or Original mode, scrolls the active pane back to the top, and repositions when the Back-to-Guide floating button is visible.
+- **Why:** Readers need a quick, always-visible way to return to the top without manually dragging through long content pages.
+- **Where:** `frontend/src/pages/BookView.js`, `frontend/src/pages/BookView.css`, `frontend/src/components/ReadingGuidePane.css`
+- **Notes:** Portals to `document.body`, `useLayoutEffect` + retries + `ResizeObserver`. **Bugfix:** Guide mode had been listening only on `.reading-guide-content`, but without `min-height: 0` the flex child grew with content so the **outer** `.book-pane-body` actually scrolled and the inner ref never moved—visibility now considers both scrollers; `.reading-guide-content` gets `min-height: 0` so inner scrolling works as intended.
+
 ## 2026-05-07 — Multi-Layer Fragment Filtering & Documentation
 
 - **What:** Implemented a four-layer filtering strategy (Hard Heuristics, Metadata Skip-List, LLM Architectural Discard, and Mentor Hallucination Guard) and documented the logic.

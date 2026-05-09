@@ -109,6 +109,7 @@
   padding: 15px;
   overflow-y: auto; /* Allow content to scroll */
   flex-grow: 1; /* Content area takes remaining space */
+  min-height: 0; /* Let flex item shrink so overflow-y applies here; otherwise the outer book pane scrolls only */
   font-size: 0.9em; /* Adjust base font size for guide content */
   line-height: 1.5;
 }

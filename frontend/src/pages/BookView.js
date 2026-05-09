@@ -46,6 +46,8 @@ const APPROX_CHARS_PER_PAGE = 8000;
 
 const BOOK_CONTROLS_EXPANDED_KEY = 'readingPal_bookControlsExpanded';
 const FLOATING_TOOLBAR_TOP_PX = 80;
+/** Show floating control after scrolling this many px (inner scroll container). */
+const SCROLL_TOP_REVEAL_PX = 16;
 
 function readStoredBookControlsExpanded() {
   if (typeof window === 'undefined') return true;
@@ -545,6 +547,7 @@ function BookView() {
 
   // Show floating "Back to Reading Guide" when user navigated from guide via "View in original text"
   const [showBackToGuide, setShowBackToGuide] = useState(false);
+  const [showScrollToTopButton, setShowScrollToTopButton] = useState(false);
   const navigatingFromGuideTextLinkRef = useRef(false);
   // Roadmap card id to scroll back to after "View in original text" → "Back to Reading Guide"
   const [guideReturnItemId, setGuideReturnItemId] = useState(null);
@@ -563,6 +566,69 @@ function BookView() {
   const bookPaneScrollEpochRef = useRef(0);
   // Remember book (original) pane scroll per page when switching to guide so we can restore when switching back
   const [bookScrollPositionByPage, setBookScrollPositionByPage] = useState({});
+
+  const getTrackedScrollContainers = useCallback(() => {
+    const outer = bookPaneContainerRef.current;
+    const inner = viewMode === 'guide' ? guideScrollContainerRef.current : null;
+    const containers = [...new Set([outer, inner].filter(Boolean))];
+    return { outer, inner, containers };
+  }, [viewMode]);
+
+  const getEffectiveScrollState = useCallback(() => {
+    const { outer, inner, containers } = getTrackedScrollContainers();
+    if (containers.length === 0) {
+      return null;
+    }
+    const top = Math.max(...containers.map((el) => el.scrollTop || 0));
+    const maxScroll = Math.max(
+      ...containers.map((el) => Math.max(0, (el.scrollHeight || 0) - (el.clientHeight || 0))),
+    );
+    const active =
+      viewMode === 'guide'
+        ? (inner && inner.scrollHeight > inner.clientHeight ? inner : (outer || inner))
+        : outer;
+    return { top, maxScroll, active, containers };
+  }, [getTrackedScrollContainers, viewMode]);
+
+  const updateScrollToTopVisibility = useCallback(() => {
+    const state = getEffectiveScrollState();
+    const winY =
+      typeof window !== 'undefined'
+        ? window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0
+        : 0;
+    const winMax =
+      typeof window !== 'undefined'
+        ? Math.max(
+            0,
+            Math.max(
+              document.documentElement.scrollHeight,
+              document.body.scrollHeight,
+            ) - window.innerHeight,
+          )
+        : 0;
+    const top = Math.max(state?.top ?? 0, winY);
+    const maxScroll = Math.max(state?.maxScroll ?? 0, winMax);
+    if (!state && maxScroll <= 0) {
+      setShowScrollToTopButton(false);
+      return;
+    }
+    setShowScrollToTopButton(maxScroll > 0 && top > SCROLL_TOP_REVEAL_PX);
+  }, [getEffectiveScrollState]);
+
+  const handleScrollToTop = useCallback(() => {
+    const prefersReducedMotion =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const behavior = prefersReducedMotion ? 'auto' : 'smooth';
+    const state = getEffectiveScrollState();
+    if (state) {
+      state.containers.forEach((el) => el.scrollTo({ top: 0, behavior }));
+    }
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior });
+    }
+  }, [getEffectiveScrollState]);
 
   // Whole-book reading roadmap state
   const [readingRoadmap, setReadingRoadmap] = useState(null);
@@ -2290,17 +2356,18 @@ function BookView() {
 
   // Effect to apply initial scroll once content is ready
   useEffect(() => {
-    if (initialScrollTop !== null && bookPaneContainerRef.current && highlightedPageContent) {
+    const state = getEffectiveScrollState();
+    if (initialScrollTop !== null && state?.active && highlightedPageContent) {
       logger.info(`[BookView - InitialScrollEffect] Applying initial scroll top: ${initialScrollTop}`);
       isProgrammaticScroll.current = true;
-      bookPaneContainerRef.current.scrollTop = initialScrollTop;
+      state.active.scrollTop = initialScrollTop;
       setInitialScrollTop(null); // Clear after applying
       setTimeout(() => {
         isProgrammaticScroll.current = false;
         logger.debug("[BookView - InitialScrollEffect] Reset isProgrammaticScroll after initial scroll.");
       }, 150); // Delay to allow scroll to settle and prevent immediate sync issues
     }
-  }, [initialScrollTop, highlightedPageContent]); // Depends on highlightedPageContent to ensure page is rendered
+  }, [initialScrollTop, highlightedPageContent, getEffectiveScrollState]); // Depends on highlightedPageContent to ensure page is rendered
 
   useEffect(() => {
     setPageInput(String(currentPage));
@@ -3022,6 +3089,9 @@ function BookView() {
     // This effect applies scrolling when a pendingScrollToPercentage is set,
     // typically after a page change initiated by selecting a bookmark.
     // It waits for currentPageContent to be updated, indicating the new page is rendered.
+    if (viewMode !== 'original') {
+      return undefined;
+    }
     if (pendingScrollToPercentage !== null && bookPaneContainerRef.current && (currentPageContent.length > 0 || pendingScrollToPercentage === 0) ) {
       const element = bookPaneContainerRef.current;
       logger.info(`[BookView - PendingScrollPercentageEffect] Applying scroll to percentage: ${pendingScrollToPercentage} on page ${currentPage}`);
@@ -3053,7 +3123,7 @@ function BookView() {
     } else if (pendingScrollToPercentage !== null) {
       logger.debug(`[BookView - PendingScrollPercentageEffect] Conditions not met for scroll: pendingScrollToPercentage=${pendingScrollToPercentage}, bookPaneContainerRef.current=${!!bookPaneContainerRef.current}, currentPageContent.length=${currentPageContent.length}`);
     }
-  }, [currentPageContent, pendingScrollToPercentage, currentPage]); // Dependencies remain the same
+  }, [currentPageContent, pendingScrollToPercentage, currentPage, viewMode]); // Dependencies remain the same
 
   // Debounced function to save reading position (primarily for scroll)
   const debouncedSaveReadingPosition = useCallback(
@@ -3069,11 +3139,13 @@ function BookView() {
 
   // Effect to save reading position on scroll and page change
   useEffect(() => {
-    const bookElement = bookPaneContainerRef.current;
+    const tracked = getEffectiveScrollState();
+    const trackedElements = tracked?.containers || [];
 
     const handleScroll = () => {
-      if (bookElement && !isProgrammaticScroll.current && bookId) {
-        debouncedSaveReadingPosition(bookId, currentPage, bookElement.scrollTop);
+      const state = getEffectiveScrollState();
+      if (state?.active && !isProgrammaticScroll.current && bookId) {
+        debouncedSaveReadingPosition(bookId, currentPage, state.active.scrollTop);
       }
     };
 
@@ -3090,17 +3162,13 @@ function BookView() {
       }
     }
 
-    if (bookElement) {
-      bookElement.addEventListener('scroll', handleScroll);
-    }
+    trackedElements.forEach((el) => el.addEventListener('scroll', handleScroll, { passive: true }));
 
     return () => {
-      if (bookElement) {
-        bookElement.removeEventListener('scroll', handleScroll);
-      }
+      trackedElements.forEach((el) => el.removeEventListener('scroll', handleScroll));
       debouncedSaveReadingPosition.cancel();
     };
-  }, [bookId, currentPage, debouncedSaveReadingPosition]);
+  }, [bookId, currentPage, debouncedSaveReadingPosition, getEffectiveScrollState, viewMode, readingRoadmap]);
 
 
   const handleBookmarkSelect = (event) => {
@@ -3140,12 +3208,16 @@ function BookView() {
         } else {
           setPendingScrollToPercentage(0);
         }
+        if (viewMode !== 'original') {
+          setViewMode('original');
+        }
         setCurrentPage(selectedBookmark.page_number);
         refreshImageUrls(); // Refresh signed URLs when page changes
       } else {
         logger.debug(`[BookView - handleBookmarkSelect] Already on target page ${currentPage}. Scrolling directly.`);
-        if (bookPaneContainerRef.current) {
-          const element = bookPaneContainerRef.current;
+        const state = getEffectiveScrollState();
+        if (state?.active) {
+          const element = state.active;
           const targetScroll = selectedBookmark.scroll_percentage !== null && selectedBookmark.scroll_percentage !== undefined ? selectedBookmark.scroll_percentage : 0;
           if (element.scrollHeight > element.clientHeight) {
             element.scrollTop = targetScroll * (element.scrollHeight - element.clientHeight);
@@ -3154,7 +3226,7 @@ function BookView() {
           }
           logger.debug(`[BookView - handleBookmarkSelect] Scrolled directly. Target scroll percentage: ${targetScroll}`);
         } else {
-          logger.warn("[BookView - handleBookmarkSelect] bookPaneContainerRef.current is null. Cannot scroll directly.");
+          logger.warn("[BookView - handleBookmarkSelect] No active scroll container. Cannot scroll directly.");
         }
         setTimeout(() => { isProgrammaticScroll.current = false; }, 100);
       }
@@ -3202,8 +3274,9 @@ function BookView() {
     setBookmarkError(null); // Clear error if any
 
     let currentScrollPercentage = 0; // Default to 0
-    if (bookPaneContainerRef.current) {
-      const { scrollTop, scrollHeight, clientHeight } = bookPaneContainerRef.current;
+    const state = getEffectiveScrollState();
+    if (state?.active) {
+      const { scrollTop, scrollHeight, clientHeight } = state.active;
       if (scrollHeight > clientHeight) { // Avoid division by zero if not scrollable
         currentScrollPercentage = scrollTop / (scrollHeight - clientHeight); // Value between 0.0 and 1.0
       } else if (scrollHeight === clientHeight && scrollHeight > 0) { // Content fits perfectly or is empty but scrollable
@@ -3410,6 +3483,61 @@ function BookView() {
     setBookControlsExpandedPersist(true);
   }, [setBookControlsExpandedPersist]);
 
+  useLayoutEffect(() => {
+    let cancelled = false;
+    let rafId = 0;
+    let teardown = () => {};
+
+    const bind = () => {
+      const onScroll = () => updateScrollToTopVisibility();
+      window.addEventListener('scroll', onScroll, { passive: true });
+      window.addEventListener('resize', onScroll);
+
+      const { containers: panes } = getTrackedScrollContainers();
+      panes.forEach((p) => p.addEventListener('scroll', onScroll, { passive: true }));
+      const ros = panes.map((p) => {
+        const ro = new ResizeObserver(onScroll);
+        ro.observe(p);
+        return ro;
+      });
+      onScroll();
+
+      teardown = () => {
+        panes.forEach((p) => p.removeEventListener('scroll', onScroll));
+        window.removeEventListener('scroll', onScroll);
+        window.removeEventListener('resize', onScroll);
+        ros.forEach((ro) => ro.disconnect());
+      };
+      return panes.length > 0;
+    };
+
+    const attempt = (attemptsLeft) => {
+      if (cancelled) return;
+      teardown();
+      teardown = () => {};
+      const ok = bind();
+      if (!ok && attemptsLeft > 0) {
+        rafId = requestAnimationFrame(() => attempt(attemptsLeft - 1));
+      }
+    };
+
+    attempt(viewMode === 'guide' ? 40 : 12);
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(rafId);
+      teardown();
+    };
+  }, [
+    viewMode,
+    currentPage,
+    readingRoadmap,
+    guideLoading,
+    highlightedPageContent,
+    getTrackedScrollContainers,
+    updateScrollToTopVisibility,
+  ]);
+
   if (loading) return <div style={{ padding: '20px' }}>Loading book...</div>;
   if (error) return <div style={{ padding: '20px', color: 'red' }}>Error loading book: {error}</div>;
   if (!bookData) {
@@ -3460,8 +3588,10 @@ function BookView() {
         display: 'flex',
         flexDirection: 'column',
         justifyContent: 'flex-start',
+        flex: '1 1 0%',
         height: '100%',
         minHeight: 0,
+        overflow: 'hidden',
       }}
     >
       {serverOffline && (
@@ -3489,13 +3619,12 @@ function BookView() {
         className="main-content-area"
         ref={mainContentAreaRef} // Ref for the resizer context
         style={{
-          flex: '1 1 auto',
+          flex: '1 1 0%',
           flexDirection: isMobileView ? 'column' : 'row',
-          height: '100%',
+          minHeight: 0,
           overflow: 'hidden',
           display: 'flex',
           minWidth: !isMobileView ? 0 : undefined,
-          minHeight: 0,
         }}
       >
         {/* Book Pane Area */}
@@ -3503,10 +3632,10 @@ function BookView() {
           className="book-pane-area"
           ref={bookPaneAreaRef} // Ref for the resizable area
           style={{
-            flexBasis: '100%',
+            flex: '1 1 0%',
             width: isMobileView ? '100%' : undefined, // Full width on mobile
-            height: '100%', // Occupy full height of its flex container part
-            flexShrink: 0,
+            minHeight: 0,
+            minWidth: 0,
             display: 'flex',
             flexDirection: 'column',
             overflow: 'hidden',
@@ -3739,6 +3868,22 @@ function BookView() {
                   Back to Reading Guide
                 </button>
               )}
+              {showScrollToTopButton &&
+                typeof document !== 'undefined' &&
+                createPortal(
+                  <button
+                    type="button"
+                    className={`scroll-to-top-floating-btn ${viewMode === 'original' && showBackToGuide ? 'with-back-guide-btn' : ''}`}
+                    onClick={handleScrollToTop}
+                    aria-label="Scroll to top"
+                    title="Scroll to top"
+                  >
+                    <span className="scroll-to-top-floating-btn__icon" aria-hidden="true">
+                      ▲
+                    </span>
+                  </button>,
+                  document.body,
+                )}
             </div>
           </div>
         </div>
