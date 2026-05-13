@@ -460,7 +460,7 @@ function calculatePageBoundaries(markdown, targetCharsPerPage) {
   return boundaries;
 }
 
-function BookView() {
+function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavBarScrollSync = null } = {}) {
   const { bookId } = useParams();
   const [bookData, setBookData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -1924,6 +1924,28 @@ function BookView() {
     window.addEventListener('resize', checkMobileView);
     return () => window.removeEventListener('resize', checkMobileView);
   }, []);
+
+  useLayoutEffect(() => {
+    if (!navBarMergeScrollRef || !bumpNavBarScrollSync) {
+      return undefined;
+    }
+    const want = viewMode === 'guide' && isMobileView;
+    const next = want ? guideScrollContainerRef.current : null;
+    const prev = navBarMergeScrollRef.current;
+    navBarMergeScrollRef.current = next;
+    if (prev !== next) {
+      bumpNavBarScrollSync();
+    }
+    return undefined;
+  }, [
+    viewMode,
+    isMobileView,
+    navBarMergeScrollRef,
+    bumpNavBarScrollSync,
+    guideLoading,
+    readingRoadmap,
+    currentPage,
+  ]);
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -3425,6 +3447,39 @@ function BookView() {
   };
 
   const isGuideMode = viewMode === 'guide';
+  const handleSwitchToOriginalFromGuide = useCallback(() => {
+    if (guideScrollContainerRef.current) {
+      setGuideScrollPositionByPage((prev) => ({
+        ...prev,
+        [currentPage]: guideScrollContainerRef.current.scrollTop,
+      }));
+    }
+    setViewMode('original');
+  }, [currentPage]);
+
+  useEffect(() => {
+    if (!setNavBarExtra) {
+      return undefined;
+    }
+    if (viewMode === 'guide' && isMobileView) {
+      setNavBarExtra(
+        <div className="navbar-guide-extra">
+          <h3 className="navbar-guide-extra-title">Reading Roadmap</h3>
+          <button
+            type="button"
+            className="navbar-guide-extra-switch"
+            onClick={handleSwitchToOriginalFromGuide}
+          >
+            Switch to Original Text
+          </button>
+        </div>,
+      );
+      return () => setNavBarExtra(null);
+    }
+    setNavBarExtra(null);
+    return undefined;
+  }, [setNavBarExtra, viewMode, isMobileView, handleSwitchToOriginalFromGuide]);
+
   const toggleViewMode = () => {
     if (isGuideMode) {
       if (guideScrollContainerRef.current) {
@@ -3830,12 +3885,10 @@ function BookView() {
                   onGenerateOutsiderGuide={handleGenerateOutsiderGuide}
                   outsiderLoadingById={outsiderLoadingById}
                   isGeneratingAllAlternativeReadings={isGeneratingAllAlternativeReadings}
-                  onSwitchToOriginal={() => {
-                    if (guideScrollContainerRef.current) setGuideScrollPositionByPage(prev => ({ ...prev, [currentPage]: guideScrollContainerRef.current.scrollTop }));
-                    setViewMode('original');
-                  }}
+                  onSwitchToOriginal={handleSwitchToOriginalFromGuide}
                   scrollContainerRef={guideScrollContainerRef}
                   scrollPositionToRestore={guideScrollToRestoreOnBack ?? guideScrollPositionByPage[currentPage] ?? 0}
+                  hideHeader={isMobileView && viewMode === 'guide'}
                   embedInMainArea={true}
                   focusItemId={guideReturnItemId}
                   onRoadmapReturnFocusDone={handleRoadmapReturnFocusDone}

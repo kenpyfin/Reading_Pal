@@ -3,7 +3,7 @@
   display: flex;
   flex-direction: column; /* Key change for vertical layout */
   height: 100%;
-  background-color: #f8f9fa; /* Light background */
+  background-color: #fff; /* Light background */
   border-right: 1px solid #e0e0e0; /* Separator from book pane */
   box-sizing: border-box;
   overflow: hidden; /* Prevent parent from scrolling, children will scroll */
@@ -17,6 +17,22 @@
 .reading-guide-pane.reading-guide-pane-embed {
   border-right: none;
   background-color: #fff;
+}
+
+.reading-guide-top-container {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  min-height: 0;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background-color: #fff;
+  transition: transform 0.3s ease, opacity 0.3s ease;
+}
+
+.reading-guide-pane-embed .reading-guide-top-container {
+  background-color: #fff; /* Match embed background */
 }
 
 .reading-guide-header-actions {
@@ -43,9 +59,9 @@
   justify-content: space-between;
   align-items: center;
   padding: 10px 15px;
-  border-bottom: 1px solid #d0d0d0;
-  background-color: #f1f3f5; /* Slightly different header background */
-  flex-shrink: 0; /* Header should not shrink */
+  border-bottom: 1px solid #eee;
+  background-color: #fff;
+  flex-shrink: 0;
 }
 
 .reading-guide-header h3 {
@@ -70,9 +86,64 @@
 
 /* New styles for the actions area (generate button) */
 .reading-guide-actions {
-  padding: 10px 15px;
-  border-bottom: 1px solid #e0e0e0;
+  padding: 8px 12px;
+  border-bottom: 1px solid #eee;
   flex-shrink: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: stretch;
+  background-color: #fff;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0; /* Safari: allow flex row to shrink inside narrow panes */
+}
+
+.reading-guide-pane-embed .reading-guide-actions {
+  background-color: #fff; /* Match embed background */
+  max-width: 100%;
+}
+
+.reading-guide-pane-embed .reading-guide-actions--below-merged-nav {
+  padding-left: max(12px, env(safe-area-inset-left, 0px));
+  padding-right: max(12px, env(safe-area-inset-right, 0px));
+}
+
+.reading-guide-progress {
+  flex: 1 0 100%;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.progress-text {
+  display: block;
+  font-size: 0.82rem;
+  color: #495057;
+  margin-bottom: 4px;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+.progress-bar {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  height: 8px;
+  border-radius: 4px;
+  background: #e9ecef;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  max-width: 100%;
+  background: #007bff;
+  border-radius: inherit;
+  transition: width 0.2s ease;
 }
 
 .generate-guide-btn {
@@ -83,7 +154,8 @@
   border-radius: 4px;
   cursor: pointer;
   font-size: 0.9em;
-  width: 100%; /* Make button full width of its container */
+  flex: 1 1 0%;
+  min-width: 0;
   box-sizing: border-box;
 }
 
@@ -97,7 +169,6 @@
 }
 
 .generate-shortcuts-btn {
-  margin-top: 8px;
   background-color: #6c757d;
 }
 
@@ -106,12 +177,15 @@
 }
 
 .reading-guide-content {
-  padding: 15px;
   overflow-y: auto; /* Allow content to scroll */
   flex-grow: 1; /* Content area takes remaining space */
   min-height: 0; /* Let flex item shrink so overflow-y applies here; otherwise the outer book pane scrolls only */
   font-size: 0.9em; /* Adjust base font size for guide content */
   line-height: 1.5;
+}
+
+.reading-guide-inner-content {
+  padding: 10px 12px;
 }
 
 /* Style for the actual guide text display */
@@ -136,15 +210,45 @@
 
 /* Mobile specific adjustments if needed, can also be handled in BookView.css @media query */
 @media (max-width: 768px) {
-  .reading-guide-pane {
-    /* When used as an overlay, it might need position: fixed, width: 100%, height: 100%, z-index */
-    /* These are handled by BookView.js conditional styling for the overlay */
+  .reading-guide-top-container {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    transition: transform 0.3s ease, opacity 0.3s ease;
+    background-color: #fff;
+    border-bottom: 1px solid #eee;
   }
+
+  .reading-guide-top-container.top-hidden {
+    transform: translateY(-100%);
+    opacity: 0;
+    pointer-events: none;
+    /* Maintain height to avoid content jump */
+  }
+
+  .reading-guide-inner-content {
+    padding: 8px; /* Reduced from 15px */
+    padding-top: 15px;
+  }
+
+  .roadmap-signpost-block,
+  .roadmap-takeaway-block,
+  .roadmap-reading-prominent,
+  .roadmap-thought-process {
+    margin-left: 10px; /* Reduced from 30px */
+  }
+
+  .roadmap-card {
+    padding: 10px;
+    margin-bottom: 12px;
+  }
+
   .reading-guide-header h3 {
-    font-size: 1em; /* Slightly smaller header for mobile */
+    font-size: 1em;
   }
   .generate-guide-btn {
-    font-size: 1em; /* Slightly larger button text on mobile for touch */
+    font-size: 0.9em;
+    padding: 6px 10px;
   }
 }
 
@@ -203,28 +307,32 @@
 .structured-guide {
   display: flex;
   flex-direction: column;
-  gap: 15px;
+  gap: 10px;
+}
+
+.roadmap-tree.structured-guide {
+  gap: 8px;
 }
 
 .guide-section {
   border: 1px solid #e0e0e0;
   border-radius: 6px;
-  padding: 12px;
+  padding: 8px 10px;
   background-color: white;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
 .guide-section-title {
-  margin: 0 0 10px 0;
-  font-size: 1.1em;
+  margin: 0 0 6px 0;
+  font-size: 1.05em;
   font-weight: 600;
   color: #0056b3;
   border-bottom: 2px solid #e0e0e0;
-  padding-bottom: 6px;
+  padding-bottom: 4px;
 }
 
 .guide-section-key-takeaway {
-  margin: 0 0 10px 0;
+  margin: 0 0 8px 0;
   font-style: italic;
   color: #444;
   font-size: 0.95em;
@@ -233,8 +341,8 @@
 }
 
 .guide-section-content {
-  margin-bottom: 10px;
-  line-height: 1.6;
+  margin-bottom: 8px;
+  line-height: 1.55;
 }
 
 .guide-section-link {
@@ -341,7 +449,7 @@
 }
 
 .roadmap-card {
-  margin-bottom: 14px;
+  margin-bottom: 10px;
   border-color: #dfe6ee;
   box-shadow: 0 2px 8px rgba(31, 45, 61, 0.08);
 }
@@ -357,11 +465,11 @@
 }
 
 .roadmap-signpost-block {
-  margin: 4px 0 10px 30px;
+  margin: 2px 0 8px 16px;
 }
 
 .roadmap-takeaway-block {
-  margin: 0 0 12px 30px;
+  margin: 0 0 8px 16px;
 }
 
 .roadmap-takeaway-body {
@@ -374,8 +482,8 @@
 }
 
 .roadmap-thought-process {
-  margin: 10px 0 12px 30px;
-  padding: 10px 12px;
+  margin: 8px 0 10px 16px;
+  padding: 8px 10px;
   background: #f8f9fb;
   border-radius: 6px;
   border: 1px solid #e9ecef;
@@ -432,6 +540,8 @@
   flex-wrap: wrap;
   gap: 6px;
   min-width: 0;
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 .roadmap-hub-badge {
@@ -456,13 +566,15 @@
   font-size: 0.9em;
   line-height: 1.45;
   border-left: 2px solid #dee2e6;
-  padding-left: 10px;
+  padding-left: 8px;
+  overflow-wrap: break-word;
 }
 
 .roadmap-card-actions {
   display: flex;
-  gap: 8px;
-  margin-top: 8px;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
 }
 
 .roadmap-subtitle {
@@ -473,16 +585,16 @@
 }
 
 .roadmap-reading {
-  margin: 10px 0;
-  padding: 10px;
+  margin: 8px 0;
+  padding: 8px 10px;
   background: #f8fbff;
   border: 1px solid #d9e9ff;
   border-radius: 6px;
 }
 
 .roadmap-reading-prominent {
-  margin: 8px 0 14px 30px;
-  padding: 14px 14px 12px;
+  margin: 6px 0 10px 16px;
+  padding: 10px 12px 10px;
   background: linear-gradient(180deg, #eef6ff 0%, #f8fbff 100%);
   border: 1px solid #b8d4fa;
   border-left: 4px solid #0d6efd;
@@ -497,6 +609,15 @@
 .roadmap-reading-summary {
   margin: 0 0 8px 0;
   color: #1f2d3d;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+.roadmap-alternative-reading-content,
+.roadmap-outsider-guide-content,
+.roadmap-takeaway-body {
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 .roadmap-reading-bullets {
@@ -530,6 +651,7 @@
   margin: 0 0 8px 0;
   font-size: 0.82em;
   color: #5b6b7a;
+  overflow-wrap: break-word;
 }
 
 .roadmap-alternative-reading-content p {
@@ -558,6 +680,7 @@
   margin: 0 0 8px 0;
   font-size: 0.82em;
   color: #5b6b7a;
+  overflow-wrap: break-word;
 }
 
 .roadmap-outsider-guide-content p {
@@ -566,10 +689,18 @@
 
 .roadmap-quote {
   margin: 8px 0;
-  padding: 8px 10px;
-  border-left: 3px solid #0d6efd;
+  padding: 10px 12px;
+  border-left: 4px solid #0d6efd;
   background: #f8f9fa;
   color: #495057;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  white-space: pre-wrap;
+  font-style: italic;
+  font-size: 0.92em;
+  line-height: 1.5;
+  max-height: 300px;
+  overflow-y: auto;
 }
 
 .roadmap-children {
@@ -661,4 +792,17 @@
   height: auto;
   display: block;
   object-fit: contain;
+}
+
+/* Appended for mobile merged NavBar + guide (see apply_navbar_guide_merge.py) */
+@media (max-width: 768px) {
+  .reading-guide-actions--below-merged-nav {
+    flex-shrink: 0;
+    background-color: #fff;
+    border-bottom: 1px solid #eee;
+  }
+
+  .reading-guide-pane-embed .reading-guide-actions--below-merged-nav {
+    background-color: #fff;
+  }
 }

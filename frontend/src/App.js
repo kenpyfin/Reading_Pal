@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import './index.css'; // Assuming some global styles
 import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
 import PdfUploadForm from './components/PdfUploadForm';
@@ -29,6 +29,11 @@ const decodeJwt = (token) => {
 function App() {
   const [authToken, setAuthToken] = useState(() => getStoredAuthToken());
   const [isAdmin, setIsAdmin] = useState(false);
+
+  const [navBarExtra, setNavBarExtra] = useState(null);
+  const navBarMergeScrollRef = useRef(null);
+  const [navBarScrollEpoch, setNavBarScrollEpoch] = useState(0);
+  const bumpNavBarScrollSync = useCallback(() => setNavBarScrollEpoch((n) => n + 1), []);
 
   useEffect(() => {
     const token = getStoredAuthToken();
@@ -75,7 +80,15 @@ function App() {
   return (
     <div className="App">
       <Router>
-        {authToken && <NavBar onLogout={handleLogout} isAdmin={isAdmin} />} {/* Show NavBar only if authenticated, pass isAdmin */}
+        {authToken && (
+          <NavBar
+            onLogout={handleLogout}
+            isAdmin={isAdmin}
+            extra={navBarExtra}
+            mergeScrollContainerRef={navBarMergeScrollRef}
+            mergeScrollEpoch={navBarScrollEpoch}
+          />
+        )}
         <div className="app-content-shell">
           <Routes>
             {!authToken ? (
@@ -93,7 +106,14 @@ function App() {
                 <Route path="/admin/user-management" element={<UserManagementPage />} />
                 {/* Decide if admins should access these or be redirected */}
                 <Route path="/upload" element={<PdfUploadForm />} />
-                <Route path="/book/:bookId" element={<BookView />} />
+                <Route path="/book/:bookId" element={(
+                    <BookView
+                      setNavBarExtra={setNavBarExtra}
+                      navBarMergeScrollRef={navBarMergeScrollRef}
+                      bumpNavBarScrollSync={bumpNavBarScrollSync}
+                    />
+                  )}
+                  /> />
                 <Route path="/" element={<Navigate to="/admin/user-management" replace />} />
 
                 {/* Redirect login routes if admin is already logged in */}
@@ -107,7 +127,14 @@ function App() {
               <>
                 <Route path="/" element={<BookList />} />
                 <Route path="/upload" element={<PdfUploadForm />} />
-                <Route path="/book/:bookId" element={<BookView />} />
+                <Route path="/book/:bookId" element={(
+                    <BookView
+                      setNavBarExtra={setNavBarExtra}
+                      navBarMergeScrollRef={navBarMergeScrollRef}
+                      bumpNavBarScrollSync={bumpNavBarScrollSync}
+                    />
+                  )}
+                  /> />
 
                 {/* Redirect login routes if regular user is already logged in */}
                 <Route path="/login" element={<Navigate to="/" replace />} />

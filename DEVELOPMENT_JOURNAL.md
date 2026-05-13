@@ -29,6 +29,12 @@ Use a reverse-chronological list (newest first). Each entry should be short and 
 
 <!-- New entries go below this comment, newest first. -->
 
+## 2026-05-12 — Reading Guide: tighter roadmap spacing and Safari actions overflow
+
+- **What:** Removed duplicate nested `.reading-guide-actions` when `hideHeader` (merged-nav) was true so padding/flex width is not doubled. Capped progress bar fill width at 100% when completed count exceeds total. Tightened roadmap card / inner content padding and left indents; added progress bar styles, `min-width: 0` / `flex: 1 1 0%` on action buttons, and safe-area horizontal padding for embed actions.
+- **Why:** Safari horizontal overflow and an overly wide actions strip were largely from nested flex containers plus an uncapped 129% progress fill; roadmap cards felt heavy on padding/margin.
+- **Where:** `frontend/src/components/ReadingGuidePane.js`, `frontend/src/components/ReadingGuidePane.css`
+
 ## 2026-05-09 — Added targeted redeploy helper for faster update rollout
 
 - **What:** Added `redeploy_app.sh`, a lightweight redeploy script that rebuilds/restarts only affected Docker Compose services instead of full stack teardown/recreate. Change detection now considers both current working-tree edits and latest commit diff (`HEAD~1..HEAD`) by default, with optional custom ref range flags.

@@ -3,6 +3,27 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import './ReadingGuidePane.css';
 
+const MOBILE_MAX_WIDTH = 768;
+const SCROLL_DELTA_THRESHOLD = 30;
+
+function scrollEventTargetKey(target) {
+  if (target === document || target === document.documentElement || target === document.body) {
+    return document.documentElement;
+  }
+  return target;
+}
+
+function getScrollTopFromScrollEvent(event) {
+  const { target } = event;
+  if (target === document || target === document.documentElement || target === document.body) {
+    return window.pageYOffset || document.documentElement.scrollTop || 0;
+  }
+  if (target && typeof target.scrollTop === 'number') {
+    return target.scrollTop;
+  }
+  return null;
+}
+
 function countItems(items) {
   let count = 0;
   const walk = (nodes) => {
@@ -16,7 +37,6 @@ function countItems(items) {
   return count;
 }
 
-/** Stack of parent ids that must be expanded for `targetId` to appear (excludes target). */
 function ancestorIdsToExpandForRoadmapItem(items, targetId) {
   const target = String(targetId);
   const walk = (nodes, stack) => {
@@ -97,7 +117,7 @@ function RoadmapCard({
   return (
     <div
       className="guide-section roadmap-card"
-      style={{ marginLeft: depth * 14 }}
+      style={{ marginLeft: depth * 8 }}
       data-roadmap-item-id={idStr}
     >
       <div className="roadmap-card-header">
@@ -303,9 +323,75 @@ const ReadingGuidePane = ({
   serverActionsDisabled = false,
   focusItemId = null,
   onRoadmapReturnFocusDone,
+  hideHeader = false,
 }) => {
   const paneRef = useRef(null);
   const [selectedGraphImage, setSelectedGraphImage] = useState(null);
+  const [mobileHeaderHidden, setMobileHeaderHidden] = useState(false);
+
+  const isMobileViewport = useCallback(
+    () => typeof window !== 'undefined' && window.innerWidth <= MOBILE_MAX_WIDTH,
+    [],
+  );
+
+  useEffect(() => {
+    if ((!embedInMainArea && !isVisible) || hideHeader) {
+      setMobileHeaderHidden(false);
+    }
+  }, [embedInMainArea, isVisible, hideHeader]);
+
+  useEffect(() => {
+    if (hideHeader) {
+      return undefined;
+    }
+    const lastScrollTopByTarget = new Map();
+
+    const onScroll = (event) => {
+      if (!isMobileViewport()) {
+        return;
+      }
+      if (!embedInMainArea && !isVisible) {
+        return;
+      }
+      const container = scrollContainerRef?.current;
+      if (!container || event.target !== container) {
+        return;
+      }
+      const scrollTop = getScrollTopFromScrollEvent(event);
+      if (scrollTop === null) {
+        return;
+      }
+      const key = scrollEventTargetKey(event.target);
+      const prevTop = lastScrollTopByTarget.has(key)
+        ? lastScrollTopByTarget.get(key)
+        : scrollTop;
+      lastScrollTopByTarget.set(key, scrollTop);
+      const delta = scrollTop - prevTop;
+      if (scrollTop <= 0) {
+        setMobileHeaderHidden(false);
+        return;
+      }
+      if (delta > SCROLL_DELTA_THRESHOLD) {
+        setMobileHeaderHidden(true);
+      } else if (delta < -SCROLL_DELTA_THRESHOLD) {
+        setMobileHeaderHidden(false);
+      }
+    };
+
+    const onResize = () => {
+      if (!isMobileViewport()) {
+        setMobileHeaderHidden(false);
+      }
+    };
+
+    const scrollListenerOptions = { capture: true, passive: true };
+    document.addEventListener('scroll', onScroll, scrollListenerOptions);
+    window.addEventListener('resize', onResize);
+    return () => {
+      document.removeEventListener('scroll', onScroll, scrollListenerOptions);
+      window.removeEventListener('resize', onResize);
+    };
+  }, [isMobileViewport, embedInMainArea, isVisible, scrollContainerRef, hideHeader]);
 
   const mustExpandIds = useMemo(() => {
     if (!focusItemId || !roadmap?.items?.length) return null;
@@ -380,81 +466,95 @@ const ReadingGuidePane = ({
 
   const totalItems = roadmap?.items ? countItems(roadmap.items) : 0;
   const progressPct = totalItems > 0 ? Math.round((completedIds.length / totalItems) * 100) : 0;
+  const progressBarWidthPct = totalItems > 0 ? Math.min(100, Math.round((completedIds.length / totalItems) * 100)) : 0;
+
+  const roadmapActionsInner = (
+    <>
+      <button
+        type="button"
+        onClick={onGenerateRoadmap}
+        disabled={isLoading || isGenerating || isGeneratingAllAlternativeReadings || serverActionsDisabled}
+        className="generate-guide-btn"
+      >
+        {isGenerating ? 'Generating...' : (roadmap ? 'Regenerate Roadmap' : 'Generate Roadmap')}
+      </button>
+      {roadmap?.items?.length > 0 && (
+        <button
+          type="button"
+          onClick={onGenerateAllAlternativeReadings}
+          disabled={isLoading || isGenerating || isGeneratingAllAlternativeReadings || serverActionsDisabled || !onGenerateAllAlternativeReadings}
+          className="generate-guide-btn generate-shortcuts-btn"
+        >
+          {isGeneratingAllAlternativeReadings ? 'Generating all shortcuts...' : 'Generate All Shortcuts'}
+        </button>
+      )}
+      {totalItems > 0 && (
+        <div className="reading-guide-progress">
+          <span className="progress-text">{completedIds.length} / {totalItems} completed ({progressPct}%)</span>
+          <div className="progress-bar" role="progressbar" aria-valuenow={completedIds.length} aria-valuemin={0} aria-valuemax={totalItems}>
+            <div className="progress-bar-fill" style={{ width: `${progressBarWidthPct}%` }} />
+          </div>
+        </div>
+      )}
+    </>
+  );
 
   return (
     <div className={`reading-guide-pane ${isVisible ? 'visible' : ''} ${embedInMainArea ? 'reading-guide-pane-embed' : ''}`} ref={paneRef}>
-      <div className="reading-guide-header">
-        <h3>Reading Roadmap</h3>
-        <div className="reading-guide-header-actions">
-          {embedInMainArea && onSwitchToOriginal && (
-            <button type="button" onClick={onSwitchToOriginal} className="switch-to-original-btn" aria-label="Switch to original text">
-              Switch to Original Text
-            </button>
-          )}
-          {!embedInMainArea && onClose && (
-            <button type="button" onClick={onClose} className="close-guide-pane-btn" aria-label="Close Reading Guide">
-              &times;
-            </button>
+      <div className="reading-guide-content" ref={scrollContainerRef}>
+        {hideHeader ? (
+          <div className="reading-guide-actions reading-guide-actions--below-merged-nav">
+            {roadmapActionsInner}
+          </div>
+        ) : (
+          <div className={`reading-guide-top-container ${mobileHeaderHidden ? 'top-hidden' : ''}`}>
+            <div className="reading-guide-header">
+              <h3>Reading Roadmap</h3>
+              <div className="reading-guide-header-actions">
+                {embedInMainArea && onSwitchToOriginal && (
+                  <button type="button" onClick={onSwitchToOriginal} className="switch-to-original-btn" aria-label="Switch to original text">
+                    Switch to Original Text
+                  </button>
+                )}
+                {!embedInMainArea && onClose && (
+                  <button type="button" onClick={onClose} className="close-guide-pane-btn" aria-label="Close Reading Guide">
+                    &times;
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="reading-guide-actions">{roadmapActionsInner}</div>
+          </div>
+        )}
+
+        <div className="reading-guide-inner-content">
+          {isLoading && <p>Loading roadmap...</p>}
+          {error && <p className="error-message">Error: {error}</p>}
+          {!isLoading && !error && !roadmap && <p>No roadmap generated yet. Click &quot;Generate Roadmap&quot;.</p>}
+          {!isLoading && !error && roadmap?.items?.length > 0 && (
+            <div className="structured-guide roadmap-tree">
+              {roadmap.items.map((item) => (
+                <RoadmapCard
+                  key={item.id}
+                  item={item}
+                  completedIds={completedIds}
+                  onToggleProgress={onToggleProgress}
+                  onGuideTextLink={onGuideTextLink}
+                  onGenerateGraph={onGenerateGraph}
+                  onGenerateAlternativeReading={onGenerateAlternativeReading}
+                  onGenerateOutsiderGuide={onGenerateOutsiderGuide}
+                  isGeneratingAllAlternativeReadings={isGeneratingAllAlternativeReadings}
+                  graphLoadingById={graphLoadingById}
+                  alternativeLoadingById={alternativeLoadingById}
+                  outsiderLoadingById={outsiderLoadingById}
+                  onOpenGraphImage={handleOpenGraph}
+                  serverActionsDisabled={serverActionsDisabled}
+                  mustExpandIds={mustExpandIds}
+                />
+              ))}
+            </div>
           )}
         </div>
-      </div>
-
-      <div className="reading-guide-actions">
-        <button
-          type="button"
-          onClick={onGenerateRoadmap}
-          disabled={isLoading || isGenerating || isGeneratingAllAlternativeReadings || serverActionsDisabled}
-          className="generate-guide-btn"
-        >
-          {isGenerating ? 'Generating...' : (roadmap ? 'Regenerate Roadmap' : 'Generate Roadmap')}
-        </button>
-        {roadmap?.items?.length > 0 && (
-          <button
-            type="button"
-            onClick={onGenerateAllAlternativeReadings}
-            disabled={isLoading || isGenerating || isGeneratingAllAlternativeReadings || serverActionsDisabled || !onGenerateAllAlternativeReadings}
-            className="generate-guide-btn generate-shortcuts-btn"
-          >
-            {isGeneratingAllAlternativeReadings ? 'Generating all shortcuts...' : 'Generate All Shortcuts'}
-          </button>
-        )}
-        {totalItems > 0 && (
-          <div className="reading-guide-progress">
-            <span className="progress-text">{completedIds.length} / {totalItems} completed ({progressPct}%)</span>
-            <div className="progress-bar" role="progressbar" aria-valuenow={completedIds.length} aria-valuemin={0} aria-valuemax={totalItems}>
-              <div className="progress-bar-fill" style={{ width: `${progressPct}%` }} />
-            </div>
-          </div>
-        )}
-      </div>
-
-      <div className="reading-guide-content" ref={scrollContainerRef}>
-        {isLoading && <p>Loading roadmap...</p>}
-        {error && <p className="error-message">Error: {error}</p>}
-        {!isLoading && !error && !roadmap && <p>No roadmap generated yet. Click &quot;Generate Roadmap&quot;.</p>}
-        {!isLoading && !error && roadmap?.items?.length > 0 && (
-          <div className="structured-guide roadmap-tree">
-            {roadmap.items.map((item) => (
-              <RoadmapCard
-                key={item.id}
-                item={item}
-                completedIds={completedIds}
-                onToggleProgress={onToggleProgress}
-                onGuideTextLink={onGuideTextLink}
-                onGenerateGraph={onGenerateGraph}
-                onGenerateAlternativeReading={onGenerateAlternativeReading}
-                onGenerateOutsiderGuide={onGenerateOutsiderGuide}
-                isGeneratingAllAlternativeReadings={isGeneratingAllAlternativeReadings}
-                graphLoadingById={graphLoadingById}
-                alternativeLoadingById={alternativeLoadingById}
-                outsiderLoadingById={outsiderLoadingById}
-                onOpenGraphImage={handleOpenGraph}
-                serverActionsDisabled={serverActionsDisabled}
-                mustExpandIds={mustExpandIds}
-              />
-            ))}
-          </div>
-        )}
       </div>
 
       {selectedGraphImage && (

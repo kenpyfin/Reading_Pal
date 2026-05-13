@@ -1,64 +1,154 @@
 .navbar {
-    background-color: #333; /* Dark background */
-    padding: 10px 20px; /* Vertical and horizontal padding */
-    color: white; /* White text color */
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); /* Subtle shadow */
-    flex-shrink: 0; /* Keep NavBar from collapsing when App uses column flex */
+    background-color: #333;
+    padding: 10px 20px;
+    color: white;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    flex-shrink: 0;
+    position: sticky;
+    top: 0;
+    z-index: 1100;
+    transition: transform 0.3s ease;
 }
 
 .navbar-container {
-    display: flex; /* Use flexbox for layout */
-    justify-content: space-between; /* Space out brand and links */
-    align-items: center; /* Vertically align items */
-    max-width: 1200px; /* Optional: Limit max width */
-    margin: 0 auto; /* Center the container */
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    max-width: 1200px;
+    margin: 0 auto;
 }
 
 .navbar-brand {
-    color: white; /* White color for the brand link */
-    text-decoration: none; /* Remove underline */
-    font-size: 1.5em; /* Larger font size for brand */
-    font-weight: bold; /* Bold font */
+    color: white;
+    text-decoration: none;
+    font-size: 1.5em;
+    font-weight: bold;
 }
 
 .nav-links {
-    list-style: none; /* Remove bullet points */
+    list-style: none;
     margin: 0;
     padding: 0;
-    display: flex; /* Use flexbox for links */
+    display: flex;
 }
 
 .nav-links li {
-    margin-left: 20px; /* Space between links */
+    margin-left: 20px;
 }
 
 .nav-link {
-    color: white; /* White color for links */
-    text-decoration: none; /* Remove underline */
-    font-size: 1em; /* Standard font size */
-    transition: color 0.3s ease; /* Smooth color transition on hover */
+    color: white;
+    text-decoration: none;
+    font-size: 1em;
+    transition: color 0.3s ease;
 }
 
 .nav-link:hover {
-    color: #ddd; /* Slightly lighter color on hover */
+    color: #ddd;
 }
 
 .nav-links-right {
-  margin-left: auto; /* Pushes this to the right */
+  margin-left: auto;
 }
 
 .logout-button {
-  background-color: #f44336; /* Red color for logout */
+  background-color: #f44336;
   color: white;
   border: none;
   padding: 8px 15px;
   border-radius: 4px;
   cursor: pointer;
-  font-size: 1em; /* Match nav-link font size */
-  font-family: inherit; /* Match nav-link font family */
+  font-size: 1em;
+  font-family: inherit;
   transition: background-color 0.3s ease;
 }
 
 .logout-button:hover {
-  background-color: #d32f2f; /* Darker red on hover */
+  background-color: #d32f2f;
+}
+
+/* Merged guide title + switch (injected via NavBar `extra` on mobile) */
+.navbar-extra {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: 8px;
+}
+
+.navbar-guide-extra {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.navbar-guide-extra-title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.navbar-guide-extra-switch {
+  flex-shrink: 0;
+  background-color: #6c757d;
+  color: white;
+  border: none;
+  padding: 6px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.75rem;
+  line-height: 1.2;
+}
+
+.navbar-guide-extra-switch:hover {
+  background-color: #5a6268;
+}
+
+@media (max-width: 768px) {
+    .navbar {
+        transition: transform 0.3s ease, opacity 0.3s ease;
+        position: fixed;
+        left: 0;
+        right: 0;
+        top: 0;
+        z-index: 1100;
+        background-color: #333;
+    }
+
+    .navbar-container {
+        padding: 8px 10px;
+        flex-wrap: nowrap;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .navbar-container--mobile-extra .nav-links:not(.nav-links-right) {
+        display: none;
+    }
+
+    .navbar-container--mobile-extra .nav-links-right {
+        margin-left: 0;
+    }
+
+    .navbar-container--mobile-extra .nav-links-right li {
+        margin-left: 0;
+    }
+
+    .navbar-container--mobile-extra .logout-button {
+        padding: 6px 10px;
+        font-size: 0.85em;
+    }
+
+    .navbar.navbar-hidden {
+        transform: translateY(-100%);
+        opacity: 0;
+        pointer-events: none;
+    }
 }
