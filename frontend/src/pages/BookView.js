@@ -640,7 +640,8 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
   const [graphLoadingById, setGraphLoadingById] = useState({});
   const [alternativeLoadingById, setAlternativeLoadingById] = useState({});
   const [outsiderLoadingById, setOutsiderLoadingById] = useState({});
-  const [isGeneratingAllAlternativeReadings, setIsGeneratingAllAlternativeReadings] = useState(false);
+  /** null | 'graphs' | 'shortcuts' | 'outsiders' — sequential bulk generation for roadmap cards */
+  const [roadmapBulkJob, setRoadmapBulkJob] = useState(null);
 
   const [isOfflineSnapshot, setIsOfflineSnapshot] = useState(false);
   const [outboxPendingCount, setOutboxPendingCount] = useState(0);
@@ -1435,11 +1436,14 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
     }
   };
 
-  const handleGenerateCardGraph = async (cardId) => {
-    if (!bookId || !cardId) return;
+  const generateGraphForCard = useCallback(async (cardId, options = {}) => {
+    const { surfaceError = true } = options;
+    if (!bookId || !cardId) return false;
     if (!navigator.onLine || isOfflineSnapshot) {
-      setGuideError('Graph generation requires an internet connection.');
-      return;
+      if (surfaceError) {
+        setGuideError('Graph generation requires an internet connection.');
+      }
+      return false;
     }
     setGraphLoadingById((prev) => ({ ...prev, [cardId]: true }));
     try {
@@ -1479,12 +1483,20 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
           return updated;
         });
       }
+      return true;
     } catch (err) {
-      logger.error("[BookView - handleGenerateCardGraph] Failed:", err);
-      setGuideError(err.message);
+      logger.error("[BookView - generateGraphForCard] Failed:", err);
+      if (surfaceError) {
+        setGuideError(err.message);
+      }
+      return false;
     } finally {
       setGraphLoadingById((prev) => ({ ...prev, [cardId]: false }));
     }
+  }, [bookId, isOfflineSnapshot, completedRoadmapIds, registerBlobUrl]);
+
+  const handleGenerateCardGraph = async (cardId) => {
+    await generateGraphForCard(cardId, { surfaceError: true });
   };
 
   const updateRoadmapAlternativeReading = useCallback((cardId, data) => {
@@ -1633,43 +1645,71 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
     await generateOutsiderGuideForCard(cardId, { surfaceError: true });
   };
 
-  const handleGenerateAllAlternativeReadings = async () => {
+  const collectRoadmapCardIds = (nodes) => {
+    const ids = [];
+    const walk = (list) => {
+      for (const node of list || []) {
+        if (node?.id != null) ids.push(node.id);
+        if (Array.isArray(node?.children) && node.children.length > 0) {
+          walk(node.children);
+        }
+      }
+    };
+    walk(nodes);
+    return ids;
+  };
+
+  const handleBulkRoadmapGenerate = async (kind) => {
+    if (kind !== 'graph' && kind !== 'shortcut' && kind !== 'outsider') return;
     if (!bookId || !readingRoadmap?.items?.length) return;
+
+    const cardIds = collectRoadmapCardIds(readingRoadmap.items);
+    if (!cardIds.length) return;
+
+    const jobKey = kind === 'graph' ? 'graphs' : kind === 'shortcut' ? 'shortcuts' : 'outsiders';
+    const offlineMessage =
+      kind === 'graph'
+        ? 'Graph generation requires an internet connection.'
+        : kind === 'shortcut'
+          ? 'Author Shortcut generation requires an internet connection.'
+          : 'Outsider Guide generation requires an internet connection.';
+
     if (!navigator.onLine || isOfflineSnapshot) {
-      setGuideError('Author Shortcut generation requires an internet connection.');
+      setGuideError(offlineMessage);
       return;
     }
 
-    const collectItemIds = (nodes) => {
-      const ids = [];
-      const walk = (list) => {
-        for (const node of list || []) {
-          if (node?.id != null) ids.push(node.id);
-          if (Array.isArray(node?.children) && node.children.length > 0) {
-            walk(node.children);
-          }
-        }
-      };
-      walk(nodes);
-      return ids;
-    };
-
-    const cardIds = collectItemIds(readingRoadmap.items);
-    if (!cardIds.length) return;
-
     setGuideError(null);
-    setIsGeneratingAllAlternativeReadings(true);
+    setRoadmapBulkJob(jobKey);
     try {
       let failed = 0;
-      for (const cardId of cardIds) {
-        const ok = await generateAlternativeReadingForCard(cardId, { surfaceError: false });
-        if (!ok) failed += 1;
-      }
-      if (failed > 0) {
-        setGuideError(`Generated ${cardIds.length - failed}/${cardIds.length} shortcuts. ${failed} failed.`);
+      if (kind === 'graph') {
+        for (const cardId of cardIds) {
+          const ok = await generateGraphForCard(cardId, { surfaceError: false });
+          if (!ok) failed += 1;
+        }
+        if (failed > 0) {
+          setGuideError(`Generated ${cardIds.length - failed}/${cardIds.length} graphs. ${failed} failed.`);
+        }
+      } else if (kind === 'shortcut') {
+        for (const cardId of cardIds) {
+          const ok = await generateAlternativeReadingForCard(cardId, { surfaceError: false });
+          if (!ok) failed += 1;
+        }
+        if (failed > 0) {
+          setGuideError(`Generated ${cardIds.length - failed}/${cardIds.length} shortcuts. ${failed} failed.`);
+        }
+      } else {
+        for (const cardId of cardIds) {
+          const ok = await generateOutsiderGuideForCard(cardId, { surfaceError: false });
+          if (!ok) failed += 1;
+        }
+        if (failed > 0) {
+          setGuideError(`Generated ${cardIds.length - failed}/${cardIds.length} outsider guides. ${failed} failed.`);
+        }
       }
     } finally {
-      setIsGeneratingAllAlternativeReadings(false);
+      setRoadmapBulkJob(null);
     }
   };
 
@@ -3880,11 +3920,11 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
                   onGenerateGraph={handleGenerateCardGraph}
                   graphLoadingById={graphLoadingById}
                   onGenerateAlternativeReading={handleGenerateAlternativeReading}
-                  onGenerateAllAlternativeReadings={handleGenerateAllAlternativeReadings}
+                  onBulkGenerateRoadmap={handleBulkRoadmapGenerate}
                   alternativeLoadingById={alternativeLoadingById}
                   onGenerateOutsiderGuide={handleGenerateOutsiderGuide}
                   outsiderLoadingById={outsiderLoadingById}
-                  isGeneratingAllAlternativeReadings={isGeneratingAllAlternativeReadings}
+                  roadmapBulkJob={roadmapBulkJob}
                   onSwitchToOriginal={handleSwitchToOriginalFromGuide}
                   scrollContainerRef={guideScrollContainerRef}
                   scrollPositionToRestore={guideScrollToRestoreOnBack ?? guideScrollPositionByPage[currentPage] ?? 0}

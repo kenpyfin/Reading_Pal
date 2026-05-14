@@ -157,6 +157,18 @@ Use a reverse-chronological list (newest first). Each entry should be short and 
 - **Why:** After navigating from Reading Guide into Original text, stale page-tracking state could prevent explicit pagination from re-applying the expected top-of-page landing behavior.
 - **Where:** `frontend/src/pages/BookView.js`
 
+## 2026-05-13 — Bulk roadmap generation: modal choice (graphs, shortcuts, outsider guides)
+
+- **What:** Replaced the single-purpose bulk shortcut button with `Generate all…`, which opens a dialog to run sequential generation for all cards: concept graphs, author shortcuts, or outsider guides. Introduced `roadmapBulkJob` state (`graphs` | `shortcuts` | `outsiders`) so the toolbar shows progress and per-card actions disable only for the matching bulk type. Extracted `generateGraphForCard` from the former inline graph handler for reuse with bulk runs; nested roadmap cards now receive the same bulk-job prop as top-level cards.
+- **Why:** Readers often want bulk coverage for graphs or outsider guides as well as shortcuts; a single entry point avoids cluttering the toolbar with three separate buttons.
+- **Where:** `frontend/src/pages/BookView.js`, `frontend/src/components/ReadingGuidePane.js`, `frontend/src/components/ReadingGuidePane.css`
+
+## 2026-05-13 — Bulk roadmap generation: modal choice (graphs, shortcuts, outsider guides)
+
+- **What:** Replaced the single-purpose bulk shortcut button with `Generate all…`, which opens a dialog to run sequential generation for all cards: concept graphs, author shortcuts, or outsider guides. Introduced `roadmapBulkJob` state (`graphs` | `shortcuts` | `outsiders`) so the toolbar shows progress and per-card actions disable only for the matching bulk type. Extracted `generateGraphForCard` from the former inline graph handler for reuse with bulk runs; nested roadmap cards now receive the same bulk-job prop as top-level cards.
+- **Why:** Readers often want bulk coverage for graphs or outsider guides as well as shortcuts; one entry point avoids cluttering the toolbar with three separate buttons.
+- **Where:** `frontend/src/pages/BookView.js`, `frontend/src/components/ReadingGuidePane.js`, `frontend/src/components/ReadingGuidePane.css`
+
 ## 2026-05-01 — Added bulk Author Shortcut generation button
 
 - **What:** Added a `Generate All Shortcuts` action in the roadmap panel that iterates all roadmap cards and triggers Author Shortcut generation sequentially. Shared the single-card update path so word counts and shortcut text are persisted in roadmap state/cached guide consistently; disabled per-card shortcut buttons while bulk generation is running.

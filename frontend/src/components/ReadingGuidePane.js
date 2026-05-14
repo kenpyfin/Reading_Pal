@@ -62,7 +62,7 @@ function RoadmapCard({
   onGenerateGraph,
   onGenerateAlternativeReading,
   onGenerateOutsiderGuide,
-  isGeneratingAllAlternativeReadings = false,
+  roadmapBulkJob = null,
   graphLoadingById,
   alternativeLoadingById,
   outsiderLoadingById,
@@ -229,7 +229,7 @@ function RoadmapCard({
         <button
           className="guide-section-link secondary"
           type="button"
-          disabled={isGraphLoading || serverActionsDisabled}
+          disabled={isGraphLoading || roadmapBulkJob === 'graphs' || serverActionsDisabled}
           onClick={() => onGenerateGraph(item.id)}
         >
           {isGraphLoading ? 'Generating graph...' : 'Generate Graph'}
@@ -239,7 +239,7 @@ function RoadmapCard({
           type="button"
           disabled={
             isAlternativeReadingLoading ||
-            isGeneratingAllAlternativeReadings ||
+            roadmapBulkJob === 'shortcuts' ||
             serverActionsDisabled ||
             !onGenerateAlternativeReading
           }
@@ -250,7 +250,12 @@ function RoadmapCard({
         <button
           className="guide-section-link secondary"
           type="button"
-          disabled={isOutsiderGuideLoading || serverActionsDisabled || !onGenerateOutsiderGuide}
+          disabled={
+            isOutsiderGuideLoading ||
+            roadmapBulkJob === 'outsiders' ||
+            serverActionsDisabled ||
+            !onGenerateOutsiderGuide
+          }
           onClick={() => onGenerateOutsiderGuide && onGenerateOutsiderGuide(item.id)}
         >
           {isOutsiderGuideLoading ? 'Generating outsider guide...' : 'Outsider Guide'}
@@ -282,6 +287,7 @@ function RoadmapCard({
               onGenerateGraph={onGenerateGraph}
               onGenerateAlternativeReading={onGenerateAlternativeReading}
               onGenerateOutsiderGuide={onGenerateOutsiderGuide}
+              roadmapBulkJob={roadmapBulkJob}
               graphLoadingById={graphLoadingById}
               alternativeLoadingById={alternativeLoadingById}
               outsiderLoadingById={outsiderLoadingById}
@@ -306,11 +312,11 @@ const ReadingGuidePane = ({
   onGenerateGraph,
   onGenerateAlternativeReading,
   onGenerateOutsiderGuide,
-  onGenerateAllAlternativeReadings,
+  onBulkGenerateRoadmap,
   graphLoadingById = {},
   alternativeLoadingById = {},
   outsiderLoadingById = {},
-  isGeneratingAllAlternativeReadings = false,
+  roadmapBulkJob = null,
   isLoading,
   isGenerating,
   error,
@@ -327,6 +333,7 @@ const ReadingGuidePane = ({
 }) => {
   const paneRef = useRef(null);
   const [selectedGraphImage, setSelectedGraphImage] = useState(null);
+  const [showBulkGenerateModal, setShowBulkGenerateModal] = useState(false);
   const [mobileHeaderHidden, setMobileHeaderHidden] = useState(false);
 
   const isMobileViewport = useCallback(
@@ -448,15 +455,16 @@ const ReadingGuidePane = ({
     const onEsc = (event) => {
       if (event.key === 'Escape') {
         setSelectedGraphImage(null);
+        setShowBulkGenerateModal(false);
       }
     };
-    if (selectedGraphImage) {
+    if (selectedGraphImage || showBulkGenerateModal) {
       document.addEventListener('keydown', onEsc);
     }
     return () => {
       document.removeEventListener('keydown', onEsc);
     };
-  }, [selectedGraphImage]);
+  }, [selectedGraphImage, showBulkGenerateModal]);
 
   const handleOpenGraph = useCallback((url, title) => {
     setSelectedGraphImage({ url, title });
@@ -467,13 +475,22 @@ const ReadingGuidePane = ({
   const totalItems = roadmap?.items ? countItems(roadmap.items) : 0;
   const progressPct = totalItems > 0 ? Math.round((completedIds.length / totalItems) * 100) : 0;
   const progressBarWidthPct = totalItems > 0 ? Math.min(100, Math.round((completedIds.length / totalItems) * 100)) : 0;
+  const isBulkRoadmapRunning = !!roadmapBulkJob;
+  const bulkRunningLabel =
+    roadmapBulkJob === 'graphs'
+      ? 'Generating all graphs...'
+      : roadmapBulkJob === 'shortcuts'
+        ? 'Generating all shortcuts...'
+        : roadmapBulkJob === 'outsiders'
+          ? 'Generating all outsider guides...'
+          : '';
 
   const roadmapActionsInner = (
     <>
       <button
         type="button"
         onClick={onGenerateRoadmap}
-        disabled={isLoading || isGenerating || isGeneratingAllAlternativeReadings || serverActionsDisabled}
+        disabled={isLoading || isGenerating || isBulkRoadmapRunning || serverActionsDisabled}
         className="generate-guide-btn"
       >
         {isGenerating ? 'Generating...' : (roadmap ? 'Regenerate Roadmap' : 'Generate Roadmap')}
@@ -481,11 +498,11 @@ const ReadingGuidePane = ({
       {roadmap?.items?.length > 0 && (
         <button
           type="button"
-          onClick={onGenerateAllAlternativeReadings}
-          disabled={isLoading || isGenerating || isGeneratingAllAlternativeReadings || serverActionsDisabled || !onGenerateAllAlternativeReadings}
+          onClick={() => setShowBulkGenerateModal(true)}
+          disabled={isLoading || isGenerating || isBulkRoadmapRunning || serverActionsDisabled || !onBulkGenerateRoadmap}
           className="generate-guide-btn generate-shortcuts-btn"
         >
-          {isGeneratingAllAlternativeReadings ? 'Generating all shortcuts...' : 'Generate All Shortcuts'}
+          {isBulkRoadmapRunning ? bulkRunningLabel : 'Generate all…'}
         </button>
       )}
       {totalItems > 0 && (
@@ -543,7 +560,7 @@ const ReadingGuidePane = ({
                   onGenerateGraph={onGenerateGraph}
                   onGenerateAlternativeReading={onGenerateAlternativeReading}
                   onGenerateOutsiderGuide={onGenerateOutsiderGuide}
-                  isGeneratingAllAlternativeReadings={isGeneratingAllAlternativeReadings}
+                  roadmapBulkJob={roadmapBulkJob}
                   graphLoadingById={graphLoadingById}
                   alternativeLoadingById={alternativeLoadingById}
                   outsiderLoadingById={outsiderLoadingById}
@@ -583,6 +600,74 @@ const ReadingGuidePane = ({
                 alt={`Large concept graph for ${selectedGraphImage.title}`}
                 className="roadmap-graph-image-large"
               />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showBulkGenerateModal && (
+        <div
+          className="roadmap-modal-backdrop"
+          role="presentation"
+          onClick={() => setShowBulkGenerateModal(false)}
+        >
+          <div
+            className="roadmap-bulk-choice-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="roadmap-bulk-modal-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="roadmap-bulk-choice-modal-header">
+              <h4 id="roadmap-bulk-modal-title">Generate for all cards</h4>
+              <button
+                type="button"
+                className="roadmap-modal-close"
+                onClick={() => setShowBulkGenerateModal(false)}
+                aria-label="Close"
+              >
+                &times;
+              </button>
+            </div>
+            <p className="roadmap-bulk-choice-hint">
+              Runs sequentially for every roadmap card (including nested sections).
+            </p>
+            <div className="roadmap-bulk-choice-actions">
+              <button
+                type="button"
+                className="roadmap-bulk-choice-btn roadmap-bulk-choice-btn--graph"
+                onClick={() => {
+                  setShowBulkGenerateModal(false);
+                  onBulkGenerateRoadmap('graph');
+                }}
+              >
+                All graphs
+              </button>
+              <button
+                type="button"
+                className="roadmap-bulk-choice-btn roadmap-bulk-choice-btn--shortcut"
+                onClick={() => {
+                  setShowBulkGenerateModal(false);
+                  onBulkGenerateRoadmap('shortcut');
+                }}
+              >
+                All author shortcuts
+              </button>
+              <button
+                type="button"
+                className="roadmap-bulk-choice-btn roadmap-bulk-choice-btn--outsider"
+                onClick={() => {
+                  setShowBulkGenerateModal(false);
+                  onBulkGenerateRoadmap('outsider');
+                }}
+              >
+                All outsider guides
+              </button>
+            </div>
+            <div className="roadmap-bulk-choice-footer">
+              <button type="button" className="roadmap-bulk-cancel-btn" onClick={() => setShowBulkGenerateModal(false)}>
+                Cancel
+              </button>
             </div>
           </div>
         </div>
