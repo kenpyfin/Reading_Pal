@@ -35,6 +35,7 @@ Root `.env` is loaded by services. Important variables:
   - `PDF_OCR_ENGINE` (`paddle`, `none`, `text-only`)
   - `PDF_OCR_LANG`
   - `PDF_PAGE_DPI`
+  - `PDF_GEMINI_REFORMAT_TIMEOUT_MS` (per-chunk Gemini reformat HTTP timeout in ms; default `360000`)
 - Image upload security
   - `IMAGE_UPLOAD_API_KEY` (optional; enables upload auth when non-empty)
 

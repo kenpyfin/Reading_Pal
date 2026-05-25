@@ -348,6 +348,13 @@ Use a reverse-chronological list (newest first). Each entry should be short and 
 - **Where:** `backend/db/mongodb.py`, `backend/api/books.py` (`list_books`), `backend/main.py` (CORS `expose_headers`).
 - **Notes:** Default `limit` remains 100 when query params are omitted (backward compatible).
 
+## 2026-05-23 — EPUB upload stuck on last Gemini reformat chunk
+
+- **What:** `pdf_service` Gemini reformat now uses `GenerateContentConfig` with `AutomaticFunctionCallingConfig(disable=True)`, per-chunk HTTP timeout (`PDF_GEMINI_REFORMAT_TIMEOUT_MS`, default 360000 ms), and `system_instruction` instead of a huge inline prompt. Timeouts/errors fall back to the original chunk so the pipeline can finish. Blocking reformat runs in `asyncio.to_thread`; callback POST timeout raised to 60s. Upload sets book status to `processing` when a `job_id` is returned.
+- **Why:** Large EPUBs (e.g. ~600k chars → 15 chunks) could hang forever on the final `generate_content` call (no HTTP timeout, AFC enabled); UI stayed on “processing” with no callback.
+- **Where:** `pdf_service/app.py`, `backend/api/books.py`.
+- **Notes:** Tune `PDF_GEMINI_REFORMAT_TIMEOUT_MS` if chunks legitimately exceed 6 minutes. Restart `pdf_service` after deploy; re-upload books that were stuck mid-job.
+
 ## 2026-05-07 — Knowledge mapping backbone for whole-book roadmap
 
 - **What:** Refactored `knowledge_mapper.py` into a `KnowledgeMapper` class with structured heading-tree extraction, reference mapping, `hub_score` computation, and conversion to `ReadingGuideItem`. Added `ReadingGuideItem.hub_score` and `ReadingGuideItem.purpose`. Added `LLMService.generate_roadmap()` to build roadmap items from the mapper and optionally fill missing node purposes via guide Gemini JSON output.

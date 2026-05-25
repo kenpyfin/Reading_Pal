@@ -15,6 +15,7 @@ import ollama # Import the ollama library
 import asyncio # Import asyncio for background tasks
 import requests # Import requests for making HTTP calls in background task
 from google import genai
+from google.genai import types as genai_types
 from anthropic import Anthropic # Import Anthropic for formatting-specific LLM
 from parsers.document_parsers import (
     detect_document_extension,
@@ -80,6 +81,8 @@ GEMINI_REFORMAT_MODEL_NAME = (
     or os.getenv("GEMINI_REFORMAT_MODEL_NAME")
     or "gemini-2.5-flash"
 )
+# Per-chunk HTTP timeout for Gemini reformat (milliseconds; google-genai divides by 1000).
+PDF_GEMINI_REFORMAT_TIMEOUT_MS = int(os.getenv("PDF_GEMINI_REFORMAT_TIMEOUT_MS", "360000"))
 
 # Gemini client for markdown reformat (google-genai SDK)
 gemini_reformat_client = None
@@ -338,6 +341,46 @@ def _restore_markdown_image_links(text: str, token_map: Dict[str, str]) -> str:
     return restored
 
 
+_GEMINI_REFORMAT_SYSTEM_INSTRUCTION = """
+You are an expert in Markdown formatting and text organization. Your task is to reformat the given Markdown text to significantly improve its readability, consistency, and structural organization.
+
+Rules:
+- Preserve all original text, headings, lists, code blocks, tables, and image links exactly (do not summarize or rephrase).
+- Improve paragraph breaks, heading hierarchy, list formatting, and spacing.
+- Output ONLY the reformatted Markdown (no commentary, no wrapping code fences).
+"""
+
+
+def _gemini_reformat_generate_config() -> genai_types.GenerateContentConfig:
+    """Gemini config for upload-time markdown reformat (no tools / AFC)."""
+    return genai_types.GenerateContentConfig(
+        system_instruction=_GEMINI_REFORMAT_SYSTEM_INSTRUCTION,
+        temperature=0.1,
+        http_options=genai_types.HttpOptions(timeout=PDF_GEMINI_REFORMAT_TIMEOUT_MS),
+        automatic_function_calling=genai_types.AutomaticFunctionCallingConfig(disable=True),
+    )
+
+
+def _extract_gemini_response_text(response: Any) -> str:
+    """Read text from a generate_content response; empty string if blocked or missing."""
+    if response is None:
+        return ""
+    text = getattr(response, "text", None)
+    if text:
+        return text
+    candidates = getattr(response, "candidates", None) or []
+    parts: List[str] = []
+    for candidate in candidates:
+        content = getattr(candidate, "content", None)
+        if not content:
+            continue
+        for part in getattr(content, "parts", None) or []:
+            part_text = getattr(part, "text", None)
+            if part_text:
+                parts.append(part_text)
+    return "".join(parts)
+
+
 # --- Updated ProcessResponse model for async initiation ---
 class ProcessResponse(BaseModel):
     success: bool
@@ -581,76 +624,13 @@ def reformat_markdown_with_gemini(md_text: str) -> str:
     logger.info(f"Markdown split into {len(chunks)} chunks for Gemini.")
 
     reformatted_chunks = []
-    system_instruction = """
-    [Persona]
-    You are an expert in Markdown formatting and text organization, powered by Gemini. You function as an expert technical editor, specializing in transforming disorganized Markdown into clean, professional, and structurally coherent documents with optimal readability.
-
-    [Core Task]
-    Your task is to analyze the provided Markdown and reformat it for optimal readability, structural hierarchy, and text organization, following the rules below.
-
-    ---
-
-    [Guiding Principles & Rules]
-
-    Strict Content Preservation:
-    - All original text, headings, lists, code blocks (```), inline code (`), tables, and image links MUST be preserved exactly as they are.
-    - Do NOT summarize, expand, rephrase, or change the meaning of ANY content.
-
-    Intelligent Paragraph Breaks:
-    - Break long paragraphs into shorter, more digestible paragraphs when appropriate
-    - Respect semantic boundaries - break at natural thought transitions
-    - Ensure paragraphs are well-sized (typically 3-5 sentences, but adjust based on content)
-    - Maintain logical flow between paragraphs
-
-    Hierarchical Structuring:
-    - Analyze the heading levels (#, ##, ###, etc.) to understand the document's outline
-    - Ensure headings accurately reflect the content hierarchy
-    - Insert appropriate blank lines to create clear visual separation between sections and elements
-    - Use consistent heading styles throughout
-
-    Consistent List Formatting:
-    - Standardize list markers (use '-' consistently for unordered lists, '1.' for ordered lists)
-    - Ensure proper indentation for nested lists
-    - Add appropriate spacing around lists
-    - Maintain list item alignment and structure
-
-    Overall Readability:
-    - Improve sentence flow and clarity where appropriate (without changing meaning)
-    - Ensure appropriate spacing between sections and elements
-    - Normalize excessive blank lines (typically one blank line between paragraphs)
-    - Improve visual structure while preserving all content
-
-    Syntax Correction and Consistency:
-    - Correct any malformed Markdown syntax (e.g., incorrect list formatting, inconsistent heading styles)
-    - Ensure standard Markdown syntax is used throughout
-
-    Special Element Handling:
-    - Ensure tables and mathematical formulas (LaTeX) are complete and correctly formatted
-    - Preserve code blocks and inline code exactly as they appear
-    - Pay close attention to image links like ![](path/to/image.png) or ![alt text](path/to/image.png) and ensure they are preserved exactly as they appear in the input
-
-    Output Format:
-    - CRITICAL: Output ONLY the reformatted Markdown text
-    - Do NOT include any explanations, greetings, or apologies
-    - Do NOT wrap the final output in a markdown code block (```markdown ... ``` or ``` ... ```)
-
-
-Reformat this markdown:
-"""
-
-    # Safety settings can be adjusted if needed, though default might be fine for reformatting.
-    # Example:
-    # safety_settings = [
-    #     {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-    #     {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-    #     {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-    #     {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
-    # ]
-    # generation_config = genai.types.GenerationConfig(temperature=0.1)
-
+    gemini_config = _gemini_reformat_generate_config()
     strip_pattern = re.compile(r"^\s*```(?:markdown)?\s*\n?(.*?)\n?\s*```\s*$", re.DOTALL | re.IGNORECASE)
 
-    logger.info(f"Starting Gemini reformatting loop for {len(chunks)} chunks...")
+    logger.info(
+        f"Starting Gemini reformatting loop for {len(chunks)} chunks "
+        f"(timeout={PDF_GEMINI_REFORMAT_TIMEOUT_MS}ms, AFC disabled)..."
+    )
     for i, chunk in enumerate(chunks):
         if not chunk.strip(): # Skip empty chunks
             reformatted_chunks.append(chunk)
@@ -661,15 +641,13 @@ Reformat this markdown:
             # Protect markdown image links so they survive model rewriting.
             protected_chunk, token_map = _protect_markdown_image_links(chunk)
 
-            # Construct the prompt for Gemini
-            full_prompt = system_instruction + "\n\n" + protected_chunk
-            
             response = gemini_reformat_client.models.generate_content(
                 model=GEMINI_REFORMAT_MODEL_NAME,
-                contents=full_prompt,
+                contents=protected_chunk,
+                config=gemini_config,
             )
             
-            reformatted_chunk_raw = response.text
+            reformatted_chunk_raw = _extract_gemini_response_text(response)
             
             # Strip ```markdown ... ``` wrappers
             match = strip_pattern.match(reformatted_chunk_raw)
@@ -948,14 +926,18 @@ async def perform_pdf_processing(
             logger.info(f"Job {job_id}: Page merging skipped (NUM_ORIGINAL_PAGES_TO_MERGE <= 1 or empty input).")
         # --- END MERGE PAGES ---
 
-        # Reformat markdown using the potentially merged text
+        # Reformat markdown using the potentially merged text (blocking LLM calls in a thread)
         reformatted_md_text = ""
         if GEMINI_API_KEY_REFORMAT: # Check if Gemini API key is available and configured
             logger.info(f"Job {job_id}: Attempting markdown reformatting with Google Gemini...")
-            reformatted_md_text = reformat_markdown_with_gemini(md_text_for_reformatting)
+            reformatted_md_text = await asyncio.to_thread(
+                reformat_markdown_with_gemini, md_text_for_reformatting
+            )
         elif OLLAMA_API_BASE and OLLAMA_REFORMAT_MODEL: # Fallback to Ollama if configured
             logger.info(f"Job {job_id}: Gemini not available/configured. Attempting markdown reformatting with Ollama...")
-            reformatted_md_text = reformat_markdown_with_ollama(md_text_for_reformatting)
+            reformatted_md_text = await asyncio.to_thread(
+                reformat_markdown_with_ollama, md_text_for_reformatting
+            )
         else:
             logger.warning(f"Job {job_id}: Neither Gemini nor Ollama reformatting services are configured. Using raw markdown.")
             reformatted_md_text = md_text_for_reformatting
@@ -1018,7 +1000,7 @@ async def perform_pdf_processing(
             callback_data["images"] = callback_images
         
         try:
-            response = requests.post(callback_url, json=callback_data, timeout=10) # Add a timeout
+            response = requests.post(callback_url, json=callback_data, timeout=60)
             response.raise_for_status() # Raise an exception for bad status codes
             logger.info(f"Job {job_id}: Callback sent successfully to {callback_url}. Backend response status: {response.status_code}")
         except requests.exceptions.RequestException as e:

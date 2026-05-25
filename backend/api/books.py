@@ -194,7 +194,8 @@ async def upload_document(
              raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=error_detail)
 
         job_id = processed_data.get("job_id")
-        initial_status = processed_data.get("status", "pending")
+        # Track active pipeline work as processing (pdf_service returns pending at enqueue time).
+        initial_status = "processing" if job_id else processed_data.get("status", "pending")
 
         if not job_id:
             logger.error("Document service did not return a job_id.")
