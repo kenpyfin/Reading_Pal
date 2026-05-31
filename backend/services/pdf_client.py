@@ -11,6 +11,9 @@ from fastapi import UploadFile # Use UploadFile type hint for clarity
 logger = logging.getLogger(__name__)
 
 PDF_CLIENT_URL = os.getenv("PDF_CLIENT_URL")
+# Connect quickly; allow time to stream large PDFs to pdf_service before job_id is returned.
+PDF_CLIENT_CONNECT_TIMEOUT = int(os.getenv("PDF_CLIENT_CONNECT_TIMEOUT", "15"))
+PDF_CLIENT_READ_TIMEOUT = int(os.getenv("PDF_CLIENT_READ_TIMEOUT", "600"))
 
 # Change from async def to def
 def process_document_with_service(file: UploadFile, title: str = None):
@@ -35,7 +38,12 @@ def process_document_with_service(file: UploadFile, title: str = None):
 
     try:
         # Use requests.post for sending files - this is synchronous
-        response = requests.post(url, files=files, data=data)
+        response = requests.post(
+            url,
+            files=files,
+            data=data,
+            timeout=(PDF_CLIENT_CONNECT_TIMEOUT, PDF_CLIENT_READ_TIMEOUT),
+        )
         response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
 
         result = response.json()

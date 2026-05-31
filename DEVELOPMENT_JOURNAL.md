@@ -29,6 +29,51 @@ Use a reverse-chronological list (newest first). Each entry should be short and 
 
 <!-- New entries go below this comment, newest first. -->
 
+## 2026-05-31 — Non-blocking MinerU jobs (fix upload timeout vs processing)
+
+- **What:** Moved document extraction (MinerU/Paddle) off the FastAPI event loop via a dedicated thread-pool worker in `pdf_service/app.py`. Backend pdf_client gets connect/read timeouts; frontend upload timeout raised to 10 minutes for job initiation only. Host pdf start script waits for HTTP readiness on port 8502.
+- **Why:** MinerU blocked the single uvicorn worker so `/process-pdf` could not return `job_id` while a prior 184-page job ran; frontend 60s timeout fired before pending/processing flow completed.
+- **Where:** `pdf_service/app.py`, `backend/services/pdf_client.py`, `frontend/src/components/PdfUploadForm.js`, `scripts/pdf_service_host.sh`
+
+## 2026-05-31 — MinerU host setup + pdf_service_host.sh env load fix
+
+- **What:** Installed `mineru[pipeline]` in MinerU conda env; fixed `scripts/pdf_service_host.sh` to `load_env` before reading `MINERU_PYTHON`; started host pdf_service on port 8502 (Docker `pdf_service` container stopped).
+- **Why:** User cleanup freed disk; MinerU import was failing and host start script did not source `.env` before resolving Python path.
+- **Where:** MinerU conda env, `scripts/pdf_service_host.sh`, `.run/pdf_service.log`
+
+## 2026-05-30 — Deploy scripts: host MinerU pdf_service vs Docker Paddle
+
+- **What:** Added `scripts/pdf_service_host.sh` and updated `deploy.sh`, `start_services.sh`, `redeploy_app.sh` to skip Compose `pdf_service` when `PDF_SERVICE_RUNTIME=host` (default for `PDF_EXTRACTION_BACKEND=mineru`). Host worker uses `MINERU_PYTHON` from `.env`; logs under `.run/pdf_service.log`.
+- **Why:** MinerU runs in host conda, not the default Docker image; deploy had always built/started the wrong pdf_service container.
+- **Where:** `scripts/pdf_service_host.sh`, `deploy.sh`, `start_services.sh`, `redeploy_app.sh`, `.env`, `docs/operations.md`
+
+## 2026-05-30 — Paddle cu118 wheel for Tesla M40 GPU
+
+- **What:** Switched `pdf_service` Docker image from `paddlepaddle-gpu` cu126 to **cu118**. Updated `paddle_device.py` so Maxwell GPUs use GPU when the cu118 wheel is installed. Documented `PDF_OCR_DEVICE` / `PDF_LAYOUT_DEVICE=gpu:0` in operations.
+- **Why:** Tesla M40 segfaults with CUDA 12 Paddle wheels; cu118 GPU inference verified (`predict OK` on gpu:0).
+- **Where:** `pdf_service/Dockerfile`, `pdf_service/parsers/paddle_device.py`, `docs/operations.md`
+
+## 2026-05-30 — Paddle layout CPU fallback on Maxwell GPUs (Tesla M40)
+
+- **What:** Added `pdf_service/parsers/paddle_device.py` to auto-select CPU for Paddle inference on GPUs with compute capability &lt; 6.0 (Maxwell/Kepler) when `PDF_LAYOUT_DEVICE` / `PDF_OCR_DEVICE` are unset. Warn when `PDF_SCAN_FIGURE_ENGINE=mineru` (use `PDF_EXTRACTION_BACKEND=mineru` instead).
+- **Why:** `LayoutDetection` on Tesla M40 initialized on GPU but segfaulted in cuBLAS during `predict()` with PaddlePaddle 3.0 + CUDA 12.
+- **Where:** `pdf_service/parsers/paddle_device.py`, `pdf_service/parsers/scanned_figure_extraction.py`, `pdf_service/app.py`, `docs/operations.md`
+- **Notes:** Override with `PDF_LAYOUT_DEVICE=gpu:0` at your own risk. For MinerU full parse, set `PDF_EXTRACTION_BACKEND=mineru` (not in default Docker image).
+
+## 2026-05-30 — Scanned PDF routing fix + optional MinerU backend
+
+- **What:** Fixed mis-routing of OCR'd scan PDFs that have a text layer but full-page embedded rasters (`pdf_is_image_heavy_scan`). Those now use text extraction plus layout figure crops (or MinerU when `PDF_EXTRACTION_BACKEND=mineru`). Always skip page-covering embedded backgrounds in `extract_pdf_images`. Added optional `pdf_service/parsers/mineru_extraction.py` and compose mount for `MINERU_MODELS_PATH`.
+- **Why:** Logs showed `PDF has text layer` for a 184-page scan book, so layout/scan figure code never ran and 368 full-page images were saved. User expected MinerU; the running Docker image only had PaddleOCR layout, not `mineru`.
+- **Where:** `pdf_service/app.py`, `pdf_service/parsers/mineru_extraction.py`, `pdf_service/parsers/scanned_figure_extraction.py`, `docker-compose.yml`, `docs/operations.md`
+- **Notes:** For MinerU: set `PDF_EXTRACTION_BACKEND=mineru` in `.env` and run pdf_service where `mineru[pipeline]` is installed (e.g. `start_services.sh` MinerU conda), or add MinerU to the Docker image. Rebuild/restart `pdf_service` after pulling this change.
+
+## 2026-05-28 — Scanned PDF layout figure extraction (Phase 2)
+
+- **What:** Added PaddleOCR `LayoutDetection` (PP-DocLayout) for scanned-page figure extraction in `pdf_service/parsers/scanned_figure_extraction.py`. Scanned PDFs now detect `image`/`figure`/`chart` regions inside flat page bitmaps, crop them to `/images/app/*_fig*.png`, and skip page-covering embedded backgrounds. Engine is configurable via `PDF_SCAN_FIGURE_ENGINE` (`layout` default, `heuristic` fallback, or `both`).
+- **Why:** Figures in scan-based PDFs live inside the page photo, not as separate PDF image objects; naive `page.get_images()` exported the whole scanned page as one image.
+- **Where:** `pdf_service/parsers/scanned_figure_extraction.py`, `pdf_service/app.py`, `pdf_service/Dockerfile`, `docs/operations.md`
+- **Notes:** First run downloads layout weights. Tune with `PDF_LAYOUT_MODEL_NAME`, `PDF_LAYOUT_FIGURE_SCORE_THRESHOLD`, and area-ratio bounds. Set `PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True` in Docker to avoid startup host checks.
+
 ## 2026-05-12 — Reading Guide: tighter roadmap spacing and Safari actions overflow
 
 - **What:** Removed duplicate nested `.reading-guide-actions` when `hideHeader` (merged-nav) was true so padding/flex width is not doubled. Capped progress bar fill width at 100% when completed count exceeds total. Tightened roadmap card / inner content padding and left indents; added progress bar styles, `min-width: 0` / `flex: 1 1 0%` on action buttons, and safe-area horizontal padding for embed actions.

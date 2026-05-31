@@ -49,6 +49,7 @@ services:
       - "host.docker.internal:host-gateway"
 
   pdf_service:
+    profiles: ["docker-pdf"]
     build: ./pdf_service
     ports:
       - "${PDF_SERVICE_PORT:-8502}:8502"
@@ -59,12 +60,14 @@ services:
       PDF_STORAGE_PATH: /app/storage/pdfs
       MARKDOWN_PATH: /app/storage/output
       IMAGES_PATH: /app/storage/images
+      MINERU_MODELS_PATH: /app/models
       # From inside the container, reach the host backend (backend uses network_mode: host)
       BACKEND_CALLBACK_URL: "http://host.docker.internal:${BACKEND_PORT:-8000}/api/books/callback"
     volumes:
       - ${PDF_STORAGE_PATH}:/app/storage/pdfs
       - ${MARKDOWN_PATH}:/app/storage/output
       - ${IMAGES_PATH}:/app/storage/images
+      - ${MINERU_MODELS_PATH:-./pdf_service/models}:/app/models
     deploy:
       resources:
         reservations:

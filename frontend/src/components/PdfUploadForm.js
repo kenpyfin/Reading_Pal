@@ -2,8 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom'; // Import useNavigate
 import { getAuthHeaders } from '../utils/authRequest';
 
-// Define timeout duration for upload in milliseconds
-const UPLOAD_TIMEOUT_MS = 60000; // 60 seconds
+// Timeout for upload initiation only (returns job_id; MinerU runs in background).
+const UPLOAD_TIMEOUT_MS = 600000; // 10 minutes — large scans need time to reach pdf_service
 
 function PdfUploadForm() {
   const [selectedFile, setSelectedFile] = useState(null);
@@ -123,7 +123,10 @@ function PdfUploadForm() {
       // Check if the error is an AbortError (due to timeout)
       if (err.name === 'AbortError') {
           console.error('Upload aborted due to timeout:', err);
-          setError(`Upload timed out after ${UPLOAD_TIMEOUT_MS / 1000} seconds. Please check your connection and try again.`);
+          setError(
+            `Upload timed out after ${UPLOAD_TIMEOUT_MS / 1000} seconds while starting processing. ` +
+              'Large files may need longer; try again or check pdf_service logs.'
+          );
       } else {
           console.error('Upload failed:', err);
           setError(`Upload failed: ${err.message || 'Unknown error'}`);

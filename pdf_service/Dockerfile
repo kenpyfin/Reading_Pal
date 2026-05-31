@@ -19,8 +19,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # App dependencies
 COPY requirements.txt ./
 # Install PaddlePaddle GPU 3.x first so paddleocr does not pull CPU paddle from PyPI.
-# PaddleX/PaddleOCR 3.x require set_optimization_level (Paddle 3.0+). cu126 works with CUDA 12.4 base.
-RUN pip install --no-cache-dir paddlepaddle-gpu==3.0.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu126/
+# PaddleX/PaddleOCR 3.x require set_optimization_level (Paddle 3.0+).
+# Use cu118 (not cu126): Maxwell GPUs (Tesla M40, sm_52) segfault in cuBLAS with CUDA 12 wheels.
+RUN pip install --no-cache-dir paddlepaddle-gpu==3.0.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu118/
 RUN pip install --no-cache-dir \
     fastapi==0.104.1 python-multipart==0.0.6 uvicorn==0.24.0 python-dotenv \
     requests ollama google-genai anthropic \
@@ -29,6 +30,8 @@ RUN pip install --no-cache-dir \
 
 RUN mkdir -p /app/models
 ENV HOME=/app
+# Avoid blocking model-host connectivity checks during container startup.
+ENV PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True
 
 COPY app.py ./
 COPY parsers ./parsers

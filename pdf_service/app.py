@@ -13,6 +13,7 @@ import re
 import unicodedata
 import ollama # Import the ollama library
 import asyncio # Import asyncio for background tasks
+import concurrent.futures
 import requests # Import requests for making HTTP calls in background task
 from google import genai
 from google.genai import types as genai_types
@@ -25,6 +26,12 @@ from parsers.document_parsers import (
     mobi_or_azw_to_epub_bytes,
     txt_bytes_to_markdown,
 )
+from parsers.scanned_figure_extraction import (
+    extract_layout_figures_from_pdf_pages,
+    extract_scanned_page_figures,
+)
+from parsers.mineru_extraction import mineru_is_available, process_pdf_with_mineru
+from parsers.paddle_device import resolve_paddle_device
 
 # PaddleOCR is optional at import time so non-OCR flows still work.
 try:
@@ -62,6 +69,17 @@ APP_IMAGES_PATH = os.path.join(IMAGES_PATH, "app") if IMAGES_PATH else None
 PDF_OCR_ENGINE = os.getenv("PDF_OCR_ENGINE", "paddle")  # paddle, none, text-only
 PDF_OCR_LANG = os.getenv("PDF_OCR_LANG", "en")
 PDF_PAGE_DPI = int(os.getenv("PDF_PAGE_DPI", "200"))
+PDF_FULL_PAGE_IMAGE_COVERAGE_THRESHOLD = float(
+    os.getenv("PDF_FULL_PAGE_IMAGE_COVERAGE_THRESHOLD", "0.85")
+)
+# paddle (default) or mineru for scanned / image-heavy PDFs
+PDF_EXTRACTION_BACKEND = os.getenv("PDF_EXTRACTION_BACKEND", "paddle").strip().lower()
+logger.info(
+    "PDF extraction config: backend=%s scan_figure_engine=%s full_page_threshold=%.2f",
+    PDF_EXTRACTION_BACKEND,
+    os.getenv("PDF_SCAN_FIGURE_ENGINE", "layout"),
+    PDF_FULL_PAGE_IMAGE_COVERAGE_THRESHOLD,
+)
 
 # Get Ollama configuration from environment variables
 OLLAMA_API_BASE = os.getenv('OLLAMA_API_BASE')
@@ -201,6 +219,41 @@ def pdf_has_text(pdf_bytes: bytes, max_pages_to_check: int = 5) -> bool:
         return False
 
 
+def pdf_is_image_heavy_scan(
+    pdf_bytes: bytes,
+    max_pages_to_check: int = 10,
+    page_fraction_threshold: float = 0.5,
+) -> bool:
+    """
+    Detect scan-style PDFs that embed a near full-page raster per page (common for OCR'd scans).
+    These often still pass pdf_has_text() because of an invisible OCR text layer.
+    """
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        try:
+            n = min(max_pages_to_check, len(doc))
+            if n == 0:
+                return False
+            pages_with_full_bleed = 0
+            for i in range(n):
+                page = doc[i]
+                for xref in page.get_images(full=True):
+                    base_xref = xref[0]
+                    try:
+                        img_info = doc.extract_image(base_xref)
+                    except Exception:
+                        continue
+                    if _is_full_page_scan_image(page, base_xref, img_info):
+                        pages_with_full_bleed += 1
+                        break
+            return pages_with_full_bleed >= max(1, int(n * page_fraction_threshold))
+        finally:
+            doc.close()
+    except Exception as e:
+        logger.warning(f"pdf_is_image_heavy_scan failed: {e}")
+        return False
+
+
 def pdf_to_page_images(pdf_bytes: bytes, dpi: int = 200) -> List[np.ndarray]:
     """Render PDF pages to RGB numpy arrays (H, W, 3) for OCR. Uses pdf2image (poppler)."""
     try:
@@ -211,10 +264,47 @@ def pdf_to_page_images(pdf_bytes: bytes, dpi: int = 200) -> List[np.ndarray]:
         raise
 
 
+def _image_rect_area_ratio(page: fitz.Page, xref: int) -> float:
+    """Best-effort estimate of how much page area an image placement covers."""
+    page_area = max(float(page.rect.width * page.rect.height), 1.0)
+    try:
+        rects = page.get_image_rects(xref)
+    except Exception:
+        rects = []
+    if not rects:
+        return 0.0
+    max_ratio = 0.0
+    for rect in rects:
+        ratio = max(float(rect.width * rect.height), 0.0) / page_area
+        if ratio > max_ratio:
+            max_ratio = ratio
+    return max_ratio
+
+
+def _is_full_page_scan_image(page: fitz.Page, xref: int, img_info: Dict[str, Any]) -> bool:
+    """Detect scanner background images that are effectively the whole page."""
+    coverage_ratio = _image_rect_area_ratio(page, xref)
+    if coverage_ratio >= PDF_FULL_PAGE_IMAGE_COVERAGE_THRESHOLD:
+        return True
+
+    img_w = float(img_info.get("width") or 0)
+    img_h = float(img_info.get("height") or 0)
+    page_w = max(float(page.rect.width), 1.0)
+    page_h = max(float(page.rect.height), 1.0)
+    if img_w <= 0 or img_h <= 0:
+        return False
+
+    # Scanner exports often keep one near page-sized image xref with small scaling differences.
+    width_ratio = min(img_w, page_w) / max(img_w, page_w)
+    height_ratio = min(img_h, page_h) / max(img_h, page_h)
+    return width_ratio >= 0.90 and height_ratio >= 0.90
+
+
 def extract_pdf_images(
     pdf_bytes: bytes,
     sanitized_title: str,
     app_images_path: str,
+    skip_full_page_background: bool = False,
 ) -> List[List[str]]:
     """
     Extract embedded images from the PDF and save to app_images_path.
@@ -235,6 +325,11 @@ def extract_pdf_images(
                     try:
                         base_xref = xref[0]
                         img_info = doc.extract_image(base_xref)
+                        if skip_full_page_background and _is_full_page_scan_image(page, base_xref, img_info):
+                            logger.info(
+                                f"Skipping full-page scan background image xref={base_xref} on page {page_num + 1}"
+                            )
+                            continue
                         img_bytes = img_info.get("image")
                         if not img_bytes:
                             page_failures += 1
@@ -713,15 +808,82 @@ def process_pdf_bytes(pdf_bytes: bytes, sanitized_title: str) -> Tuple[str, List
     else:
         has_text = pdf_has_text(pdf_bytes)
 
-    if has_text:
+    image_heavy = pdf_is_image_heavy_scan(pdf_bytes)
+    if PDF_EXTRACTION_BACKEND == "mineru" and not mineru_is_available():
+        logger.warning(
+            "PDF_EXTRACTION_BACKEND=mineru but MinerU is not installed in this environment; "
+            "falling back to PaddleOCR/layout extraction."
+        )
+    use_mineru = PDF_EXTRACTION_BACKEND == "mineru" and mineru_is_available()
+    use_scanned_pipeline = (not has_text) or image_heavy
+
+    logger.info(
+        "PDF routing: has_text=%s image_heavy=%s backend=%s mineru_available=%s "
+        "scan_figure_engine=%s",
+        has_text,
+        image_heavy,
+        PDF_EXTRACTION_BACKEND,
+        mineru_is_available(),
+        os.getenv("PDF_SCAN_FIGURE_ENGINE", "layout"),
+    )
+
+    scanned_images_per_page: List[List[str]] = []
+
+    if use_mineru and use_scanned_pipeline:
+        logger.info("Using MinerU for scanned/image-heavy PDF.")
+        raw_md_text, scanned_images_per_page = process_pdf_with_mineru(
+            pdf_bytes,
+            sanitized_title=sanitized_title,
+            app_images_path=APP_IMAGES_PATH or "",
+        )
+    elif use_scanned_pipeline and not has_text:
+        logger.info("PDF appears scanned; using PaddleOCR for text.")
+        raw_md_text, scanned_images_per_page = process_scanned_pdf_with_paddleocr(
+            pdf_bytes,
+            sanitized_title=sanitized_title,
+            app_images_path=APP_IMAGES_PATH or "",
+        )
+    elif use_scanned_pipeline and has_text:
+        logger.info(
+            "PDF has OCR text layer but is image-heavy; using text extraction + layout figures."
+        )
+        raw_md_text = process_text_pdf(pdf_bytes)
+        scanned_images_per_page = extract_layout_figures_from_pdf_pages(
+            pdf_bytes,
+            sanitized_title=sanitized_title,
+            app_images_path=APP_IMAGES_PATH or "",
+            dpi=PDF_PAGE_DPI,
+        )
+    else:
         logger.info("PDF has text layer; using text extraction (no OCR).")
         raw_md_text = process_text_pdf(pdf_bytes)
-    else:
-        logger.info("PDF appears scanned; using PaddleOCR.")
-        raw_md_text = process_scanned_pdf_with_paddleocr(pdf_bytes)
 
-    images_per_page = extract_pdf_images(pdf_bytes, sanitized_title, APP_IMAGES_PATH or "")
-    return raw_md_text, images_per_page
+    # Always skip page-covering scan backgrounds; they are not figure assets.
+    embedded_images_per_page = extract_pdf_images(
+        pdf_bytes,
+        sanitized_title,
+        APP_IMAGES_PATH or "",
+        skip_full_page_background=True,
+    )
+
+    if use_scanned_pipeline and not use_mineru:
+        images_per_page: List[List[str]] = []
+        page_count = max(len(embedded_images_per_page), len(scanned_images_per_page))
+        for page_idx in range(page_count):
+            merged: List[str] = []
+            if page_idx < len(embedded_images_per_page):
+                merged.extend(embedded_images_per_page[page_idx])
+            if page_idx < len(scanned_images_per_page):
+                merged.extend(scanned_images_per_page[page_idx])
+            deduped = list(dict.fromkeys(name for name in merged if name))
+            images_per_page.append(deduped)
+        return raw_md_text, images_per_page
+
+    if use_mineru:
+        # MinerU markdown already contains image links; avoid duplicating via inject.
+        return raw_md_text, scanned_images_per_page
+
+    return raw_md_text, embedded_images_per_page
 
 
 def process_document_bytes(
@@ -758,7 +920,10 @@ def get_paddle_ocr(use_gpu: bool = True):
         raise RuntimeError("PaddleOCR is not available in this environment.")
     if _paddle_ocr_instance is None:
         # PaddleOCR 3.x uses device instead of use_gpu; show_log was removed.
-        device = "gpu:0" if use_gpu else "cpu"
+        if use_gpu:
+            device = resolve_paddle_device("PDF_OCR_DEVICE", default_gpu="gpu:0")
+        else:
+            device = "cpu"
         base_kwargs: dict = {
             "lang": PDF_OCR_LANG,
             "device": device,
@@ -801,26 +966,166 @@ def _ocr_results_to_markdown_page(lines_with_boxes: List[Tuple[List, Tuple[str, 
     return "\n\n".join(texts)
 
 
-def process_scanned_pdf_with_paddleocr(pdf_bytes: bytes) -> str:
-    """Render PDF to images, run PaddleOCR on each page, return combined markdown."""
+def process_scanned_pdf_with_paddleocr(
+    pdf_bytes: bytes,
+    sanitized_title: str,
+    app_images_path: str,
+) -> Tuple[str, List[List[str]]]:
+    """Render PDF to images, run OCR, and crop likely figure images from scanned pages."""
     dpi = PDF_PAGE_DPI
     images = pdf_to_page_images(pdf_bytes, dpi=dpi)
     if not images:
-        return ""
+        return "", []
     use_gpu = PDF_OCR_ENGINE == "paddle"
     ocr_engine = get_paddle_ocr(use_gpu=use_gpu)
     page_markdowns = []
+    scanned_images_per_page: List[List[str]] = []
     for i, img in enumerate(images):
         try:
             result = ocr_engine.ocr(img, cls=True)
             if not result or not result[0]:
                 page_markdowns.append("")
+                scanned_images_per_page.append([])
                 continue
-            page_markdowns.append(_ocr_results_to_markdown_page(result[0]))
+            lines = result[0]
+            page_markdowns.append(_ocr_results_to_markdown_page(lines))
+            scanned_images_per_page.append(
+                extract_scanned_page_figures(
+                    page_img=img,
+                    lines_with_boxes=lines,
+                    sanitized_title=sanitized_title,
+                    page_num=i,
+                    app_images_path=app_images_path,
+                    sanitize_text=sanitize_extracted_text,
+                )
+            )
         except Exception as e:
             logger.warning(f"PaddleOCR failed for page {i + 1}: {e}")
             page_markdowns.append("")
-    return "\n\n---\n\n".join(page_markdowns)
+            scanned_images_per_page.append([])
+    return "\n\n---\n\n".join(page_markdowns), scanned_images_per_page
+
+
+# Serialise heavy MinerU/Paddle jobs so the API event loop stays responsive for new uploads.
+_document_processing_executor = concurrent.futures.ThreadPoolExecutor(
+    max_workers=1,
+    thread_name_prefix="pdf-document-job",
+)
+
+
+def _extract_and_merge_document_sync(
+    temp_input_path: str,
+    source_filename: str,
+    sanitized_title: str,
+    job_id: str,
+) -> Tuple[str, List[Dict[str, str]]]:
+    """
+    Blocking document extraction + page merge. Runs off the asyncio event loop so
+    /process-pdf can accept new uploads while MinerU/Paddle work continues.
+    """
+    source_extension = detect_document_extension(source_filename)
+    logger.info(
+        "Job %s: Reading source bytes from %s (format=%s, filename=%s)...",
+        job_id,
+        temp_input_path,
+        source_extension,
+        source_filename,
+    )
+    with open(temp_input_path, "rb") as f:
+        source_bytes = f.read()
+    logger.info("Job %s: Source bytes read successfully.", job_id)
+
+    raw_md_text_from_pipe, images_per_page = process_document_bytes(
+        source_bytes,
+        source_extension,
+        sanitized_title,
+    )
+
+    callback_images: List[Dict[str, str]] = []
+    total_images = sum(len(imgs) for imgs in images_per_page)
+    if total_images > 0:
+        logger.info("Job %s: Extracted %s images from source document.", job_id, total_images)
+        raw_md_text_from_pipe = inject_image_links_into_markdown(
+            raw_md_text_from_pipe,
+            images_per_page,
+            web_image_base_path="/images/app",
+            page_separator="\n\n---\n\n",
+        )
+        callback_images = [
+            {"filename": name, "path": f"/images/app/{name}"}
+            for page_images in images_per_page
+            for name in page_images
+            if name
+        ]
+        logger.info(
+            "Job %s: Prepared callback image metadata for %s images.",
+            job_id,
+            len(callback_images),
+        )
+    else:
+        logger.info("Job %s: No extractable embedded raster images found.", job_id)
+
+    if not raw_md_text_from_pipe.strip():
+        raise RuntimeError(
+            f"Document extraction produced no markdown content for '{source_filename}'."
+        )
+
+    logger.info(
+        "Job %s: Raw markdown content. Length: %s chars.",
+        job_id,
+        len(raw_md_text_from_pipe),
+    )
+
+    raw_markdown_path = os.path.join(MARKDOWN_PATH, f"{sanitized_title}_raw.md")
+    try:
+        with open(raw_markdown_path, "w", encoding="utf-8") as raw_f:
+            raw_f.write(raw_md_text_from_pipe)
+        logger.info("Job %s: Saved raw markdown (pre-merge) to %s", job_id, raw_markdown_path)
+    except Exception as e_raw_save:
+        logger.error("Job %s: Failed to save raw markdown (pre-merge): %s", job_id, e_raw_save)
+
+    num_original_pages_to_merge = 5
+    page_separator_token = "\n\n---\n\n"
+    page_separator_pattern = r"\n-{3,}\n"
+
+    if num_original_pages_to_merge > 1 and raw_md_text_from_pipe.strip():
+        logger.info(
+            "Job %s: Attempting to merge %s original pages into one.",
+            job_id,
+            num_original_pages_to_merge,
+        )
+        original_pages = re.split(page_separator_pattern, raw_md_text_from_pipe)
+        merged_content_parts = []
+        for i in range(0, len(original_pages), num_original_pages_to_merge):
+            chunk_to_merge = original_pages[i : i + num_original_pages_to_merge]
+            merged_chunk = "\n\n".join(part.strip() for part in chunk_to_merge if part.strip())
+            if merged_chunk:
+                merged_content_parts.append(merged_chunk)
+
+        if merged_content_parts:
+            md_text_for_reformatting = page_separator_token.join(merged_content_parts)
+            logger.info(
+                "Job %s: Page merging complete. New length: %s chars. "
+                "Original sections: %s, New sections: %s",
+                job_id,
+                len(md_text_for_reformatting),
+                len(original_pages),
+                len(merged_content_parts),
+            )
+        else:
+            md_text_for_reformatting = raw_md_text_from_pipe
+            logger.info(
+                "Job %s: Page merging resulted in no content, using original raw markdown.",
+                job_id,
+            )
+    else:
+        md_text_for_reformatting = raw_md_text_from_pipe
+        logger.info(
+            "Job %s: Page merging skipped (NUM_ORIGINAL_PAGES_TO_MERGE <= 1 or empty input).",
+            job_id,
+        )
+
+    return md_text_for_reformatting, callback_images
 
 
 # --- Background task function for PDF processing ---
@@ -843,88 +1148,14 @@ async def perform_pdf_processing(
     callback_images: List[Dict[str, str]] = []
 
     try:
-        source_extension = detect_document_extension(source_filename)
-        logger.info(
-            f"Job {job_id}: Reading source bytes from {temp_input_path} "
-            f"(format={source_extension}, filename={source_filename})..."
-        )
-        with open(temp_input_path, "rb") as f:
-            source_bytes = f.read()
-        logger.info(f"Job {job_id}: Source bytes read successfully.")
-
-        raw_md_text_from_pipe, images_per_page = process_document_bytes(
-            source_bytes,
-            source_extension,
+        md_text_for_reformatting, callback_images = await asyncio.get_running_loop().run_in_executor(
+            _document_processing_executor,
+            _extract_and_merge_document_sync,
+            temp_input_path,
+            source_filename,
             sanitized_title,
+            job_id,
         )
-
-        total_images = sum(len(imgs) for imgs in images_per_page)
-        if total_images > 0:
-            logger.info(f"Job {job_id}: Extracted {total_images} images from source document.")
-            raw_md_text_from_pipe = inject_image_links_into_markdown(
-                raw_md_text_from_pipe,
-                images_per_page,
-                web_image_base_path="/images/app",
-                page_separator="\n\n---\n\n",
-            )
-            callback_images = [
-                {"filename": name, "path": f"/images/app/{name}"}
-                for page_images in images_per_page
-                for name in page_images
-                if name
-            ]
-            logger.info(
-                f"Job {job_id}: Prepared callback image metadata for {len(callback_images)} images."
-            )
-        else:
-            logger.info(f"Job {job_id}: No extractable embedded raster images found.")
-
-        if not raw_md_text_from_pipe.strip():
-            raise RuntimeError(
-                f"Document extraction produced no markdown content for '{source_filename}'."
-            )
-
-        logger.info(f"Job {job_id}: Raw markdown content. Length: {len(raw_md_text_from_pipe)} chars.")
-
-        # Save raw markdown (pre-merge) for debugging
-        raw_markdown_path = os.path.join(MARKDOWN_PATH, f"{sanitized_title}_raw.md")
-        try:
-            with open(raw_markdown_path, 'w', encoding='utf-8') as raw_f:
-                raw_f.write(raw_md_text_from_pipe)
-            logger.info(f"Job {job_id}: Saved raw markdown (pre-merge) to {raw_markdown_path}")
-        except Exception as e_raw_save:
-            logger.error(f"Job {job_id}: Failed to save raw markdown (pre-merge): {e_raw_save}")
-
-        # --- MERGE PAGES TO MAKE THEM LONGER ---
-        # Define how many original "pages" (sections separated by '---') to merge into one.
-        # For example, 2 means two original pages become one new page.
-        NUM_ORIGINAL_PAGES_TO_MERGE = 5
-        PAGE_SEPARATOR_TOKEN = "\n\n---\n\n"
-        PAGE_SEPARATOR_PATTERN = r'\n-{3,}\n' # Matches '---' or more hyphens on its own line
-
-        if NUM_ORIGINAL_PAGES_TO_MERGE > 1 and raw_md_text_from_pipe.strip():
-            logger.info(f"Job {job_id}: Attempting to merge {NUM_ORIGINAL_PAGES_TO_MERGE} original pages into one.")
-            original_pages = re.split(PAGE_SEPARATOR_PATTERN, raw_md_text_from_pipe)
-            
-            merged_content_parts = []
-            for i in range(0, len(original_pages), NUM_ORIGINAL_PAGES_TO_MERGE):
-                chunk_to_merge = original_pages[i:i + NUM_ORIGINAL_PAGES_TO_MERGE]
-                # Join parts within a new "longer" page with double newlines
-                merged_chunk = "\n\n".join(part.strip() for part in chunk_to_merge if part.strip()) 
-                if merged_chunk:
-                    merged_content_parts.append(merged_chunk)
-            
-            if merged_content_parts:
-                # Join the new "longer" pages with the original separator
-                md_text_for_reformatting = PAGE_SEPARATOR_TOKEN.join(merged_content_parts)
-                logger.info(f"Job {job_id}: Page merging complete. New length: {len(md_text_for_reformatting)} chars. Original sections: {len(original_pages)}, New sections: {len(merged_content_parts)}")
-            else:
-                md_text_for_reformatting = raw_md_text_from_pipe # Fallback if merging resulted in empty
-                logger.info(f"Job {job_id}: Page merging resulted in no content, using original raw markdown.")
-        else:
-            md_text_for_reformatting = raw_md_text_from_pipe
-            logger.info(f"Job {job_id}: Page merging skipped (NUM_ORIGINAL_PAGES_TO_MERGE <= 1 or empty input).")
-        # --- END MERGE PAGES ---
 
         # Reformat markdown using the potentially merged text (blocking LLM calls in a thread)
         reformatted_md_text = ""
@@ -1000,7 +1231,9 @@ async def perform_pdf_processing(
             callback_data["images"] = callback_images
         
         try:
-            response = requests.post(callback_url, json=callback_data, timeout=60)
+            response = await asyncio.to_thread(
+                requests.post, callback_url, json=callback_data, timeout=60
+            )
             response.raise_for_status() # Raise an exception for bad status codes
             logger.info(f"Job {job_id}: Callback sent successfully to {callback_url}. Backend response status: {response.status_code}")
         except requests.exceptions.RequestException as e:

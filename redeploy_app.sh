@@ -2,6 +2,10 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/pdf_service_host.sh
+source "${SCRIPT_DIR}/scripts/pdf_service_host.sh"
+
 # Fast redeploy helper:
 # - Avoids full docker-compose teardown/recreate cycles
 # - Rebuilds/restarts only services affected by code changes
@@ -143,7 +147,7 @@ map_paths_to_services() {
       pdf_service/*)
         add_service_unique pdf_service
         ;;
-      docker-compose.yml|docker-compose.*.yml|.env|deploy.sh|reload_dev.sh|redeploy_app.sh|start_services.sh)
+      docker-compose.yml|docker-compose.*.yml|.env|deploy.sh|reload_dev.sh|redeploy_app.sh|start_services.sh|scripts/pdf_service_host.sh)
         add_all_default_services
         ;;
       *)
@@ -257,22 +261,47 @@ detect_services_if_needed() {
 
 run_redeploy() {
   local -a cmd
-  cmd=(docker compose up -d)
-  if [[ $BUILD -eq 1 ]]; then
-    cmd+=(--build)
-  fi
-  if [[ $NO_DEPS -eq 1 ]]; then
-    cmd+=(--no-deps)
-  fi
-  cmd+=("${SELECTED_SERVICES[@]}")
+  local -a docker_services=()
+  local svc
 
-  echo "INFO: Redeploy target services: ${SELECTED_SERVICES[*]}"
-  echo "INFO: Executing: ${cmd[*]}"
-  if [[ $DRY_RUN -eq 1 ]]; then
-    return 0
+  for svc in "${SELECTED_SERVICES[@]}"; do
+    if [[ "$svc" == "pdf_service" ]] && host_runtime_selected; then
+      continue
+    fi
+    docker_services+=("$svc")
+  done
+
+  if [[ ${#docker_services[@]} -gt 0 ]]; then
+    local -a profile_args=()
+    if ! host_runtime_selected; then
+      profile_args=(--profile docker-pdf)
+    fi
+    cmd=(docker compose "${profile_args[@]}" up -d)
+    if [[ $BUILD -eq 1 ]]; then
+      cmd+=(--build)
+    fi
+    if [[ $NO_DEPS -eq 1 ]]; then
+      cmd+=(--no-deps)
+    fi
+    cmd+=("${docker_services[@]}")
+
+    echo "INFO: Redeploy target services: ${docker_services[*]}"
+    echo "INFO: Executing: ${cmd[*]}"
+    if [[ $DRY_RUN -eq 1 ]]; then
+      :
+    else
+      "${cmd[@]}"
+    fi
   fi
 
-  "${cmd[@]}"
+  if contains_service pdf_service "${SELECTED_SERVICES[@]}" && host_runtime_selected; then
+    echo "INFO: Restarting host pdf_service (MinerU)..."
+    if [[ $DRY_RUN -eq 1 ]]; then
+      echo "INFO: Would run: scripts/pdf_service_host.sh restart"
+    else
+      "${SCRIPT_DIR}/scripts/pdf_service_host.sh" restart
+    fi
+  fi
 }
 
 main() {

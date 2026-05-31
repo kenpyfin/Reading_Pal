@@ -130,6 +130,18 @@ def main():
     assert injected.count("\n\n---\n\n") == 1, "Expected markdown separator to remain canonical"
     print("5. Image link injection smoke test passed.")
 
+    from parsers.scanned_figure_extraction import (
+        LAYOUT_FIGURE_LABELS,
+        _box_area_ratio,
+        _normalize_box,
+    )
+
+    box = _normalize_box([10, 20, 110, 120], page_w=200, page_h=300)
+    assert box is not None and box[0] < box[2] and box[1] < box[3], f"Invalid box: {box}"
+    assert 0.01 < _box_area_ratio(box, 200, 300) < 0.5
+    assert "figure" in LAYOUT_FIGURE_LABELS and "text" not in LAYOUT_FIGURE_LABELS
+    print("5b. Scanned layout helper smoke test passed.")
+
     txt_md, txt_images = process_document_bytes(make_txt_bytes(), ".txt", "smoke_txt")
     assert "Second paragraph" in txt_md and txt_images == [], "TXT extraction failed"
     print("6. TXT extraction smoke test passed.")
@@ -149,8 +161,13 @@ def main():
     if PDF_OCR_ENGINE == "paddle":
         try:
             from app import process_scanned_pdf_with_paddleocr
-            ocr_md = process_scanned_pdf_with_paddleocr(pdf_bytes)
+            ocr_md, scan_imgs = process_scanned_pdf_with_paddleocr(
+                pdf_bytes,
+                sanitized_title="smoke_scanned",
+                app_images_path=os.path.join(os.environ["IMAGES_PATH"], "app"),
+            )
             print("10. process_scanned_pdf_with_paddleocr length:", len(ocr_md))
+            print("10b. scanned figure crops:", sum(len(p) for p in scan_imgs))
             print("11. PaddleOCR pipeline smoke test passed.")
         except Exception as e:
             print("11. PaddleOCR skipped (no GPU or dependency):", e)
