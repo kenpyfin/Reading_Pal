@@ -1,5 +1,6 @@
 const STORAGE_KEYS = {
   AUTH_TOKEN: 'authToken',
+  THEME_OVERRIDE: 'readingPalThemeOverride',
 };
 
 const READING_POSITION_PREFIX = 'readingPalLastPosition_';
@@ -90,4 +91,24 @@ export function setStoredReadingViewMode(bookId, viewMode) {
 
   const normalized = viewMode === 'guide' ? 'guide' : 'original';
   localStorage.setItem(getReadingViewModeKey(bookId), normalized);
+}
+
+export function getStoredThemeOverride() {
+  const saved = localStorage.getItem(STORAGE_KEYS.THEME_OVERRIDE);
+  if (saved === 'light' || saved === 'dark') {
+    return saved;
+  }
+  return null;
+}
+
+export function setStoredThemeOverride(value) {
+  if (value === 'light' || value === 'dark') {
+    localStorage.setItem(STORAGE_KEYS.THEME_OVERRIDE, value);
+    return;
+  }
+  clearStoredThemeOverride();
+}
+
+export function clearStoredThemeOverride() {
+  localStorage.removeItem(STORAGE_KEYS.THEME_OVERRIDE);
 }

@@ -1,15 +1,29 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import './index.css'; // Assuming some global styles
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import './theme.css';
+import './index.css';
 import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
 import PdfUploadForm from './components/PdfUploadForm';
 import BookView from './pages/BookView';
 import BookList from './pages/BookList';
 import NavBar from './components/NavBar';
-import LoginPage from './pages/LoginPage'; // Import LoginPage
-import AuthCallbackPage from './pages/AuthCallbackPage'; // Import AuthCallbackPage
-import AdminLoginPage from './pages/AdminLoginPage'; // Import AdminLoginPage
-import UserManagementPage from './pages/UserManagementPage'; // Import UserManagementPage
-import { clearStoredAuthToken, getStoredAuthToken, setStoredAuthToken } from './utils/storage';
+import LoginPage from './pages/LoginPage';
+import AuthCallbackPage from './pages/AuthCallbackPage';
+import AdminLoginPage from './pages/AdminLoginPage';
+import UserManagementPage from './pages/UserManagementPage';
+import {
+  clearStoredAuthToken,
+  clearStoredThemeOverride,
+  getStoredAuthToken,
+  getStoredThemeOverride,
+  setStoredAuthToken,
+  setStoredThemeOverride,
+} from './utils/storage';
+import {
+  applyThemeToDocument,
+  getEffectiveTheme,
+  getThemeMetaColor,
+  subscribeToSystemTheme,
+} from './utils/theme';
 
 // Helper to decode JWT (simplified, use a library like jwt-decode in a real app for production)
 const decodeJwt = (token) => {
@@ -34,6 +48,53 @@ function App() {
   const navBarMergeScrollRef = useRef(null);
   const [navBarScrollEpoch, setNavBarScrollEpoch] = useState(0);
   const bumpNavBarScrollSync = useCallback(() => setNavBarScrollEpoch((n) => n + 1), []);
+
+  const [themeOverride, setThemeOverride] = useState(() => getStoredThemeOverride());
+  const [systemThemeEpoch, setSystemThemeEpoch] = useState(0);
+  const effectiveTheme = useMemo(
+    () => getEffectiveTheme(themeOverride),
+    [themeOverride, systemThemeEpoch],
+  );
+
+  useEffect(() => {
+    applyThemeToDocument(effectiveTheme);
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) {
+      meta.setAttribute('content', getThemeMetaColor(effectiveTheme));
+    }
+  }, [effectiveTheme]);
+
+  useEffect(() => {
+    if (themeOverride !== null) {
+      return undefined;
+    }
+    return subscribeToSystemTheme(() => setSystemThemeEpoch((n) => n + 1));
+  }, [themeOverride]);
+
+  const handleThemeToggle = useCallback(() => {
+    if (themeOverride === null) {
+      const next = effectiveTheme === 'dark' ? 'light' : 'dark';
+      setStoredThemeOverride(next);
+      setThemeOverride(next);
+      return;
+    }
+    const next = themeOverride === 'dark' ? 'light' : 'dark';
+    setStoredThemeOverride(next);
+    setThemeOverride(next);
+  }, [themeOverride, effectiveTheme]);
+
+  const handleUseSystemTheme = useCallback(() => {
+    clearStoredThemeOverride();
+    setThemeOverride(null);
+    setSystemThemeEpoch((n) => n + 1);
+  }, []);
+
+  const themeToggleProps = {
+    themeOverride,
+    effectiveTheme,
+    onToggle: handleThemeToggle,
+    onUseSystem: handleUseSystemTheme,
+  };
 
   useEffect(() => {
     const token = getStoredAuthToken();
@@ -87,14 +148,18 @@ function App() {
             extra={navBarExtra}
             mergeScrollContainerRef={navBarMergeScrollRef}
             mergeScrollEpoch={navBarScrollEpoch}
+            {...themeToggleProps}
           />
         )}
         <div className="app-content-shell">
           <Routes>
             {!authToken ? (
               <>
-                <Route path="/login" element={<LoginPage />} />
-                <Route path="/admin/login" element={<AdminLoginPage setAuthToken={handleSetAuthToken} />} />
+                <Route path="/login" element={<LoginPage {...themeToggleProps} />} />
+                <Route
+                  path="/admin/login"
+                  element={<AdminLoginPage setAuthToken={handleSetAuthToken} {...themeToggleProps} />}
+                />
                 <Route
                   path="/auth/callback"
                   element={<AuthCallbackPage setAuthToken={handleSetAuthToken} />}

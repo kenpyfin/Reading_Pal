@@ -11,7 +11,7 @@
 /* Styles for the main h2 title in NotePane */
 .note-pane h2 { /* Targets the <h2>Notes & LLM Insights</h2> */
   margin-top: 0;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid var(--color-border-subtle);
   padding-bottom: 10px;
 }
 
@@ -19,31 +19,31 @@
 .selected-text-display {
     margin-bottom: 20px;
     padding: 10px 15px; /* More padding */
-    border: 1px solid #d1e7dd; /* Softer border color, matches LLM response idea */
+    border: 1px solid var(--color-border); /* Softer border color, matches LLM response idea */
     border-radius: 4px;
-    background-color: #f8f9fa; /* Light background, similar to note-item */
+    background-color: var(--color-bg-hover); /* Light background, similar to note-item */
 }
 
 .selected-text-display h4 {
     margin-top: 0;
     margin-bottom: 8px;
     font-size: 1.05em; /* Slightly adjusted size */
-    color: #212529; /* Darker text */
+    color: var(--color-text); /* Darker text */
 }
 
 .selected-text-display blockquote {
     margin: 0 0 5px 0; /* Adjusted margin */
     padding: 0 10px;
     font-style: italic;
-    color: #495057; /* Softer text color */
-    border-left: 3px solid #adb5bd; /* Softer border */
+    color: var(--color-text-secondary); /* Softer text color */
+    border-left: 3px solid var(--color-border); /* Softer border */
     max-height: 150px; /* Limit height and make scrollable if needed */
     overflow-y: auto; /* Add scroll for overflow */
 }
 
 .selected-text-display .location-info {
     font-size: 0.85em; /* Slightly larger */
-    color: #6c757d; /* Softer color */
+    color: var(--color-text-subtle); /* Softer color */
     margin-top: 5px;
     margin-bottom: 0;
 }
@@ -56,7 +56,7 @@
     box-sizing: border-box; /* Includes padding and border in the element's total width and height */
     padding: 10px; /* Consistent padding from BookView.css */
     margin-bottom: 10px; /* Consistent margin from BookView.css */
-    border: 1px solid #ced4da; /* Standard border color */
+    border: 1px solid var(--color-input-border); /* Standard border color */
     border-radius: 4px; /* Standard border radius */
     font-family: inherit;
     font-size: inherit;
@@ -65,14 +65,14 @@
 
 /* LLM Interaction specific styles */
 .llm-interaction .error-message { /* For LLM specific errors */
-    color: #dc3545; /* Bootstrap danger color */
+    color: var(--color-danger); /* Bootstrap danger color */
     margin-top: 10px;
     font-size: 0.9em;
 }
 /* .llm-response styling is primarily from BookView.css */
 .llm-response {
-  background-color: #e9f7ef;
-  border: 1px solid #d0e9c6; /* Green border from BookView.css */
+  background-color: var(--color-success-bg);
+  border: 1px solid var(--color-border); /* Green border from BookView.css */
   padding: 15px;
   margin-top: 15px;
   border-radius: 4px;
@@ -80,7 +80,7 @@
 
 .llm-response h4 {
   margin-top: 0;
-  color: #155724; /* Darker green for better contrast, from BookView.css */
+  color: var(--color-success-text); /* Darker green for better contrast, from BookView.css */
   margin-bottom: 8px; /* Space below heading */
 }
 
@@ -98,9 +98,9 @@
   font-size: 0.9rem;
   font-weight: 500;
   line-height: 1.5;
-  color: #fff;
-  background-color: #28a745; /* A green color, distinct or similar to other positive actions */
-  border: 1px solid #28a745;
+  color: var(--color-on-accent);
+  background-color: var(--color-primary); /* A green color, distinct or similar to other positive actions */
+  border: 1px solid var(--color-primary);
   border-radius: 4px; /* Consistent with other buttons */
   text-align: center;
   vertical-align: middle;
@@ -111,14 +111,14 @@
 }
 
 .button-add-to-note:hover {
-  background-color: #218838; /* Darker shade on hover */
-  border-color: #1e7e34;
+  background-color: var(--color-primary-hover); /* Darker shade on hover */
+  border-color: var(--color-primary-dark);
 }
 
 .button-add-to-note:disabled { /* If you add a disabled state */
-  background-color: #cccccc;
-  border-color: #cccccc;
-  color: #666666;
+  background-color: var(--color-border);
+  border-color: var(--color-border);
+  color: var(--color-text-muted);
   cursor: not-allowed;
 }
 
@@ -132,8 +132,8 @@
 }
 
 .note-item {
-    background-color: #f9f9f9;
-    border: 1px solid #eee;
+    background-color: var(--color-bg-hover);
+    border: 1px solid var(--color-border-subtle);
     padding: 10px 15px; /* Adjusted padding */
     margin-bottom: 10px;
     border-radius: 4px;
@@ -158,8 +158,8 @@
 /* Add specific styles for content within .note-item if needed */
 .notes-list .note-item .note-source-text { 
     font-size: 0.9em;
-    color: #6c757d; 
-    border-left: 2px solid #dee2e6; 
+    color: var(--color-text-subtle); 
+    border-left: 2px solid var(--color-border-light); 
     padding-left: 10px;
     margin: 5px 0 10px 0;
     font-style: italic;
@@ -173,7 +173,7 @@
 }
 
 .notes-list .note-item .note-meta-display { /* Timestamp */
-    color: #6c757d;
+    color: var(--color-text-subtle);
     font-size: 0.8em;
     display: block; /* Ensure it takes its own line */
 }
@@ -183,8 +183,8 @@
 }
 
 .clickable-note:hover {
-    background-color: #e9ecef; 
-    border-color: #ced4da; 
+    background-color: var(--color-bg-hover); 
+    border-color: var(--color-input-border); 
 }
 
 /* .delete-note-button can inherit from .delete-button in index.css */
@@ -197,7 +197,7 @@
 
 /* General error message styling if needed for note saving errors, etc. */
 .note-pane .error-message { 
-    color: #dc3545;
+    color: var(--color-danger);
     font-size: 0.9em;
     margin-top: 5px;
 }
@@ -213,22 +213,22 @@
   align-items: center;
   margin-top: 20px; /* Space above pagination */
   padding-top: 15px; /* Space below notes list */
-  border-top: 1px solid #e0e0e0; /* Separator line */
+  border-top: 1px solid var(--color-border-light); /* Separator line */
 }
 
 .notes-pagination-controls button {
   padding: 6px 12px;
   font-size: 0.85em;
-  color: #333;
-  background-color: #f0f0f0;
-  border: 1px solid #ccc;
+  color: var(--color-text);
+  background-color: var(--color-bg-muted);
+  border: 1px solid var(--color-border);
   border-radius: 4px;
   cursor: pointer;
   transition: background-color 0.15s ease-in-out;
 }
 
 .notes-pagination-controls button:hover:not(:disabled) {
-  background-color: #e0e0e0;
+  background-color: var(--color-border-light);
 }
 
 .notes-pagination-controls button:disabled {
@@ -238,6 +238,6 @@
 
 .notes-pagination-controls span {
   font-size: 0.9em;
-  color: #555;
+  color: var(--color-text-secondary);
   margin: 0 10px; /* Space around page number display */
 }

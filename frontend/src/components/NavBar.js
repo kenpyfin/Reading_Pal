@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import ThemeToggle from './ThemeToggle';
 import './NavBar.css';
 
 const MOBILE_MAX_WIDTH = 768;
@@ -31,6 +32,10 @@ function NavBar({
   extra = null,
   mergeScrollContainerRef = null,
   mergeScrollEpoch = 0,
+  themeOverride = null,
+  effectiveTheme = 'light',
+  onToggle,
+  onUseSystem,
 }) {
   const navigate = useNavigate();
   const [mobileNavHidden, setMobileNavHidden] = useState(false);
@@ -181,6 +186,16 @@ function NavBar({
           </ul>
         )}
         <ul className="nav-links nav-links-right">
+          {onToggle && (
+            <li className="nav-theme-toggle-item">
+              <ThemeToggle
+                themeOverride={themeOverride}
+                effectiveTheme={effectiveTheme}
+                onToggle={onToggle}
+                onUseSystem={onUseSystem}
+              />
+            </li>
+          )}
           <li>
             <button type="button" onClick={handleLogoutClick} className="nav-link logout-button">
               Logout

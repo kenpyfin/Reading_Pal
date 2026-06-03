@@ -1,8 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
-import './LoginPage.css'; // We'll create this CSS file next
+import ThemeToggle from '../components/ThemeToggle';
+import './LoginPage.css';
 
-function LoginPage() {
+function LoginPage({
+  themeOverride = null,
+  effectiveTheme = 'light',
+  onToggle,
+  onUseSystem,
+}) {
   const [errorMessage, setErrorMessage] = useState('');
   const location = useLocation();
 
@@ -24,6 +30,14 @@ function LoginPage() {
 
   return (
     <div className="login-page-container">
+      {onToggle && (
+        <ThemeToggle
+          themeOverride={themeOverride}
+          effectiveTheme={effectiveTheme}
+          onToggle={onToggle}
+          onUseSystem={onUseSystem}
+        />
+      )}
       <div className="login-box">
         <h1>Welcome to Reading Pal</h1>
         <p>Please sign in to continue.</p>

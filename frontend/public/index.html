@@ -14,6 +14,13 @@
         <title>Reading Pal</title>
   </head>
   <body>
+    <script>
+      (function () {
+        var o = localStorage.getItem('readingPalThemeOverride');
+        var dark = o === 'dark' || (o !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+      })();
+    </script>
     <noscript>You need to enable JavaScript to run this app.</noscript>
     <div id="root"></div>
   </body>

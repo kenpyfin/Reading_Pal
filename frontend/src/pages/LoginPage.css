@@ -3,34 +3,38 @@
   justify-content: center;
   align-items: center;
   min-height: 100vh;
-  background-color: #f4f7f6; /* Light gray background */
+  background-color: var(--color-bg);
   font-family: 'Arial', sans-serif;
 }
 
 .login-box {
-  background-color: white;
+  background-color: var(--color-bg-elevated);
   padding: 40px 50px;
   border-radius: 8px;
-  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-lg);
   text-align: center;
   max-width: 400px;
   width: 90%;
 }
 
 .login-box h1 {
-  color: #333;
+  color: var(--color-text);
   margin-bottom: 15px;
   font-size: 28px;
 }
 
 .login-box p {
-  color: #666;
+  color: var(--color-text-muted);
   margin-bottom: 30px;
   font-size: 16px;
 }
 
+.login-box a {
+  color: var(--color-link);
+}
+
 .google-login-button {
-  background-color: #4285F4; /* Google Blue */
+  background-color: #4285F4;
   color: white;
   border: none;
   padding: 12px 25px;
@@ -42,13 +46,13 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 100%; /* Make button full width of its container */
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  width: 100%;
+  box-shadow: var(--shadow-md);
 }
 
 .google-login-button:hover {
   background-color: #357ae8;
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow-lg);
 }
 
 .google-login-button:active {
@@ -56,21 +60,21 @@
 }
 
 .google-logo {
-  width: 20px; /* Adjust size as needed */
-  height: 20px; /* Adjust size as needed */
+  width: 20px;
+  height: 20px;
   margin-right: 12px;
-  background-color: white; /* Ensure logo background is white if it's transparent */
-  padding: 2px; /* Optional: if logo needs a bit of spacing from its background */
-  border-radius: 50%; /* Optional: if you want a circular background for the logo */
+  background-color: white;
+  padding: 2px;
+  border-radius: 50%;
 }
 
 .login-error-message {
-  background-color: #f8d7da; /* Light red background */
-  color: #721c24; /* Dark red text */
+  background-color: var(--color-error-bg);
+  color: var(--color-error-text);
   padding: 10px 15px;
-  border: 1px solid #f5c6cb; /* Reddish border */
+  border: 1px solid var(--color-border);
   border-radius: 4px;
-  margin-bottom: 20px; /* Space below the message */
+  margin-bottom: 20px;
   font-size: 14px;
   text-align: center;
 }

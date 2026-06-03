@@ -14,7 +14,7 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid var(--color-border-subtle);
   padding-bottom: 10px;
   margin-bottom: 10px;
   flex-shrink: 0;
@@ -41,10 +41,10 @@
 }
 
 .note-item-modal {
-  border: 1px solid #e0e0e0;
+  border: 1px solid var(--color-border-light);
   border-radius: 4px;
   margin-bottom: 10px;
-  background-color: #fff;
+  background-color: var(--color-bg-elevated);
   transition: box-shadow 0.2s ease-in-out;
 }
 .note-item-modal:hover {
@@ -67,16 +67,16 @@
 .note-item-modal .note-page-context-indicator {
   margin: 0 0 5px 0;
   font-size: 0.8em;
-  color: #666;
+  color: var(--color-text-muted);
 }
 
 .note-item-modal .note-source-text {
   font-size: 0.9em;
   margin: 5px 0;
   padding: 5px 8px;
-  background-color: #f9f9f9;
-  border-left: 2px solid #007bff;
-  color: #555;
+  background-color: var(--color-bg-hover);
+  border-left: 2px solid var(--color-primary);
+  color: var(--color-text-secondary);
 }
 
 .note-item-modal .note-content-display {
@@ -86,13 +86,13 @@
 
 .note-item-modal .note-meta-display {
   font-size: 0.75em;
-  color: #888;
+  color: var(--color-text-muted);
   margin-top: 8px;
 }
 
 /* Uses .notes-pagination-controls from BookView.css, can add overrides here if needed */
 .all-notes-modal .notes-pagination-controls {
   padding-top: 10px;
-  border-top: 1px solid #eee;
+  border-top: 1px solid var(--color-border-subtle);
   flex-shrink: 0;
 }

@@ -11,7 +11,7 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid var(--color-border-subtle);
   padding-bottom: 10px;
   margin-bottom: 15px;
 }
@@ -26,19 +26,19 @@
   border: none;
   font-size: 1.5em;
   cursor: pointer;
-  color: #888;
+  color: var(--color-text-muted);
 }
 .note-display-modal .close-button:hover {
-  color: #000;
+  color: var(--color-text);
 }
 
 .note-display-modal .modal-body .note-source-text {
-  background-color: #f9f9f9;
-  border-left: 3px solid #007bff;
+  background-color: var(--color-bg-hover);
+  border-left: 3px solid var(--color-primary);
   padding: 8px 12px;
   margin: 0 0 15px 0;
   font-size: 0.9em;
-  color: #555;
+  color: var(--color-text-secondary);
 }
 
 .note-display-modal .modal-body .note-content-display {
@@ -51,9 +51,9 @@
   display: block;
   margin-top: 15px;
   font-size: 0.8em;
-  color: #777;
+  color: var(--color-text-muted);
   text-align: right;
-  border-top: 1px solid #eee;
+  border-top: 1px solid var(--color-border-subtle);
   padding-top: 8px;
 }
 
@@ -62,12 +62,12 @@
   justify-content: flex-end;
   padding-top: 15px;
   margin-top: 10px;
-  border-top: 1px solid #eee;
+  border-top: 1px solid var(--color-border-subtle);
 }
 
 .note-display-modal .delete-button-modal {
-  background-color: #dc3545;
-  color: white;
+  background-color: var(--color-danger);
+  color: var(--color-on-accent);
   border: none;
   padding: 8px 12px;
   border-radius: 4px;
@@ -77,5 +77,5 @@
 }
 
 .note-display-modal .delete-button-modal:hover {
-  background-color: #c82333;
+  background-color: var(--color-danger-hover);
 }

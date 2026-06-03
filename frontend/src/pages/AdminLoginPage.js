@@ -1,8 +1,15 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import './AdminLoginPage.css'; // We'll create this CSS file
+import ThemeToggle from '../components/ThemeToggle';
+import './AdminLoginPage.css';
 
-function AdminLoginPage({ setAuthToken }) {
+function AdminLoginPage({
+  setAuthToken,
+  themeOverride = null,
+  effectiveTheme = 'light',
+  onToggle,
+  onUseSystem,
+}) {
   const [username, setUsername] = React.useState('');
   const [password, setPassword] = React.useState('');
   const [error, setError] = React.useState('');
@@ -40,6 +47,14 @@ function AdminLoginPage({ setAuthToken }) {
 
   return (
     <div className="admin-login-page-container">
+      {onToggle && (
+        <ThemeToggle
+          themeOverride={themeOverride}
+          effectiveTheme={effectiveTheme}
+          onToggle={onToggle}
+          onUseSystem={onUseSystem}
+        />
+      )}
       <div className="admin-login-box">
         <h1>Admin Login</h1>
         <form onSubmit={handleSubmit}>
