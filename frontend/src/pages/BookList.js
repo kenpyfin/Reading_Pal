@@ -1,5 +1,5 @@
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { getAuthHeaders } from '../utils/authRequest';
 import {
@@ -7,6 +7,7 @@ import {
   getBookListSnapshot,
   getBookSummariesFromMeta,
   isRecoverableListFetchError,
+  removeBookFromListSnapshot,
 } from '../utils/offlineBookCache';
 
 // --- ADD THIS LINE ---
@@ -15,11 +16,14 @@ console.log("[BookList.js SRC MODULE LEVEL] BookList.js module loaded");
 
 const POLLING_INTERVAL = 5000;
 
+const isInFlightStatus = (status) => status === 'processing' || status === 'pending';
+
 function BookList() {
   // ... rest of the component ...
   console.log("[BookList.js SRC FUNCTION LEVEL] BookList component function executed (rendered or re-rendered)");
 
   const [books, setBooks] = useState([]);
+  const booksRef = useRef(books);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
@@ -37,6 +41,10 @@ function BookList() {
   const [fromOfflineCache, setFromOfflineCache] = useState(false);
 
   const listReadOnly = !netOnline || fromOfflineCache;
+
+  useEffect(() => {
+    booksRef.current = books;
+  }, [books]);
 
   // --- Style definitions for buttons and actions container ---
   const actionsContainerBaseStyle = {
@@ -243,18 +251,26 @@ function BookList() {
   useEffect(() => {
       if (typeof navigator !== 'undefined' && !navigator.onLine) return;
       if (fromOfflineCache) return;
-      const pollableBooks = books.filter(book =>
-          (book.status === 'processing' || book.status === 'pending') && book.job_id
+
+      const hasPollable = books.some(
+          (book) => isInFlightStatus(book.status) && book.job_id
       );
-      if (pollableBooks.length === 0) {
+      if (!hasPollable) {
           console.log("No books pending or processing, stopping polling.");
           return;
       }
-      console.log(`Found ${pollableBooks.length} books pending/processing. Starting polling...`);
+
+      console.log("Starting polling for pending/processing books...");
       const intervalId = setInterval(async () => {
+          const pollableBooks = booksRef.current.filter(
+              (book) => isInFlightStatus(book.status) && book.job_id
+          );
+          if (pollableBooks.length === 0) {
+              return;
+          }
           console.log("Polling for book status updates...");
           const statusUpdates = await Promise.all(
-              pollableBooks.map(book => checkBookStatus(book.id, book.job_id)) // Use book.id (which is _id string)
+              pollableBooks.map((book) => checkBookStatus(book.id, book.job_id))
           );
           const updatesByJobId = new Map();
           statusUpdates.filter(update => update && update.job_id).forEach(update => {
@@ -286,15 +302,18 @@ function BookList() {
       };
   }, [books, fromOfflineCache]);
 
-  const handleDeleteBook = async (bookId, bookTitle) => {
+  const handleDeleteBook = async (bookId, bookTitle, inFlight = false) => {
     if (listReadOnly) {
       return;
     }
-    if (!window.confirm(`Are you sure you want to delete the book "${bookTitle}"? This action cannot be undone.`)) {
+    const confirmMessage = inFlight
+      ? `Stop processing and remove "${bookTitle}" from your library? Conversion may continue in the background, but the book will not appear here.`
+      : `Are you sure you want to delete the book "${bookTitle}"? This action cannot be undone.`;
+    if (!window.confirm(confirmMessage)) {
         return;
     }
     setDeletingId(bookId);
-    setError(null); // Clear previous errors
+    setError(null);
 
     const authHeaders = getAuthHeaders();
     if (!authHeaders) {
@@ -309,19 +328,25 @@ function BookList() {
             method: 'DELETE',
             headers: authHeaders,
         });
-        if (response.status === 204) { // Successfully deleted
+        if (response.status === 204) {
             setBooks(prevBooks => prevBooks.filter(book => book.id !== bookId));
+            setTotalBooks((t) => Math.max(0, t - 1));
+            try {
+              await removeBookFromListSnapshot(bookId);
+            } catch (snapErr) {
+              console.warn('[BookList] Failed to update list snapshot after delete:', snapErr);
+            }
             console.log(`Book "${bookTitle}" (ID: ${bookId}) deleted successfully.`);
         } else if (!response.ok) {
             const errorData = await response.json().catch(() => ({ detail: 'Failed to delete book and parse error response.' }));
             throw new Error(`HTTP error! status: ${response.status} - ${errorData.detail || 'Unknown error'}`);
         } else {
              console.warn(`Unexpected response status after delete: ${response.status}`);
-             setBooks(prevBooks => prevBooks.filter(book => book.id !== bookId)); // Fallback
         }
     } catch (err) {
         console.error(`Failed to delete book ${bookId}:`, err);
-        setError(`Failed to delete book "${bookTitle}": ${err.message}`);
+        const action = inFlight ? 'cancel' : 'delete';
+        setError(`Failed to ${action} book "${bookTitle}": ${err.message}`);
     } finally {
         setDeletingId(null);
     }
@@ -429,20 +454,22 @@ function BookList() {
                 backgroundColor: hoveredBookId === book.id ? '#f9f9f9' : 'transparent',
               }}
             >
-              <div style={{ flexGrow: 1, marginRight: '100px' }}> {/* Ensure space for buttons */}
+              <div className="book-list-item-main">
                 {book.status === 'completed' ? (
-                   <Link to={`/book/${book.id}`} style={{ textDecoration: 'none', color: '#007bff', fontWeight: '500' }}>
+                   <Link to={`/book/${book.id}`} className="book-list-title">
                       {book.title || book.original_filename}
                    </Link>
                 ) : (
-                   <span style={{ color: '#555', fontWeight: '500' }}>
+                   <span className="book-list-title">
                        {book.title || book.original_filename}
-                       <span data-status={book.status || 'unknown'} style={{ marginLeft: '8px', fontSize: '0.9em', color: '#777' }}>
-                           {' '}({book.status || 'unknown'}
-                           {(book.status === 'processing' || book.status === 'pending') && '...'})
-                           {book.status === 'failed' && ' - Failed'}
-                       </span>
                    </span>
+                )}
+                {book.status !== 'completed' && (
+                  <span className="book-status-badge" data-status={book.status || 'unknown'}>
+                    ({book.status || 'unknown'}
+                    {isInFlightStatus(book.status) && '...'})
+                    {book.status === 'failed' && ' - Failed'}
+                  </span>
                 )}
               </div>
 
@@ -455,10 +482,10 @@ function BookList() {
                 <button
                   title="Rename Book"
                   onClick={(e) => { e.stopPropagation(); handleRenameBook(book.id, book.title || book.original_filename);}}
-                  disabled={listReadOnly || renamingId === book.id || deletingId === book.id || book.status === 'processing'}
+                  disabled={listReadOnly || renamingId === book.id || deletingId === book.id || isInFlightStatus(book.status)}
                   style={renamingId === book.id ? {...renameButtonStyle, backgroundColor: renameButtonHoverStyle.backgroundColor} : renameButtonStyle}
                   onMouseEnter={(e) => {
-                    if (!(renamingId === book.id || deletingId === book.id || book.status === 'processing')) {
+                    if (!(renamingId === book.id || deletingId === book.id || isInFlightStatus(book.status))) {
                         e.currentTarget.style.backgroundColor = renameButtonHoverStyle.backgroundColor;
                         e.currentTarget.style.borderColor = renameButtonHoverStyle.borderColor;
                         e.currentTarget.style.boxShadow = renameButtonHoverStyle.boxShadow;
@@ -475,26 +502,35 @@ function BookList() {
                   {renamingId === book.id ? 'Renaming...' : 'Rename'}
                 </button>
                 <button
-                  title="Delete Book"
-                  onClick={(e) => { e.stopPropagation(); handleDeleteBook(book.id, book.title || book.original_filename);}}
-                  disabled={listReadOnly || deletingId === book.id || renamingId === book.id || book.status === 'processing'}
+                  title={isInFlightStatus(book.status) ? 'Cancel processing' : 'Delete Book'}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDeleteBook(
+                      book.id,
+                      book.title || book.original_filename,
+                      isInFlightStatus(book.status)
+                    );
+                  }}
+                  disabled={listReadOnly || deletingId === book.id || renamingId === book.id}
                   style={deletingId === book.id ? {...deleteButtonStyle, backgroundColor: deleteButtonHoverStyle.backgroundColor} : deleteButtonStyle}
                    onMouseEnter={(e) => {
-                    if (!(renamingId === book.id || deletingId === book.id || book.status === 'processing')) {
+                    if (!(renamingId === book.id || deletingId === book.id)) {
                         e.currentTarget.style.backgroundColor = deleteButtonHoverStyle.backgroundColor;
                         e.currentTarget.style.borderColor = deleteButtonHoverStyle.borderColor;
                         e.currentTarget.style.boxShadow = deleteButtonHoverStyle.boxShadow;
                     }
                   }}
                   onMouseLeave={(e) => {
-                     if (!(deletingId === book.id)) { // Keep active style if deleting
+                     if (!(deletingId === book.id)) {
                         e.currentTarget.style.backgroundColor = deleteButtonStyle.backgroundColor;
                         e.currentTarget.style.borderColor = deleteButtonStyle.borderColor; 
                         e.currentTarget.style.boxShadow = baseButtonStyle.boxShadow;
                     }
                   }}
                 >
-                  {deletingId === book.id ? 'Deleting...' : 'Delete'}
+                  {deletingId === book.id
+                    ? (isInFlightStatus(book.status) ? 'Cancelling...' : 'Deleting...')
+                    : (isInFlightStatus(book.status) ? 'Cancel' : 'Delete')}
                 </button>
               </div>
             </li>

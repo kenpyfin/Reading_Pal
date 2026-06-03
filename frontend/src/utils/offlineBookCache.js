@@ -265,6 +265,20 @@ export async function getBookListSnapshot() {
   });
 }
 
+/** Remove one book from the cached list snapshot (e.g. after cancel/delete). */
+export async function removeBookFromListSnapshot(bookId) {
+  const snap = await getBookListSnapshot();
+  if (!snap?.books?.length) return;
+  const idStr = String(bookId);
+  const filtered = snap.books.filter((b) => b && String(b.id) !== idStr);
+  if (filtered.length === snap.books.length) return;
+  await putBookListSnapshot({
+    books: filtered,
+    totalBooks: Math.max(0, (snap.totalBooks || filtered.length) - 1),
+    currentPage: snap.currentPage || 1,
+  });
+}
+
 /**
  * Minimal list rows for books that have cached meta (e.g. opened in BookView) but may not appear in list snapshot.
  */

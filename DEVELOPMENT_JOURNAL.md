@@ -29,6 +29,13 @@ Use a reverse-chronological list (newest first). Each entry should be short and 
 
 <!-- New entries go below this comment, newest first. -->
 
+## 2026-05-31 — Book list cancel, duplicate upload guard, title wrap
+
+- **What:** Enabled **Cancel** for `pending`/`processing` books (DELETE API); delete returns **404** when DB delete fails (no silent 204). Upload rejects duplicate titles per user via `sanitized_title` check before pdf_service (**409**). Fixed long titles not wrapping (scoped CSS to status badge). Offline list snapshot updated on delete (`removeBookFromListSnapshot`). Status polling reads current books from a ref after cancel.
+- **Why:** Processing delete was disabled in UI; failed deletes and stale IndexedDB snapshots could restore rows. Two uploads with the same title share `{sanitized_title}.md` on disk — deleting one book removed the file for both. Title `span` inherited `white-space: nowrap` from overly broad list CSS.
+- **Where:** `frontend/src/pages/BookList.js`, `frontend/src/index.css`, `frontend/src/utils/offlineBookCache.js`, `backend/api/books.py`, `backend/db/mongodb.py`
+- **Notes:** pdf_service still has no cooperative job cancel; conversion may finish in background after cancel. Re-upload same title allowed after delete or when only a `failed` row exists.
+
 ## 2026-05-31 — Non-blocking MinerU jobs (fix upload timeout vs processing)
 
 - **What:** Moved document extraction (MinerU/Paddle) off the FastAPI event loop via a dedicated thread-pool worker in `pdf_service/app.py`. Backend pdf_client gets connect/read timeouts; frontend upload timeout raised to 10 minutes for job initiation only. Host pdf start script waits for HTTP readiness on port 8502.

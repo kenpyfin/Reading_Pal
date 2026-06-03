@@ -26,6 +26,7 @@ from backend.db.mongodb import (
     get_books,
     count_books,
     get_book_by_job_id,
+    find_active_book_by_user_and_sanitized_title,
     update_book,
     delete_book_record, # Add delete_book_record
     get_database
@@ -186,6 +187,21 @@ async def upload_document(
                 ),
             )
 
+        book_title = title if title else os.path.splitext(file.filename or "")[0]
+        sanitized_book_title = sanitize_filename(book_title)
+
+        existing_book = await find_active_book_by_user_and_sanitized_title(
+            current_user_id, sanitized_book_title
+        )
+        if existing_book:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "A book with this title already exists in your library. "
+                    "Cancel or delete it first, or choose a different title."
+                ),
+            )
+
         processed_data = await call_document_service_upload(file, title)
 
         if not processed_data or not processed_data.get("success"):
@@ -200,9 +216,6 @@ async def upload_document(
         if not job_id:
             logger.error("Document service did not return a job_id.")
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Document processing service failed to return a job ID.")
-
-        book_title = title if title else os.path.splitext(file.filename)[0]
-        sanitized_book_title = sanitize_filename(book_title)
 
         # --- Prepare data using the Book model structure, matching DB schema ---
         # REMOVE id=None from the constructor
@@ -1106,11 +1119,18 @@ async def delete_book_route(book_id: str, current_user_id: str = Depends(get_cur
 
     deleted_count = await delete_book_record(book_id, current_user_id)
     if not deleted_count:
-        logger.warning(f"Delete: No book record found to delete with ID: {book_id} for user {current_user_id}, or delete operation failed in DB (already deleted or not owned?).")
-        # Still return 204 as the resource is gone or not accessible to this user.
-    else:
-        logger.info(f"Successfully deleted book record with ID: {book_id} for user {current_user_id} from database.")
+        logger.warning(
+            f"Delete: No book record deleted for ID: {book_id} user {current_user_id} "
+            "(not found, not owned, or DB delete failed)."
+        )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Book not found or could not be deleted.",
+        )
 
+    logger.info(
+        f"Successfully deleted book record with ID: {book_id} for user {current_user_id} from database."
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

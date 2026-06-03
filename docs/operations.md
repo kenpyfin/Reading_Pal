@@ -190,6 +190,12 @@ Before running:
 - Confirm `APP_IMAGE_SECRET` is non-empty in non-dev environments.
 - Confirm callback path and backend port alignment.
 
+### Book upload and list behavior
+
+- Output files are keyed by **`sanitized_title`** (e.g. `My_Book.md`), not `job_id`. The API returns **409** if the user already has a book with the same sanitized title in `pending`, `processing`, or `completed` (re-upload after delete is allowed; `failed` rows do not block).
+- **Cancel** in the book list deletes the DB row and shared markdown/images for that title; pdf_service may still finish the job in the background.
+- Stuck `processing` jobs are marked `failed` after `STUCK_JOB_THRESHOLD_SECONDS` (default 24h); old `pending`/`failed` rows are purged per `OLD_RECORD_THRESHOLD_SECONDS` (default 6h). See `backend/services/cleanup_service.py`.
+
 After startup:
 
 - Check backend health: `GET /health`

@@ -87,12 +87,36 @@ code {
 .book-list-container li {
   display: flex; /* Use flexbox for alignment */
   justify-content: space-between; /* Space out title and status */
-  align-items: center; /* Vertically align items */
+  align-items: flex-start; /* Multi-line titles align to top */
   padding: 15px 10px; /* Padding inside list items */
   margin-bottom: 10px; /* Space between list items */
   border: 1px solid #e0e0e0; /* Light border for each item */
   border-radius: 5px; /* Slightly rounded corners for items */
   transition: background-color 0.2s ease-in-out, box-shadow 0.2s ease-in-out; /* Smooth transition */
+}
+
+.book-list-item-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  padding-right: 12px;
+}
+
+.book-list-title {
+  color: #555;
+  font-weight: 500;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.book-list-container li a.book-list-title {
+  color: #0056b3;
+  text-decoration: none;
 }
 
 .book-list-container li:hover {
@@ -113,29 +137,28 @@ code {
   color: #003d80; /* Darker link color on hover */
 }
 
-/* Status Span Styling */
-.book-list-container li span {
-  font-size: 0.85em; /* Smaller font size for status */
-  color: #6c757d; /* Grey color for status */
-  background-color: #f1f3f5; /* Light grey background */
-  padding: 3px 8px; /* Padding around status text */
-  border-radius: 4px; /* Rounded corners for status badge */
-  white-space: nowrap; /* Prevent status text from wrapping */
-  flex-shrink: 0; /* Prevent status from shrinking */
+/* Status badge only — do not target title spans */
+.book-status-badge {
+  font-size: 0.85em;
+  color: #6c757d;
+  background-color: #f1f3f5;
+  padding: 3px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
-/* Specific Status Colors (Optional but nice) */
-.book-list-container li span[data-status="processing"] {
+.book-status-badge[data-status="processing"] {
   color: #0056b3;
   background-color: #cfe2ff;
 }
 
-.book-list-container li span[data-status="completed"] { /* Changed from 'processed' to 'completed' based on backend status */
-  color: #146c43;
-  background-color: #d1e7dd;
+.book-status-badge[data-status="pending"] {
+  color: #664d03;
+  background-color: #fff3cd;
 }
 
-.book-list-container li span[data-status="failed"] {
+.book-status-badge[data-status="failed"] {
   color: #b02a37;
   background-color: #f8d7da;
 }

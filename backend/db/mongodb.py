@@ -133,6 +133,34 @@ async def count_books(filter: Optional[dict] = None) -> int:
         logger.error(f"Error counting books: {e}", exc_info=True)
         return 0
 
+async def find_active_book_by_user_and_sanitized_title(
+    user_id: str, sanitized_title: str
+) -> Optional[Dict[str, Any]]:
+    """Returns a book owned by user with matching sanitized_title and active status."""
+    database = get_database()
+    if database is None:
+        logger.error(
+            "Database not initialized for find_active_book_by_user_and_sanitized_title."
+        )
+        return None
+    if not user_id or not sanitized_title:
+        return None
+    try:
+        return await database.books.find_one(
+            {
+                "user_id": user_id,
+                "sanitized_title": sanitized_title,
+                "status": {"$in": ["pending", "processing", "completed"]},
+            }
+        )
+    except Exception as e:
+        logger.error(
+            f"Error finding book for user {user_id} sanitized_title {sanitized_title}: {e}",
+            exc_info=True,
+        )
+        return None
+
+
 async def get_book_by_job_id(job_id: str):
     """Finds a book document by its processing job_id."""
     database = get_database()
