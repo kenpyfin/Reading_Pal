@@ -314,14 +314,112 @@ export function isRecoverableListFetchError(err) {
   return msg.includes('Failed to fetch');
 }
 
-export async function putGuide(bookId, { roadmap, completedIds, progressTouchedAt }) {
+export const DEFAULT_GUIDE_ID = 'default';
+export const MAX_READING_GUIDES = 5;
+
+function normalizeGuideRecord(rec) {
+  if (!rec) return null;
+  if (Array.isArray(rec.guides)) {
+    return {
+      ...rec,
+      activeGuideId: rec.activeGuideId || rec.guides[0]?.guideId || DEFAULT_GUIDE_ID,
+    };
+  }
+  if (rec.roadmap) {
+    return {
+      bookId: rec.bookId,
+      activeGuideId: DEFAULT_GUIDE_ID,
+      guides: [
+        {
+          guideId: DEFAULT_GUIDE_ID,
+          name: 'Reading Roadmap',
+          custom_requirements: null,
+          roadmap: rec.roadmap,
+          completedIds: rec.completedIds || [],
+          progressTouchedAt: rec.progressTouchedAt || {},
+        },
+      ],
+      cachedAt: rec.cachedAt,
+    };
+  }
+  return rec;
+}
+
+export function getGuideEntry(cache, guideId) {
+  const norm = normalizeGuideRecord(cache);
+  if (!norm?.guides?.length) return null;
+  const id = guideId || norm.activeGuideId || DEFAULT_GUIDE_ID;
+  return norm.guides.find((g) => g.guideId === id) || norm.guides[0];
+}
+
+export async function putGuide(bookId, options = {}) {
+  const {
+    roadmap,
+    completedIds,
+    progressTouchedAt,
+    activeGuideId,
+    guides,
+    guideId,
+    guidesList,
+  } = options;
   const db = await openDb();
-  const previous = await getGuide(bookId);
+  const previous = normalizeGuideRecord(await getGuide(bookId));
+  const targetGuideId = guideId || activeGuideId || previous?.activeGuideId || DEFAULT_GUIDE_ID;
+
+  let nextGuides = guides || previous?.guides || [];
+  if (guidesList) {
+    nextGuides = guidesList.map((summary) => {
+      const existing = (previous?.guides || []).find((g) => g.guideId === summary.guide_id);
+      return {
+        guideId: summary.guide_id,
+        name: summary.name,
+        custom_requirements: summary.custom_requirements ?? null,
+        roadmap: existing?.roadmap ?? null,
+        completedIds: existing?.completedIds || [],
+        progressTouchedAt: existing?.progressTouchedAt || {},
+      };
+    });
+  } else if (roadmap !== undefined) {
+    const cloneRoadmap = roadmap ? JSON.parse(JSON.stringify(roadmap)) : null;
+    let found = false;
+    nextGuides = nextGuides.map((g) => {
+      if (g.guideId === targetGuideId) {
+        found = true;
+        return {
+          ...g,
+          roadmap: cloneRoadmap,
+          completedIds: completedIds !== undefined ? completedIds : g.completedIds,
+          progressTouchedAt: progressTouchedAt !== undefined ? progressTouchedAt : g.progressTouchedAt,
+        };
+      }
+      return g;
+    });
+    if (!found) {
+      nextGuides.push({
+        guideId: targetGuideId,
+        name: roadmap?.name || 'Reading Roadmap',
+        custom_requirements: roadmap?.custom_requirements ?? null,
+        roadmap: cloneRoadmap,
+        completedIds: completedIds || [],
+        progressTouchedAt: progressTouchedAt || {},
+      });
+    }
+  } else if (completedIds !== undefined || progressTouchedAt !== undefined) {
+    nextGuides = nextGuides.map((g) =>
+      g.guideId === targetGuideId
+        ? {
+            ...g,
+            completedIds: completedIds !== undefined ? completedIds : g.completedIds,
+            progressTouchedAt: progressTouchedAt !== undefined ? progressTouchedAt : g.progressTouchedAt,
+          }
+        : g
+    );
+  }
+
   const rec = {
     bookId,
-    roadmap: roadmap ? JSON.parse(JSON.stringify(roadmap)) : null,
-    completedIds: completedIds || [],
-    progressTouchedAt: progressTouchedAt || previous?.progressTouchedAt || {},
+    activeGuideId: activeGuideId || previous?.activeGuideId || targetGuideId,
+    guides: nextGuides,
     cachedAt: Date.now(),
   };
   return new Promise((resolve, reject) => {
@@ -335,7 +433,7 @@ export async function getGuide(bookId) {
   const db = await openDb();
   return new Promise((resolve, reject) => {
     const r = db.transaction(STORE_GUIDE, 'readonly').objectStore(STORE_GUIDE).get(bookId);
-    r.onsuccess = () => resolve(r.result || null);
+    r.onsuccess = () => resolve(normalizeGuideRecord(r.result || null));
     r.onerror = () => reject(r.error);
   });
 }

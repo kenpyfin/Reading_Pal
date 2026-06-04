@@ -30,7 +30,7 @@
 
 ## Environment & Configuration Tips
 - Maintain a `.env` in the repo root defining `MONGO_URI`, `PDF_CLIENT_URL`, and storage paths consumed by Docker Compose. For the PDF service: `PDF_OCR_ENGINE` (default `paddle`), `PDF_OCR_LANG` (e.g. `en`), `PDF_PAGE_DPI` (default `200`); optional `PDF_SERVICE_PORT` (default `8502`) when running pdf_service in Docker Compose.
-- For the whole-book Reading Guide roadmap: `GUIDE_LLM_SERVICE` (default `gemini`), `GUIDE_LLM_MODEL` (default `gemini-2.0-flash`), `GUIDE_LLM_GEMINI_API_KEY` (falls back to `GEMINI_API_KEY`). Uses a cheaper/faster model for roadmap generation.
+- For the whole-book Reading Guide roadmap: `GUIDE_LLM_SERVICE` (default `gemini`), `GUIDE_LLM_MODEL` (default `gemini-2.0-flash`), `GUIDE_LLM_GEMINI_API_KEY` (falls back to `GEMINI_API_KEY`). Uses a cheaper/faster model for roadmap generation, per-card chat, and optional custom reading angle on create (up to 5 guides per book via `/api/books/{id}/reading-guides`).
 - Ensure host directories for `PDF_STORAGE_PATH`, `MARKDOWN_PATH`, and `IMAGES_PATH` exist before starting containers; adjust when `host.docker.internal` is unavailable on Linux. The pdf_service container requires GPU access (NVIDIA) for PaddleOCR when processing scanned PDFs.
 
 ## Commit & Pull Request Guidelines

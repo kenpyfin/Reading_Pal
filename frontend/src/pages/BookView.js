@@ -21,6 +21,9 @@ import {
   getBookMeta,
   putGuide,
   getGuide,
+  getGuideEntry,
+  DEFAULT_GUIDE_ID,
+  MAX_READING_GUIDES,
   putAnnotations,
   getAnnotations,
   prefetchMarkdownImages,
@@ -632,6 +635,8 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
 
   // Whole-book reading roadmap state
   const [readingRoadmap, setReadingRoadmap] = useState(null);
+  const [guidesList, setGuidesList] = useState([]);
+  const [activeGuideId, setActiveGuideId] = useState(DEFAULT_GUIDE_ID);
   const [guideLoading, setGuideLoading] = useState(false);
   const [guideError, setGuideError] = useState(null);
   const [hasRoadmap, setHasRoadmap] = useState(false);
@@ -651,6 +656,14 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
   const blobUrlRegistryRef = useRef(new Set());
 
   const serverOffline = !netOnline || isOfflineSnapshot;
+
+  const guideApiPath = useCallback(
+    (suffix = '') => {
+      const base = `/api/books/${bookId}/reading-guides/${encodeURIComponent(activeGuideId)}`;
+      return suffix ? `${base}${suffix}` : base;
+    },
+    [bookId, activeGuideId],
+  );
 
   const registerBlobUrl = useCallback((url) => {
     if (url && url.startsWith('blob:')) {
@@ -1163,31 +1176,25 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
     }
   }, [bookId]);
 
-  const fetchReadingRoadmap = useCallback(async () => {
-    if (!bookId) return;
-    setGuideLoading(true);
-    setGuideError(null);
-    try {
-      const token = localStorage.getItem('authToken');
-      if (!token) throw new Error("Authentication token not found.");
-
+  const loadActiveGuideData = useCallback(
+    async (guideId, token, localCache) => {
+      const localEntry = getGuideEntry(localCache, guideId);
       const [guideResp, progressResp] = await Promise.all([
-        fetch(`/api/books/${bookId}/reading-guide`, {
-          headers: { 'Authorization': `Bearer ${token}` },
+        fetch(`/api/books/${bookId}/reading-guides/${encodeURIComponent(guideId)}`, {
+          headers: { Authorization: `Bearer ${token}` },
         }),
-        fetch(`/api/books/${bookId}/reading-guide/progress`, {
-          headers: { 'Authorization': `Bearer ${token}` },
+        fetch(`/api/books/${bookId}/reading-guides/${encodeURIComponent(guideId)}/progress`, {
+          headers: { Authorization: `Bearer ${token}` },
         }),
       ]);
 
-      const localGuide = await getGuide(bookId);
-      let completedIds = localGuide?.completedIds || [];
-      let progressTouchedAt = localGuide?.progressTouchedAt || {};
+      let completedIds = localEntry?.completedIds || [];
+      let progressTouchedAt = localEntry?.progressTouchedAt || {};
       if (progressResp.ok) {
         const progressData = await progressResp.json();
         const reconciledProgress = reconcileGuideProgressState({
-          localCompletedIds: localGuide?.completedIds || [],
-          localProgressTouchedAt: localGuide?.progressTouchedAt || {},
+          localCompletedIds: localEntry?.completedIds || [],
+          localProgressTouchedAt: localEntry?.progressTouchedAt || {},
           serverCompletedIds: progressData.completed_ids || [],
         });
         completedIds = reconciledProgress.completedIds;
@@ -1197,8 +1204,19 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
 
       if (guideResp.ok) {
         const data = await guideResp.json();
+        if (data === null) {
+          setReadingRoadmap(null);
+          setHasRoadmap(false);
+          return;
+        }
         try {
-          await putGuide(bookId, { roadmap: data, completedIds, progressTouchedAt });
+          await putGuide(bookId, {
+            roadmap: data,
+            completedIds,
+            progressTouchedAt,
+            guideId,
+            activeGuideId: guideId,
+          });
           await cacheRoadmapGraphImages(bookId, data);
         } catch (_e) { /* ignore */ }
         const hydrated = await hydrateRoadmapWithCachedGraphs(bookId, data, registerBlobUrl);
@@ -1210,10 +1228,51 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
         setHasRoadmap(false);
       } else {
         const e = await guideResp.json().catch(() => ({ detail: `HTTP ${guideResp.status}` }));
-        throw new Error(e.detail || "Failed to load roadmap");
+        throw new Error(e.detail || 'Failed to load roadmap');
+      }
+    },
+    [bookId, registerBlobUrl],
+  );
+
+  const fetchReadingRoadmap = useCallback(async () => {
+    if (!bookId) return;
+    setGuideLoading(true);
+    setGuideError(null);
+    try {
+      const token = localStorage.getItem('authToken');
+      if (!token) throw new Error('Authentication token not found.');
+
+      const listResp = await fetch(`/api/books/${bookId}/reading-guides`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      let summaries = [];
+      if (listResp.ok) {
+        summaries = await listResp.json();
+      }
+      setGuidesList(summaries || []);
+
+      const localGuide = await getGuide(bookId);
+      let nextActiveId =
+        localGuide?.activeGuideId ||
+        summaries[0]?.guide_id ||
+        DEFAULT_GUIDE_ID;
+      if (summaries.length && !summaries.some((s) => s.guide_id === nextActiveId)) {
+        nextActiveId = summaries[0].guide_id;
+      }
+      setActiveGuideId(nextActiveId);
+
+      if (summaries.length) {
+        try {
+          await putGuide(bookId, { guidesList: summaries, activeGuideId: nextActiveId });
+        } catch (_e) { /* ignore */ }
+        await loadActiveGuideData(nextActiveId, token, localGuide);
+      } else {
+        setReadingRoadmap(null);
+        setHasRoadmap(false);
+        setCompletedRoadmapIds([]);
       }
     } catch (err) {
-      logger.error("[BookView - fetchReadingRoadmap] Failed:", err);
+      logger.error('[BookView - fetchReadingRoadmap] Failed:', err);
       const tryCache =
         !navigator.onLine ||
         err.name === 'TypeError' ||
@@ -1221,11 +1280,21 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
       if (tryCache) {
         try {
           const g = await getGuide(bookId);
-          if (g && g.roadmap) {
-            const hydrated = await hydrateRoadmapWithCachedGraphs(bookId, g.roadmap, registerBlobUrl);
+          const entry = getGuideEntry(g, g?.activeGuideId);
+          if (entry?.roadmap) {
+            const hydrated = await hydrateRoadmapWithCachedGraphs(bookId, entry.roadmap, registerBlobUrl);
             setReadingRoadmap(hydrated);
-            setCompletedRoadmapIds(g.completedIds || []);
-            setHasRoadmap(!!(g.roadmap.items && g.roadmap.items.length > 0));
+            setActiveGuideId(g.activeGuideId || DEFAULT_GUIDE_ID);
+            setGuidesList(
+              (g.guides || []).map((item) => ({
+                guide_id: item.guideId,
+                name: item.name,
+                custom_requirements: item.custom_requirements,
+                item_count: item.roadmap?.items?.length || 0,
+              })),
+            );
+            setCompletedRoadmapIds(entry.completedIds || []);
+            setHasRoadmap(!!(entry.roadmap.items && entry.roadmap.items.length > 0));
             setGuideError(null);
           } else {
             setGuideError(err.message);
@@ -1245,7 +1314,7 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
     } finally {
       setGuideLoading(false);
     }
-  }, [bookId, registerBlobUrl]);
+  }, [bookId, registerBlobUrl, loadActiveGuideData]);
 
   useEffect(() => {
     const onOnline = async () => {
@@ -1333,38 +1402,127 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
     }
   }, [bookId, isOfflineSnapshot]);
 
+  const handleSwitchGuide = useCallback(
+    async (guideId) => {
+      if (!bookId || !guideId || guideId === activeGuideId) return;
+      setActiveGuideId(guideId);
+      setGuideLoading(true);
+      setGuideError(null);
+      try {
+        const token = localStorage.getItem('authToken');
+        if (!token) throw new Error('Authentication token not found.');
+        const localGuide = await getGuide(bookId);
+        await putGuide(bookId, { activeGuideId: guideId });
+        await loadActiveGuideData(guideId, token, localGuide);
+      } catch (err) {
+        logger.error('[BookView - handleSwitchGuide] Failed:', err);
+        setGuideError(err.message);
+      } finally {
+        setGuideLoading(false);
+      }
+    },
+    [bookId, activeGuideId, loadActiveGuideData],
+  );
+
+  const handleCreateGuide = async ({ name, custom_requirements: customRequirements }) => {
+    if (!bookId) return;
+    if (!navigator.onLine || isOfflineSnapshot) {
+      setGuideError('Roadmap generation requires an internet connection.');
+      return;
+    }
+    if (guidesList.length >= MAX_READING_GUIDES) {
+      setGuideError(`You can have at most ${MAX_READING_GUIDES} reading guides per book.`);
+      return;
+    }
+    setIsGeneratingGuide(true);
+    setGuideError(null);
+    try {
+      const token = localStorage.getItem('authToken');
+      if (!token) throw new Error('Authentication token not found.');
+      const response = await fetch(`/api/books/${bookId}/reading-guides`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: name || undefined,
+          custom_requirements: customRequirements || undefined,
+        }),
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+        throw new Error(errorData.detail);
+      }
+      await fetchReadingRoadmap();
+    } catch (err) {
+      logger.error('[BookView - handleCreateGuide] Failed:', err);
+      setGuideError(err.message);
+    } finally {
+      setIsGeneratingGuide(false);
+    }
+  };
+
+  const handleDeleteGuide = async (guideId) => {
+    if (!bookId || !guideId) return;
+    if (!navigator.onLine || isOfflineSnapshot) {
+      setGuideError('Deleting a guide requires an internet connection.');
+      return;
+    }
+    setGuideError(null);
+    try {
+      const token = localStorage.getItem('authToken');
+      if (!token) throw new Error('Authentication token not found.');
+      const response = await fetch(
+        `/api/books/${bookId}/reading-guides/${encodeURIComponent(guideId)}`,
+        { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (!response.ok && response.status !== 204) {
+        const errorData = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+        throw new Error(errorData.detail);
+      }
+      await fetchReadingRoadmap();
+    } catch (err) {
+      logger.error('[BookView - handleDeleteGuide] Failed:', err);
+      setGuideError(err.message);
+    }
+  };
+
   const handleGenerateRoadmap = async () => {
     if (!bookId) return;
     if (!navigator.onLine || isOfflineSnapshot) {
       setGuideError('Roadmap generation requires an internet connection.');
       return;
     }
-    logger.info(`[BookView - handleGenerateRoadmap] Generating roadmap for book: ${bookId}`);
     setIsGeneratingGuide(true);
     setGuideError(null);
 
     try {
       const token = localStorage.getItem('authToken');
-      if (!token) {
-        throw new Error("Authentication token not found.");
-      }
-      const response = await fetch(`/api/books/${bookId}/reading-guide`, {
-        method: 'POST',
+      if (!token) throw new Error('Authentication token not found.');
+
+      const hasActive = guidesList.some((g) => g.guide_id === activeGuideId);
+      const url = hasActive
+        ? guideApiPath('/generate')
+        : `/api/books/${bookId}/reading-guides`;
+      const method = 'POST';
+      const body = hasActive ? undefined : JSON.stringify({ name: 'Reading Roadmap' });
+
+      const response = await fetch(url, {
+        method,
         headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
+          Authorization: `Bearer ${token}`,
+          ...(body ? { 'Content-Type': 'application/json' } : {}),
         },
+        body,
       });
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ detail: `HTTP error ${response.status}` }));
+        const errorData = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
         throw new Error(errorData.detail);
       }
-      const data = await response.json();
-      setReadingRoadmap(data || null);
-      setHasRoadmap(!!(data && data.items && data.items.length > 0));
       await fetchReadingRoadmap();
     } catch (err) {
-      logger.error(`[BookView - handleGenerateRoadmap] Failed to generate roadmap:`, err);
+      logger.error('[BookView - handleGenerateRoadmap] Failed:', err);
       setGuideError(err.message);
     } finally {
       setIsGeneratingGuide(false);
@@ -1376,25 +1534,28 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
     if (!navigator.onLine || isOfflineSnapshot) {
       try {
         const g = await getGuide(bookId);
+        const entry = getGuideEntry(g, activeGuideId);
         const localProgress = applyLocalProgressToggle({
           completedIds: completedRoadmapIds,
-          progressTouchedAt: g?.progressTouchedAt || {},
+          progressTouchedAt: entry?.progressTouchedAt || {},
           itemId,
           completed,
         });
         const nextIds = localProgress.completedIds;
         setCompletedRoadmapIds(nextIds);
-        if (g?.roadmap) {
+        if (entry?.roadmap) {
           await putGuide(bookId, {
-            roadmap: g.roadmap,
+            roadmap: entry.roadmap,
             completedIds: nextIds,
             progressTouchedAt: localProgress.progressTouchedAt,
+            guideId: activeGuideId,
+            activeGuideId,
           });
         }
         await addOutboxEntry({
           type: 'roadmap_progress',
           bookId,
-          payload: { item_id: itemId, completed },
+          payload: { item_id: itemId, completed, guide_id: activeGuideId },
         });
         await refreshOutboxCount();
       } catch (err) {
@@ -1405,7 +1566,7 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
     try {
       const token = localStorage.getItem('authToken');
       if (!token) throw new Error("Authentication token not found.");
-      const response = await fetch(`/api/books/${bookId}/reading-guide/progress`, {
+      const response = await fetch(guideApiPath('/progress'), {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -1416,18 +1577,21 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
       if (!response.ok) return;
       const data = await response.json();
       const g = await getGuide(bookId);
+      const entry = getGuideEntry(g, activeGuideId);
       const reconciledProgress = reconcileGuideProgressState({
-        localCompletedIds: g?.completedIds || [],
-        localProgressTouchedAt: g?.progressTouchedAt || {},
+        localCompletedIds: entry?.completedIds || [],
+        localProgressTouchedAt: entry?.progressTouchedAt || {},
         serverCompletedIds: data.completed_ids || [],
       });
       setCompletedRoadmapIds(reconciledProgress.completedIds);
       try {
-        if (g?.roadmap) {
+        if (entry?.roadmap) {
           await putGuide(bookId, {
-            roadmap: g.roadmap,
+            roadmap: entry.roadmap,
             completedIds: reconciledProgress.completedIds,
             progressTouchedAt: reconciledProgress.progressTouchedAt,
+            guideId: activeGuideId,
+            activeGuideId,
           });
         }
       } catch (_e) { /* ignore */ }
@@ -1449,7 +1613,7 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
     try {
       const token = localStorage.getItem('authToken');
       if (!token) throw new Error("Authentication token not found.");
-      const response = await fetch(`/api/books/${bookId}/reading-guide/cards/${encodeURIComponent(cardId)}/graph`, {
+      const response = await fetch(guideApiPath(`/cards/${encodeURIComponent(cardId)}/graph`), {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` },
       });
@@ -1473,7 +1637,9 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
               const gSnap = await getGuide(bookId);
               await putGuide(bookId, {
                 roadmap: updated,
-                completedIds: gSnap?.completedIds ?? completedRoadmapIds,
+                completedIds: getGuideEntry(gSnap, activeGuideId)?.completedIds ?? completedRoadmapIds,
+                guideId: activeGuideId,
+                activeGuideId,
               });
               await cacheRoadmapGraphImages(bookId, updated);
               const hydrated = await hydrateRoadmapWithCachedGraphs(bookId, updated, registerBlobUrl);
@@ -1493,7 +1659,7 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
     } finally {
       setGraphLoadingById((prev) => ({ ...prev, [cardId]: false }));
     }
-  }, [bookId, isOfflineSnapshot, completedRoadmapIds, registerBlobUrl]);
+  }, [bookId, activeGuideId, isOfflineSnapshot, completedRoadmapIds, registerBlobUrl, guideApiPath]);
 
   const handleGenerateCardGraph = async (cardId) => {
     await generateGraphForCard(cardId, { surfaceError: true });
@@ -1523,14 +1689,16 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
           const gSnap = await getGuide(bookId);
           await putGuide(bookId, {
             roadmap: updated,
-            completedIds: gSnap?.completedIds ?? completedRoadmapIds,
+            completedIds: getGuideEntry(gSnap, activeGuideId)?.completedIds ?? completedRoadmapIds,
+            guideId: activeGuideId,
+            activeGuideId,
           });
         } catch (_e) { /* ignore */ }
       })();
       return updated;
     });
     return true;
-  }, [bookId, completedRoadmapIds]);
+  }, [bookId, activeGuideId, completedRoadmapIds]);
 
   const generateAlternativeReadingForCard = useCallback(async (cardId, options = {}) => {
     const { surfaceError = true } = options;
@@ -1546,7 +1714,7 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
     try {
       const token = localStorage.getItem('authToken');
       if (!token) throw new Error("Authentication token not found.");
-      const response = await fetch(`/api/books/${bookId}/reading-guide/cards/${encodeURIComponent(cardId)}/alternative-reading`, {
+      const response = await fetch(guideApiPath(`/cards/${encodeURIComponent(cardId)}/alternative-reading`), {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` },
       });
@@ -1566,7 +1734,7 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
     } finally {
       setAlternativeLoadingById((prev) => ({ ...prev, [cardId]: false }));
     }
-  }, [bookId, isOfflineSnapshot, updateRoadmapAlternativeReading]);
+  }, [bookId, isOfflineSnapshot, updateRoadmapAlternativeReading, guideApiPath]);
 
   const handleGenerateAlternativeReading = async (cardId) => {
     await generateAlternativeReadingForCard(cardId, { surfaceError: true });
@@ -1596,14 +1764,16 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
           const gSnap = await getGuide(bookId);
           await putGuide(bookId, {
             roadmap: updated,
-            completedIds: gSnap?.completedIds ?? completedRoadmapIds,
+            completedIds: getGuideEntry(gSnap, activeGuideId)?.completedIds ?? completedRoadmapIds,
+            guideId: activeGuideId,
+            activeGuideId,
           });
         } catch (_e) { /* ignore */ }
       })();
       return updated;
     });
     return true;
-  }, [bookId, completedRoadmapIds]);
+  }, [bookId, activeGuideId, completedRoadmapIds]);
 
   const generateOutsiderGuideForCard = useCallback(async (cardId, options = {}) => {
     const { surfaceError = true } = options;
@@ -1619,7 +1789,7 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
     try {
       const token = localStorage.getItem('authToken');
       if (!token) throw new Error("Authentication token not found.");
-      const response = await fetch(`/api/books/${bookId}/reading-guide/cards/${encodeURIComponent(cardId)}/outsider-guide`, {
+      const response = await fetch(guideApiPath(`/cards/${encodeURIComponent(cardId)}/outsider-guide`), {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` },
       });
@@ -1639,7 +1809,69 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
     } finally {
       setOutsiderLoadingById((prev) => ({ ...prev, [cardId]: false }));
     }
-  }, [bookId, isOfflineSnapshot, updateRoadmapOutsiderGuide]);
+  }, [bookId, isOfflineSnapshot, updateRoadmapOutsiderGuide, guideApiPath]);
+
+  const handleSendCardChat = useCallback(
+    async (cardId, message) => {
+      if (!bookId || !cardId || !message?.trim()) return null;
+      if (!navigator.onLine || isOfflineSnapshot) {
+        throw new Error('Chat requires an internet connection.');
+      }
+      const token = localStorage.getItem('authToken');
+      if (!token) throw new Error('Authentication token not found.');
+      const response = await fetch(guideApiPath(`/cards/${encodeURIComponent(cardId)}/chat`), {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ message: message.trim() }),
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+        throw new Error(errorData.detail || 'Chat failed');
+      }
+      const data = await response.json();
+      return data.messages || [];
+    },
+    [bookId, isOfflineSnapshot, guideApiPath],
+  );
+
+  const handleLoadCardChat = useCallback(
+    async (cardId) => {
+      if (!bookId || !cardId) return [];
+      if (!navigator.onLine || isOfflineSnapshot) return [];
+      const token = localStorage.getItem('authToken');
+      if (!token) return [];
+      const response = await fetch(guideApiPath(`/cards/${encodeURIComponent(cardId)}/chat`), {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) return [];
+      const data = await response.json();
+      return data.messages || [];
+    },
+    [bookId, isOfflineSnapshot, guideApiPath],
+  );
+
+  const handleClearCardChat = useCallback(
+    async (cardId) => {
+      if (!bookId || !cardId) return;
+      if (!navigator.onLine || isOfflineSnapshot) {
+        throw new Error('Clearing chat requires an internet connection.');
+      }
+      const token = localStorage.getItem('authToken');
+      if (!token) throw new Error('Authentication token not found.');
+      const response = await fetch(guideApiPath(`/cards/${encodeURIComponent(cardId)}/chat`), {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+        throw new Error(errorData.detail || 'Failed to clear chat');
+      }
+    },
+    [bookId, isOfflineSnapshot, guideApiPath],
+  );
 
   const handleGenerateOutsiderGuide = async (cardId) => {
     await generateOutsiderGuideForCard(cardId, { surfaceError: true });
@@ -3898,6 +4130,12 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
               {viewMode === 'guide' ? (
                 <ReadingGuidePane
                   roadmap={readingRoadmap}
+                  guidesList={guidesList}
+                  activeGuideId={activeGuideId}
+                  maxGuides={MAX_READING_GUIDES}
+                  onSwitchGuide={handleSwitchGuide}
+                  onCreateGuide={handleCreateGuide}
+                  onDeleteGuide={handleDeleteGuide}
                   completedIds={completedRoadmapIds}
                   onGenerateRoadmap={handleGenerateRoadmap}
                   onToggleProgress={handleToggleRoadmapProgress}
@@ -3907,6 +4145,9 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
                   hasRoadmap={hasRoadmap}
                   isGenerating={isGeneratingGuide}
                   serverActionsDisabled={serverOffline}
+                  onSendCardChat={handleSendCardChat}
+                  onLoadCardChat={handleLoadCardChat}
+                  onClearCardChat={handleClearCardChat}
                   onGuideTextLink={(textLink) => {
                     const scrollTop = guideScrollContainerRef.current?.scrollTop ?? 0;
                     setGuideScrollPositionByPage((prev) => ({ ...prev, [currentPage]: scrollTop }));

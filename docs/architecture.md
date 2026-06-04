@@ -34,6 +34,13 @@ Frontend calls backend endpoints under `/api/*` and renders book markdown with i
 
 Backend is the system-of-record service for user, book, note, bookmark, and reading-guide data.
 
+### Whole-book reading guides
+
+- Up to **5** roadmap instances per book per user in MongoDB collection `reading_guides`, keyed by `(book_id, user_id, guide_id)`.
+- Per-guide progress in `reading_guide_progress` (also keyed by `guide_id`).
+- Per-card LLM chat threads in `reading_guide_card_chats` (`book_id`, `user_id`, `guide_id`, `card_id`).
+- API routes under `/api/books/{book_id}/reading-guides/...` (legacy `/reading-guide` aliases default guide `guide_id=default`).
+
 ## Document Service (`pdf_service/`)
 
 - Entry point: `pdf_service/app.py`

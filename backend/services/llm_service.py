@@ -13,7 +13,7 @@ import json # Import json for DeepSeek requests
 import re # Import re for regular expressions
 import time
 import base64
-from backend.models.reading_guide import ReadingGuideItem
+from backend.models.reading_guide import ReadingGuideItem, MAX_CARD_CHAT_HISTORY_FOR_LLM
 from backend.services.knowledge_mapper import KnowledgeMapper
 
 load_dotenv()
@@ -842,11 +842,29 @@ Return ONLY valid JSON, no other text."""
         m = re.search(r"^#\s+(.+)$", markdown_text or "", re.MULTILINE)
         return (m.group(1).strip() if m else "") or "this book"
 
+    @staticmethod
+    def _custom_angle_prompt_block(custom_requirements: Optional[str], for_segmentation: bool) -> str:
+        if not custom_requirements or not str(custom_requirements).strip():
+            return ""
+        req = str(custom_requirements).strip()
+        if for_segmentation:
+            return (
+                f"\n\nREADER'S CUSTOM ANGLE: {req}\n"
+                "Shape pillar boundaries and titles to serve this angle while still grounding every pillar "
+                "in the manuscript's actual structure and content."
+            )
+        return (
+            f"\n\nREADER'S CUSTOM ANGLE: {req}\n"
+            "Frame purpose, takeaway, reading_summary, and bullets through this lens; "
+            "remain strictly grounded in SOURCE TEXT."
+        )
+
     async def _build_semantic_reading_guide_items(
         self,
         heading_nodes: List[Dict[str, Any]],
         book_title: str,
         full_markdown: str,
+        custom_requirements: Optional[str] = None,
     ) -> List[ReadingGuideItem]:
         """
         Two-pass semantic roadmap: LLM clusters headings into pillars, then fills guide fields per pillar.
@@ -875,6 +893,7 @@ Return ONLY valid JSON, no other text."""
             "CRITICAL: Preserve the core narrative and all instructional content. Only discard absolute 'Parse Noise' and 'Boilerplate Fragments' that provide zero value (e.g., page numbers, repetitive author/book names that appear on every page, or ISBN metadata). "
             "If a section has very little standalone content, keep it as its own pillar unless it is obvious layout noise (for example repeated headers/footers or page labels). "
             "Do not omit section IDs that contain actual book content, however brief."
+            + self._custom_angle_prompt_block(custom_requirements, for_segmentation=True)
         )
         segmentation_user = (
             f'BOOK: "{book_title}"\n\n'
@@ -943,6 +962,7 @@ Return ONLY valid JSON, no other text."""
                 "instead, provide a very brief, honest description or leave the fields empty. "
                 "If you find yourself repeating the same general advice for multiple thin segments, stop. "
                 "Only provide a takeaway if the text offers specific, new information."
+                + self._custom_angle_prompt_block(custom_requirements, for_segmentation=False)
             )
             card_user = (
                 f'BOOK: "{book_title}"\n'
@@ -1066,7 +1086,11 @@ Return ONLY valid JSON, no other text."""
                 mapped[node_id] = purpose
         return mapped
 
-    async def generate_roadmap(self, markdown_text: str) -> List[ReadingGuideItem]:
+    async def generate_roadmap(
+        self,
+        markdown_text: str,
+        custom_requirements: Optional[str] = None,
+    ) -> List[ReadingGuideItem]:
         """
         Build a semantic pillar roadmap: cluster headings with an LLM, then enrich each pillar.
         """
@@ -1088,20 +1112,101 @@ Return ONLY valid JSON, no other text."""
         if not heading_nodes:
             return []
         book_title = self._infer_book_title(md)
-        return await self._build_semantic_reading_guide_items(heading_nodes, book_title, md)
+        return await self._build_semantic_reading_guide_items(
+            heading_nodes, book_title, md, custom_requirements=custom_requirements
+        )
 
     async def generate_whole_book_reading_roadmap(
         self,
         heading_nodes: List[Dict[str, Any]],
         book_title: str,
         full_markdown: str,
+        custom_requirements: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         Same semantic two-pass pipeline as generate_roadmap, returning plain dicts for callers
         that do not use ReadingGuideItem directly.
         """
-        items = await self._build_semantic_reading_guide_items(heading_nodes, book_title, full_markdown)
+        items = await self._build_semantic_reading_guide_items(
+            heading_nodes, book_title, full_markdown, custom_requirements=custom_requirements
+        )
         return [item.model_dump() for item in items]
+
+    async def chat_roadmap_card(
+        self,
+        *,
+        book_title: str,
+        card: Dict[str, Any],
+        source_excerpt: str,
+        history: List[Dict[str, Any]],
+        user_message: str,
+        guide_custom_requirements: Optional[str] = None,
+    ) -> Optional[str]:
+        """Multi-turn chat about one roadmap card using the guide LLM."""
+        client, model_name = self._select_guide_gemini()
+        if not client or not model_name:
+            logger.warning("Card chat skipped: no guide Gemini client available.")
+            return None
+
+        bullets = card.get("reading_bullets") or []
+        if isinstance(bullets, list):
+            bullets_text = "\n".join(f"- {b}" for b in bullets if str(b).strip())
+        else:
+            bullets_text = ""
+
+        card_context = (
+            f'BOOK: "{book_title}"\n'
+            f'SECTION: "{card.get("title", "Section")}"\n'
+            f'Purpose: {card.get("purpose") or "—"}\n'
+            f'Takeaway: {card.get("takeaway") or "—"}\n'
+            f'Reading summary: {card.get("reading_summary") or "—"}\n'
+            f'Quick points:\n{bullets_text or "—"}\n'
+            f'Quote/preview: {card.get("key_quote") or card.get("preview_text") or "—"}\n'
+        )
+        if guide_custom_requirements and str(guide_custom_requirements).strip():
+            card_context += (
+                f"\nGuide reading angle: {str(guide_custom_requirements).strip()}\n"
+            )
+
+        excerpt = (source_excerpt or "")[:10000]
+        system_prompt = (
+            "You are a warm, substantive reading mentor helping the reader understand one section of a book. "
+            "Answer using only the SOURCE EXCERPT and SECTION CONTEXT below. "
+            "If the answer is not supported by those materials, say so honestly. "
+            "Do not invent quotes or facts. Keep replies focused and conversational.\n\n"
+            f"SECTION CONTEXT:\n{card_context}\n\n"
+            f"SOURCE EXCERPT:\n{excerpt}"
+        )
+
+        trimmed_history = list(history or [])[-MAX_CARD_CHAT_HISTORY_FOR_LLM:]
+        contents: List[Any] = []
+        for msg in trimmed_history:
+            role = msg.get("role")
+            content = str(msg.get("content") or "").strip()
+            if not content:
+                continue
+            gemini_role = "user" if role == "user" else "model"
+            contents.append(
+                types.Content(role=gemini_role, parts=[types.Part(text=content)])
+            )
+        contents.append(
+            types.Content(role="user", parts=[types.Part(text=user_message.strip())])
+        )
+
+        try:
+            response = await client.aio.models.generate_content(
+                model=model_name,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_prompt,
+                    max_output_tokens=4096,
+                ),
+            )
+            text = response.text if response and response.text else ""
+            return self._remove_think_tags(text).strip() or None
+        except Exception as e:
+            logger.error(f"chat_roadmap_card failed: {e}", exc_info=True)
+            return None
 
     async def generate_graph_image_bytes(
         self,

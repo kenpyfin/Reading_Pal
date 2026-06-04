@@ -41,15 +41,34 @@ from backend.models.reading_guide import (
     ReadingGuidePageInDB,
     ReadingGuideInDB,
     ReadingGuideProgressUpdate,
+    ReadingGuideCreateBody,
+    ReadingGuideSummary,
+    GuideCardChatPostBody,
+    GuideCardChatResponse,
+    GuideChatMessage,
+    LEGACY_GUIDE_ID,
+    MAX_READING_GUIDES_PER_BOOK,
+    MAX_CUSTOM_REQUIREMENTS_LEN,
 )
 from backend.db.mongodb import (
     upsert_reading_guide_page,
     get_reading_guide_page,
     upsert_reading_guide,
     get_reading_guide,
+    get_reading_guide_by_id,
     get_reading_guide_progress,
     update_reading_guide_progress,
+    list_reading_guides,
+    count_reading_guides,
+    create_reading_guide,
+    delete_reading_guide,
+    update_reading_guide_metadata,
+    delete_all_card_chats_for_guide,
+    get_card_chat_messages,
+    save_card_chat_messages,
+    clear_card_chat,
 )
+import uuid
 
 
 logger = logging.getLogger(__name__)
@@ -887,6 +906,118 @@ def _refresh_roadmap_graph_urls(items: List[Dict[str, Any]]) -> None:
         _refresh_roadmap_graph_urls(item.get("children") or [])
 
 
+def _guide_to_response_dict(guide: ReadingGuideInDB) -> Dict[str, Any]:
+    guide_dict = guide.model_dump(by_alias=True)
+    items = guide_dict.get("items") or []
+    _refresh_roadmap_graph_urls(items)
+    guide_dict["items"] = items
+    return guide_dict
+
+
+async def _load_book_markdown(book: Book) -> str:
+    if not CONTAINER_MARKDOWN_PATH or not book.markdown_filename:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Server configuration error.",
+        )
+    markdown_file_path = os.path.join(CONTAINER_MARKDOWN_PATH, book.markdown_filename)
+
+    def read_file_sync(path):
+        if not os.path.exists(path):
+            return None
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+
+    full_markdown = await run_in_threadpool(read_file_sync, markdown_file_path)
+    if not full_markdown:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Markdown content not found.")
+    return full_markdown
+
+
+async def _load_book_for_roadmap(book_id: str, user_id: str) -> Book:
+    if not ObjectId.is_valid(book_id):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid book ID format.")
+    book_data_doc = await get_book(book_id, user_id)
+    if not book_data_doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found or not owned by user")
+    try:
+        book = Book.model_validate(book_data_doc)
+    except Exception as e:
+        logger.error(f"Failed to validate book for roadmap: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Invalid book data.")
+    if book.status != "completed" or not book.markdown_filename:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Book processing not complete or markdown unavailable",
+        )
+    return book
+
+
+async def _generate_roadmap_items(
+    full_markdown: str,
+    custom_requirements: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    roadmap_items = await llm_service.generate_roadmap(
+        full_markdown, custom_requirements=custom_requirements
+    )
+    if roadmap_items:
+        return [item.model_dump() for item in roadmap_items]
+
+    from backend.services.knowledge_mapper import KnowledgeMapper
+
+    mapper = KnowledgeMapper()
+    heading_nodes = mapper.flatten_document_sections_for_roadmap(full_markdown)
+    if not heading_nodes:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No valid book content sections found.")
+
+    return [
+        {
+            "id": n["id"],
+            "title": n["title"],
+            "purpose": None,
+            "takeaway": (n.get("snippet") or "")[:500],
+            "thought_process": [],
+            "reading_summary": (n.get("snippet") or "")[:280],
+            "reading_bullets": [],
+            "preview_text": (n.get("snippet") or "")[:250],
+            "start_offset": n["start_offset"],
+            "end_offset": n["end_offset"],
+            "level": 1,
+            "children": [],
+            "key_term": None,
+            "enriched": False,
+            "hub_score": int(n.get("hub_score", 0)),
+            "key_quote": None,
+        }
+        for n in heading_nodes
+    ]
+
+
+def _sanitize_custom_requirements(raw: Optional[str]) -> Optional[str]:
+    if raw is None:
+        return None
+    trimmed = str(raw).strip()
+    if not trimmed:
+        return None
+    if len(trimmed) > MAX_CUSTOM_REQUIREMENTS_LEN:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"custom_requirements must be at most {MAX_CUSTOM_REQUIREMENTS_LEN} characters.",
+        )
+    return trimmed
+
+
+def _default_guide_name(existing_count: int) -> str:
+    return f"Guide {existing_count + 1}"
+
+
+async def _get_guide_or_404(book_id: str, user_id: str, guide_id: str) -> ReadingGuideInDB:
+    guide = await get_reading_guide_by_id(book_id=book_id, user_id=user_id, guide_id=guide_id)
+    if not guide:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reading roadmap not found.")
+    return guide
+
+
 @router.post("/callback", status_code=status.HTTP_200_OK)
 async def pdf_processing_callback(payload: PDFServiceCallbackData = Body(...)):
     """
@@ -1454,109 +1585,126 @@ async def get_page_reading_guide(
     return db_guide_page
 
 
-@router.post("/{book_id}/reading-guide", response_model=ReadingGuideInDB, response_model_by_alias=False)
-async def generate_whole_book_reading_guide(
+# --- Whole-book reading guides (multi-guide + legacy aliases) ---
+
+
+@router.get("/{book_id}/reading-guides", response_model=List[ReadingGuideSummary])
+async def list_book_reading_guides(
     book_id: str,
-    current_user_id: str = Depends(get_current_user_id)
+    current_user_id: str = Depends(get_current_user_id),
 ):
-    """Generate or regenerate semantic whole-book roadmap."""
-    logger.info(f"Request to generate whole-book reading roadmap for book {book_id} by user {current_user_id}")
-    book_data_doc = await get_book(book_id, current_user_id)
-    if not book_data_doc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found or not owned by user")
-    try:
-        book = Book.model_validate(book_data_doc)
-    except Exception as e:
-        logger.error(f"Failed to validate book for roadmap generation: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Invalid book data.")
+    if not ObjectId.is_valid(book_id):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid book ID format.")
+    summaries = await list_reading_guides(book_id=book_id, user_id=current_user_id)
+    return summaries
 
-    if book.status != "completed" or not book.markdown_filename:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Book processing not complete or markdown unavailable")
-    if not CONTAINER_MARKDOWN_PATH:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Server configuration error.")
 
-    markdown_file_path = os.path.join(CONTAINER_MARKDOWN_PATH, book.markdown_filename)
+@router.post("/{book_id}/reading-guides", response_model=ReadingGuideInDB, response_model_by_alias=False)
+async def create_book_reading_guide(
+    book_id: str,
+    body: Optional[ReadingGuideCreateBody] = Body(None),
+    current_user_id: str = Depends(get_current_user_id),
+):
+    """Create a new reading guide (max 5 per book)."""
+    book = await _load_book_for_roadmap(book_id, current_user_id)
+    existing = await count_reading_guides(book_id, current_user_id)
+    if existing >= MAX_READING_GUIDES_PER_BOOK:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Maximum of {MAX_READING_GUIDES_PER_BOOK} reading guides per book.",
+        )
 
-    def read_file_sync(path):
-        if not os.path.exists(path):
-            return None
-        with open(path, "r", encoding="utf-8") as f:
-            return f.read()
+    custom_requirements = _sanitize_custom_requirements(
+        body.custom_requirements if body else None
+    )
+    name = (body.name.strip() if body and body.name and body.name.strip() else None) or _default_guide_name(existing)
+    full_markdown = await _load_book_markdown(book)
+    items = await _generate_roadmap_items(full_markdown, custom_requirements=custom_requirements)
 
-    full_markdown = await run_in_threadpool(read_file_sync, markdown_file_path)
-    if not full_markdown:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Markdown content not found.")
-
-    roadmap_items = await llm_service.generate_roadmap(full_markdown)
-    if not roadmap_items:
-        # deterministic fallback using the refined KnowledgeMapper logic
-        from backend.services.knowledge_mapper import KnowledgeMapper
-        mapper = KnowledgeMapper()
-        heading_nodes = mapper.flatten_document_sections_for_roadmap(full_markdown)
-        if not heading_nodes:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No valid book content sections found.")
-        
-        items = [{
-            "id": n["id"],
-            "title": n["title"],
-            "purpose": None,
-            "takeaway": (n.get("snippet") or "")[:500],
-            "thought_process": [],
-            "reading_summary": (n.get("snippet") or "")[:280],
-            "reading_bullets": [],
-            "preview_text": (n.get("snippet") or "")[:250],
-            "start_offset": n["start_offset"],
-            "end_offset": n["end_offset"],
-            "level": 1,
-            "children": [],
-            "key_term": None,
-            "enriched": False,
-            "hub_score": int(n.get("hub_score", 0)),
-            "key_quote": None,
-        } for n in heading_nodes]
-    else:
-        items = [item.model_dump() for item in roadmap_items]
-
-    db_guide = await upsert_reading_guide(book_id=book_id, user_id=current_user_id, items=items)
+    guide_id = str(uuid.uuid4())
+    db_guide = await create_reading_guide(
+        book_id=book_id,
+        user_id=current_user_id,
+        guide_id=guide_id,
+        name=name,
+        items=items,
+        custom_requirements=custom_requirements,
+    )
     if not db_guide:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to save reading roadmap.")
-    return db_guide
+    return _guide_to_response_dict(db_guide)
 
 
-@router.get("/{book_id}/reading-guide", response_model=Optional[ReadingGuideInDB], response_model_by_alias=False)
-async def get_whole_book_reading_guide(
+@router.get("/{book_id}/reading-guides/{guide_id}", response_model=Optional[ReadingGuideInDB], response_model_by_alias=False)
+async def get_book_reading_guide(
     book_id: str,
-    current_user_id: str = Depends(get_current_user_id)
+    guide_id: str,
+    current_user_id: str = Depends(get_current_user_id),
 ):
     if not ObjectId.is_valid(book_id):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid book ID format.")
-    guide = await get_reading_guide(book_id=book_id, user_id=current_user_id)
+    guide = await get_reading_guide_by_id(book_id=book_id, user_id=current_user_id, guide_id=guide_id)
     if not guide:
         return None
-
-    guide_dict = guide.model_dump(by_alias=True)
-    items = guide_dict.get("items") or []
-    _refresh_roadmap_graph_urls(items)
-    guide_dict["items"] = items
-    return guide_dict
+    return _guide_to_response_dict(guide)
 
 
-@router.get("/{book_id}/reading-guide/progress")
-async def get_whole_book_reading_guide_progress(
+@router.delete("/{book_id}/reading-guides/{guide_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_book_reading_guide(
     book_id: str,
-    current_user_id: str = Depends(get_current_user_id)
+    guide_id: str,
+    current_user_id: str = Depends(get_current_user_id),
 ):
     if not ObjectId.is_valid(book_id):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid book ID format.")
-    completed_ids = await get_reading_guide_progress(book_id=book_id, user_id=current_user_id)
+    deleted = await delete_reading_guide(book_id=book_id, user_id=current_user_id, guide_id=guide_id)
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reading roadmap not found.")
+    return None
+
+
+@router.post("/{book_id}/reading-guides/{guide_id}/generate", response_model=ReadingGuideInDB, response_model_by_alias=False)
+async def regenerate_book_reading_guide(
+    book_id: str,
+    guide_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+):
+    """Regenerate roadmap items for an existing guide; clears card chats for that guide."""
+    guide = await _get_guide_or_404(book_id, current_user_id, guide_id)
+    book = await _load_book_for_roadmap(book_id, current_user_id)
+    full_markdown = await _load_book_markdown(book)
+    items = await _generate_roadmap_items(
+        full_markdown, custom_requirements=guide.custom_requirements
+    )
+    await delete_all_card_chats_for_guide(book_id, current_user_id, guide_id)
+    updated = await update_reading_guide_metadata(
+        book_id, current_user_id, guide_id, items=items
+    )
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to save reading roadmap.")
+    return _guide_to_response_dict(updated)
+
+
+@router.get("/{book_id}/reading-guides/{guide_id}/progress")
+async def get_book_reading_guide_progress(
+    book_id: str,
+    guide_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+):
+    if not ObjectId.is_valid(book_id):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid book ID format.")
+    completed_ids = await get_reading_guide_progress(
+        book_id=book_id, user_id=current_user_id, guide_id=guide_id
+    )
     return {"completed_ids": completed_ids}
 
 
-@router.post("/{book_id}/reading-guide/progress")
-async def update_whole_book_reading_guide_progress(
+@router.post("/{book_id}/reading-guides/{guide_id}/progress")
+async def update_book_reading_guide_progress(
     book_id: str,
+    guide_id: str,
     payload: ReadingGuideProgressUpdate = Body(...),
-    current_user_id: str = Depends(get_current_user_id)
+    current_user_id: str = Depends(get_current_user_id),
 ):
     if not ObjectId.is_valid(book_id):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid book ID format.")
@@ -1565,45 +1713,126 @@ async def update_whole_book_reading_guide_progress(
         user_id=current_user_id,
         item_id=payload.item_id,
         completed=payload.completed,
+        guide_id=guide_id,
     )
     return {"completed_ids": completed_ids}
 
 
-@router.post("/{book_id}/reading-guide/cards/{card_id}/graph")
-async def generate_roadmap_card_graph(
+@router.post("/{book_id}/reading-guides/{guide_id}/cards/{card_id}/graph")
+async def generate_roadmap_card_graph_v2(
     book_id: str,
+    guide_id: str,
     card_id: str,
     current_user_id: str = Depends(get_current_user_id),
 ):
-    """Generate an inline concept graph image for one roadmap card."""
+    return await _generate_roadmap_card_graph_impl(book_id, guide_id, card_id, current_user_id)
+
+
+@router.post("/{book_id}/reading-guides/{guide_id}/cards/{card_id}/alternative-reading")
+async def generate_roadmap_card_alternative_reading_v2(
+    book_id: str,
+    guide_id: str,
+    card_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+):
+    return await _generate_roadmap_card_alternative_reading_impl(
+        book_id, guide_id, card_id, current_user_id
+    )
+
+
+@router.post("/{book_id}/reading-guides/{guide_id}/cards/{card_id}/outsider-guide")
+async def generate_roadmap_card_outsider_guide_v2(
+    book_id: str,
+    guide_id: str,
+    card_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+):
+    return await _generate_roadmap_card_outsider_guide_impl(
+        book_id, guide_id, card_id, current_user_id
+    )
+
+
+@router.get("/{book_id}/reading-guides/{guide_id}/cards/{card_id}/chat", response_model=GuideCardChatResponse)
+async def get_roadmap_card_chat(
+    book_id: str,
+    guide_id: str,
+    card_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+):
     if not ObjectId.is_valid(book_id):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid book ID format.")
-    guide = await get_reading_guide(book_id=book_id, user_id=current_user_id)
-    if not guide:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reading roadmap not found.")
+    await _get_guide_or_404(book_id, current_user_id, guide_id)
+    raw = await get_card_chat_messages(book_id, current_user_id, guide_id, card_id)
+    messages = [GuideChatMessage.model_validate(m) for m in raw]
+    return GuideCardChatResponse(messages=messages)
 
+
+@router.post("/{book_id}/reading-guides/{guide_id}/cards/{card_id}/chat", response_model=GuideCardChatResponse)
+async def post_roadmap_card_chat(
+    book_id: str,
+    guide_id: str,
+    card_id: str,
+    body: GuideCardChatPostBody = Body(...),
+    current_user_id: str = Depends(get_current_user_id),
+):
+    if not ObjectId.is_valid(book_id):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid book ID format.")
+    guide = await _get_guide_or_404(book_id, current_user_id, guide_id)
     item = _find_roadmap_item([i.model_dump() for i in guide.items], card_id)
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Card not found in roadmap.")
 
-    book_data_doc = await get_book(book_id, current_user_id)
-    if not book_data_doc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found or not owned by user")
-    book = Book.model_validate(book_data_doc)
-    markdown_file_path = os.path.join(CONTAINER_MARKDOWN_PATH, book.markdown_filename) if CONTAINER_MARKDOWN_PATH else None
-    if not markdown_file_path:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Server configuration error.")
+    book = await _load_book_for_roadmap(book_id, current_user_id)
+    full_markdown = await _load_book_markdown(book)
+    start = int(item.get("start_offset", 0))
+    end = int(item.get("end_offset", len(full_markdown)))
+    source_excerpt = full_markdown[max(0, start):min(len(full_markdown), end)][:10000]
 
-    def read_file_sync(path):
-        if not os.path.exists(path):
-            return None
-        with open(path, "r", encoding="utf-8") as f:
-            return f.read()
+    user_message = body.message.strip()
+    history = await get_card_chat_messages(book_id, current_user_id, guide_id, card_id)
+    reply = await llm_service.chat_roadmap_card(
+        book_title=book.title,
+        card=item,
+        source_excerpt=source_excerpt,
+        history=history,
+        user_message=user_message,
+        guide_custom_requirements=guide.custom_requirements,
+    )
+    if not reply:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Chat generation failed.")
 
-    full_markdown = await run_in_threadpool(read_file_sync, markdown_file_path)
-    if not full_markdown:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Markdown content not found.")
+    now = datetime.utcnow()
+    history.append({"role": "user", "content": user_message, "created_at": now})
+    history.append({"role": "assistant", "content": reply, "created_at": now})
+    saved = await save_card_chat_messages(book_id, current_user_id, guide_id, card_id, history)
+    messages = [GuideChatMessage.model_validate(m) for m in saved]
+    return GuideCardChatResponse(messages=messages)
 
+
+@router.delete("/{book_id}/reading-guides/{guide_id}/cards/{card_id}/chat", response_model=GuideCardChatResponse)
+async def delete_roadmap_card_chat(
+    book_id: str,
+    guide_id: str,
+    card_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+):
+    if not ObjectId.is_valid(book_id):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid book ID format.")
+    await _get_guide_or_404(book_id, current_user_id, guide_id)
+    await clear_card_chat(book_id, current_user_id, guide_id, card_id)
+    return GuideCardChatResponse(messages=[])
+
+
+async def _generate_roadmap_card_graph_impl(
+    book_id: str, guide_id: str, card_id: str, current_user_id: str
+):
+    guide = await _get_guide_or_404(book_id, current_user_id, guide_id)
+    item = _find_roadmap_item([i.model_dump() for i in guide.items], card_id)
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Card not found in roadmap.")
+
+    book = await _load_book_for_roadmap(book_id, current_user_id)
+    full_markdown = await _load_book_markdown(book)
     start = int(item.get("start_offset", 0))
     end = int(item.get("end_offset", min(len(full_markdown), start + 1200)))
     source_excerpt = full_markdown[max(0, start):min(len(full_markdown), end)]
@@ -1629,49 +1858,24 @@ async def generate_roadmap_card_graph(
     stable_graph_path = f"/images/app/{relative_file}"
     signed_url = generate_signed_image_url(relative_file)
 
-    # Store a stable app-image path in DB; sign it on read/response.
     items = [i.model_dump() for i in guide.items]
     _set_roadmap_item_graph(items, card_id, stable_graph_path)
-    await upsert_reading_guide(book_id=book_id, user_id=current_user_id, items=items)
-
+    await upsert_reading_guide(
+        book_id=book_id, user_id=current_user_id, items=items, guide_id=guide_id
+    )
     return {"card_id": card_id, "graph_image_url": signed_url}
 
 
-@router.post("/{book_id}/reading-guide/cards/{card_id}/alternative-reading")
-async def generate_roadmap_card_alternative_reading(
-    book_id: str,
-    card_id: str,
-    current_user_id: str = Depends(get_current_user_id),
+async def _generate_roadmap_card_alternative_reading_impl(
+    book_id: str, guide_id: str, card_id: str, current_user_id: str
 ):
-    """Generate and persist alternative reading text for one roadmap card."""
-    if not ObjectId.is_valid(book_id):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid book ID format.")
-    guide = await get_reading_guide(book_id=book_id, user_id=current_user_id)
-    if not guide:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reading roadmap not found.")
-
+    guide = await _get_guide_or_404(book_id, current_user_id, guide_id)
     item = _find_roadmap_item([i.model_dump() for i in guide.items], card_id)
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Card not found in roadmap.")
 
-    book_data_doc = await get_book(book_id, current_user_id)
-    if not book_data_doc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found or not owned by user")
-    book = Book.model_validate(book_data_doc)
-    markdown_file_path = os.path.join(CONTAINER_MARKDOWN_PATH, book.markdown_filename) if CONTAINER_MARKDOWN_PATH else None
-    if not markdown_file_path:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Server configuration error.")
-
-    def read_file_sync(path):
-        if not os.path.exists(path):
-            return None
-        with open(path, "r", encoding="utf-8") as f:
-            return f.read()
-
-    full_markdown = await run_in_threadpool(read_file_sync, markdown_file_path)
-    if not full_markdown:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Markdown content not found.")
-
+    book = await _load_book_for_roadmap(book_id, current_user_id)
+    full_markdown = await _load_book_markdown(book)
     start = int(item.get("start_offset", 0))
     end = int(item.get("end_offset", min(len(full_markdown), start + 1800)))
     if end <= start:
@@ -1683,7 +1887,10 @@ async def generate_roadmap_card_alternative_reading(
         source_excerpt=source_excerpt,
     )
     if not alternative_reading:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Alternative reading generation failed.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Alternative reading generation failed.",
+        )
     shortcut_word_count = len(alternative_reading.split())
 
     items = [i.model_dump() for i in guide.items]
@@ -1694,10 +1901,14 @@ async def generate_roadmap_card_alternative_reading(
         source_word_count=source_word_count,
         shortcut_word_count=shortcut_word_count,
     )
-    saved_guide = await upsert_reading_guide(book_id=book_id, user_id=current_user_id, items=items)
+    saved_guide = await upsert_reading_guide(
+        book_id=book_id, user_id=current_user_id, items=items, guide_id=guide_id
+    )
     if not saved_guide:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to persist alternative reading.")
-
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to persist alternative reading.",
+        )
     return {
         "card_id": card_id,
         "alternative_reading": alternative_reading,
@@ -1706,41 +1917,16 @@ async def generate_roadmap_card_alternative_reading(
     }
 
 
-@router.post("/{book_id}/reading-guide/cards/{card_id}/outsider-guide")
-async def generate_roadmap_card_outsider_guide(
-    book_id: str,
-    card_id: str,
-    current_user_id: str = Depends(get_current_user_id),
+async def _generate_roadmap_card_outsider_guide_impl(
+    book_id: str, guide_id: str, card_id: str, current_user_id: str
 ):
-    """Generate and persist outsider-oriented guide text for one roadmap card."""
-    if not ObjectId.is_valid(book_id):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid book ID format.")
-    guide = await get_reading_guide(book_id=book_id, user_id=current_user_id)
-    if not guide:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reading roadmap not found.")
-
+    guide = await _get_guide_or_404(book_id, current_user_id, guide_id)
     item = _find_roadmap_item([i.model_dump() for i in guide.items], card_id)
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Card not found in roadmap.")
 
-    book_data_doc = await get_book(book_id, current_user_id)
-    if not book_data_doc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found or not owned by user")
-    book = Book.model_validate(book_data_doc)
-    markdown_file_path = os.path.join(CONTAINER_MARKDOWN_PATH, book.markdown_filename) if CONTAINER_MARKDOWN_PATH else None
-    if not markdown_file_path:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Server configuration error.")
-
-    def read_file_sync(path):
-        if not os.path.exists(path):
-            return None
-        with open(path, "r", encoding="utf-8") as f:
-            return f.read()
-
-    full_markdown = await run_in_threadpool(read_file_sync, markdown_file_path)
-    if not full_markdown:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Markdown content not found.")
-
+    book = await _load_book_for_roadmap(book_id, current_user_id)
+    full_markdown = await _load_book_markdown(book)
     start = int(item.get("start_offset", 0))
     end = int(item.get("end_offset", min(len(full_markdown), start + 1800)))
     if end <= start:
@@ -1752,7 +1938,10 @@ async def generate_roadmap_card_outsider_guide(
         source_excerpt=source_excerpt,
     )
     if not outsider_guide:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Outsider guide generation failed.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Outsider guide generation failed.",
+        )
     outsider_word_count = len(outsider_guide.split())
 
     items = [i.model_dump() for i in guide.items]
@@ -1763,16 +1952,109 @@ async def generate_roadmap_card_outsider_guide(
         source_word_count=source_word_count,
         outsider_word_count=outsider_word_count,
     )
-    saved_guide = await upsert_reading_guide(book_id=book_id, user_id=current_user_id, items=items)
+    saved_guide = await upsert_reading_guide(
+        book_id=book_id, user_id=current_user_id, items=items, guide_id=guide_id
+    )
     if not saved_guide:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to persist outsider guide.")
-
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to persist outsider guide.",
+        )
     return {
         "card_id": card_id,
         "outsider_guide": outsider_guide,
         "source_word_count": source_word_count,
         "outsider_word_count": outsider_word_count,
     }
+
+
+# Legacy aliases (default guide)
+
+
+@router.post("/{book_id}/reading-guide", response_model=ReadingGuideInDB, response_model_by_alias=False)
+async def generate_whole_book_reading_guide(
+    book_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+):
+    """Legacy: regenerate default guide or create it if missing."""
+    existing = await get_reading_guide_by_id(book_id, current_user_id, LEGACY_GUIDE_ID)
+    if existing:
+        return await regenerate_book_reading_guide(book_id, LEGACY_GUIDE_ID, current_user_id)
+
+    book = await _load_book_for_roadmap(book_id, current_user_id)
+    full_markdown = await _load_book_markdown(book)
+    items = await _generate_roadmap_items(full_markdown, custom_requirements=None)
+    db_guide = await create_reading_guide(
+        book_id=book_id,
+        user_id=current_user_id,
+        guide_id=LEGACY_GUIDE_ID,
+        name="Reading Roadmap",
+        items=items,
+        custom_requirements=None,
+    )
+    if not db_guide:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to save reading roadmap.")
+    return _guide_to_response_dict(db_guide)
+
+
+@router.get("/{book_id}/reading-guide", response_model=Optional[ReadingGuideInDB], response_model_by_alias=False)
+async def get_whole_book_reading_guide(
+    book_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+):
+    return await get_book_reading_guide(book_id, LEGACY_GUIDE_ID, current_user_id)
+
+
+@router.get("/{book_id}/reading-guide/progress")
+async def get_whole_book_reading_guide_progress(
+    book_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+):
+    return await get_book_reading_guide_progress(book_id, LEGACY_GUIDE_ID, current_user_id)
+
+
+@router.post("/{book_id}/reading-guide/progress")
+async def update_whole_book_reading_guide_progress(
+    book_id: str,
+    payload: ReadingGuideProgressUpdate = Body(...),
+    current_user_id: str = Depends(get_current_user_id),
+):
+    return await update_book_reading_guide_progress(
+        book_id, LEGACY_GUIDE_ID, payload, current_user_id
+    )
+
+
+@router.post("/{book_id}/reading-guide/cards/{card_id}/graph")
+async def generate_roadmap_card_graph(
+    book_id: str,
+    card_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+):
+    return await _generate_roadmap_card_graph_impl(
+        book_id, LEGACY_GUIDE_ID, card_id, current_user_id
+    )
+
+
+@router.post("/{book_id}/reading-guide/cards/{card_id}/alternative-reading")
+async def generate_roadmap_card_alternative_reading(
+    book_id: str,
+    card_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+):
+    return await _generate_roadmap_card_alternative_reading_impl(
+        book_id, LEGACY_GUIDE_ID, card_id, current_user_id
+    )
+
+
+@router.post("/{book_id}/reading-guide/cards/{card_id}/outsider-guide")
+async def generate_roadmap_card_outsider_guide(
+    book_id: str,
+    card_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+):
+    return await _generate_roadmap_card_outsider_guide_impl(
+        book_id, LEGACY_GUIDE_ID, card_id, current_user_id
+    )
 
 
 # Shared secret for app image HMAC signing (<img> cannot send Bearer). Set in .env for production.

@@ -29,6 +29,19 @@ Use a reverse-chronological list (newest first). Each entry should be short and 
 
 <!-- New entries go below this comment, newest first. -->
 
+## 2026-06-04 — Reading guide: collapse completed roadmap cards
+
+- **What:** Checked roadmap items now hide signpost, reading notes, actions, chat, graphs, and child sections—only the checkbox and title remain visible. Unchecking restores full content.
+- **Why:** Completed sections cluttered the guide; users wanted a compact progress view.
+- **Where:** `frontend/src/components/ReadingGuidePane.js`, `frontend/src/components/ReadingGuidePane.css`
+
+## 2026-06-04 — Multi reading guides and per-card LLM chat
+
+- **What:** Readers can create up to **5** whole-book reading guides per title, each with an optional **custom reading angle** woven into the existing Architect + mentor generation prompts. Added **per-card chat** (persisted history, clear history) using the guide Gemini model. Legacy `/reading-guide` routes remain as aliases for the default guide.
+- **Why:** Different study goals need different roadmap lenses; readers wanted to discuss a section in context without leaving the roadmap card.
+- **Where:** `backend/models/reading_guide.py`, `backend/db/mongodb.py`, `backend/api/books.py`, `backend/services/llm_service.py`, `frontend/src/pages/BookView.js`, `frontend/src/components/ReadingGuidePane.js`, `frontend/src/utils/offlineBookCache.js`, `frontend/src/utils/outboxSync.js`, `docs/architecture.md`
+- **Notes:** Chat is online-only. Regenerating a guide clears all card chats for that `guide_id`. IndexedDB guide cache stores `guides[]` + `activeGuideId`; outbox progress includes `guide_id`.
+
 ## 2026-06-03 — Readable dark theme and sepia comfort mode
 
 - **What:** Refreshed dark mode using **@radix-ui/colors** (slate + blue scales with `.dark` on `<html>`). Added **sepia** as a third fixed theme (Kindle-style warm paper). Fixed surfaces that incorrectly used `--color-on-accent` as backgrounds (white panels in dark mode). Added `--color-highlight-*` tokens for note/search highlights. Theme toggle cycles **light → dark → sepia** when pinned; **Auto** restores system preference.

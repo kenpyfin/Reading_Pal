@@ -1,8 +1,14 @@
 from datetime import datetime
-from typing import Optional, Any, List, Dict
+from typing import Optional, Any, List, Dict, Literal
 
 from bson import ObjectId
 from pydantic import BaseModel, Field
+
+LEGACY_GUIDE_ID = "default"
+MAX_READING_GUIDES_PER_BOOK = 5
+MAX_CUSTOM_REQUIREMENTS_LEN = 2000
+MAX_CARD_CHAT_MESSAGE_LEN = 4000
+MAX_CARD_CHAT_HISTORY_FOR_LLM = 20
 
 # Assuming PyObjectId is in user.py or a common place.
 # If it's in a different location, adjust the import path.
@@ -102,6 +108,12 @@ class ReadingGuide(BaseModel):
     """Whole-book reading roadmap generated from document structure + LLM enrichment."""
     book_id: PyObjectId = Field(alias="book_id")
     user_id: str = Field(...)
+    guide_id: str = Field(default=LEGACY_GUIDE_ID, description="Stable id for this guide instance")
+    name: str = Field(default="Reading Roadmap", description="Display name for the guide")
+    custom_requirements: Optional[str] = Field(
+        None,
+        description="Optional reader angle used when generating this guide",
+    )
     items: List[ReadingGuideItem] = Field(default_factory=list, description="Root-level items (tree)")
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
@@ -115,6 +127,36 @@ class ReadingGuide(BaseModel):
 class ReadingGuideInDB(ReadingGuide):
     """ReadingGuide as stored in MongoDB with _id."""
     id: PyObjectId = Field(default_factory=PyObjectId, alias="_id")
+
+
+class ReadingGuideSummary(BaseModel):
+    """Lightweight guide metadata for list endpoints."""
+    guide_id: str
+    name: str
+    custom_requirements: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    item_count: int = 0
+
+
+class ReadingGuideCreateBody(BaseModel):
+    """Request body for creating a new reading guide."""
+    name: Optional[str] = Field(None, max_length=120)
+    custom_requirements: Optional[str] = Field(None, max_length=MAX_CUSTOM_REQUIREMENTS_LEN)
+
+
+class GuideChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class GuideCardChatPostBody(BaseModel):
+    message: str = Field(..., min_length=1, max_length=MAX_CARD_CHAT_MESSAGE_LEN)
+
+
+class GuideCardChatResponse(BaseModel):
+    messages: List[GuideChatMessage] = Field(default_factory=list)
 
 
 class ReadingGuideProgressUpdate(BaseModel):

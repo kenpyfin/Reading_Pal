@@ -13,7 +13,9 @@ from pymongo.errors import DuplicateKeyError
 from backend.models.user import UserCreate
 
 if TYPE_CHECKING:
-    from backend.models.reading_guide import ReadingGuidePageInDB
+    from backend.models.reading_guide import ReadingGuidePageInDB, ReadingGuideInDB
+
+from backend.models.reading_guide import LEGACY_GUIDE_ID
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -33,6 +35,7 @@ async def connect_to_mongo():
             # Use ping for broad MongoDB compatibility.
             await client.admin.command('ping')
             logger.info("MongoDB connection successful")
+            await ensure_reading_guide_indexes()
         except Exception as e:
             logger.error(f"MongoDB connection failed: {e}")
             # Depending on requirements, you might want to raise the exception
@@ -879,8 +882,10 @@ async def get_reading_guides_for_book(
 
 
 # --- Reading Guide (Whole-Book Roadmap) Database Operations ---
+
+
 def get_reading_guides_roadmap_collection():
-    """Collection for whole-book reading roadmaps (one doc per book per user)."""
+    """Collection for whole-book reading roadmaps (one doc per book/user/guide)."""
     database = get_database()
     if database is None:
         logger.error("Database not initialized for reading_guides.")
@@ -897,102 +902,412 @@ def get_reading_guide_progress_collection():
     return database["reading_guide_progress"]
 
 
-async def upsert_reading_guide(
-    book_id: str, user_id: str, items: List[Dict]
-) -> Optional['ReadingGuideInDB']:
-    """Create or update a whole-book reading guide for a book and user."""
-    collection = get_reading_guides_roadmap_collection()
-    now = datetime.utcnow()
+def get_reading_guide_card_chats_collection():
+    """Collection for per-card LLM chat threads."""
+    database = get_database()
+    if database is None:
+        logger.error("Database not initialized for reading_guide_card_chats.")
+        raise ConnectionError("Database not initialized for reading guide card chat operations.")
+    return database["reading_guide_card_chats"]
+
+
+async def ensure_reading_guide_indexes():
+    """Create indexes for multi-guide and card chat collections (idempotent)."""
     try:
-        book_obj_id = ObjectId(book_id)
+        guides = get_reading_guides_roadmap_collection()
+        await guides.create_index(
+            [("book_id", 1), ("user_id", 1), ("guide_id", 1)],
+            unique=True,
+            name="book_user_guide_unique",
+        )
+        progress = get_reading_guide_progress_collection()
+        await progress.create_index(
+            [("book_id", 1), ("user_id", 1), ("guide_id", 1)],
+            unique=True,
+            name="book_user_guide_progress_unique",
+        )
+        chats = get_reading_guide_card_chats_collection()
+        await chats.create_index(
+            [("book_id", 1), ("user_id", 1), ("guide_id", 1), ("card_id", 1)],
+            unique=True,
+            name="book_user_guide_card_chat_unique",
+        )
+    except Exception as e:
+        logger.warning(f"Reading guide index setup skipped or partial: {e}")
+
+
+def _count_roadmap_items(items: List[Dict]) -> int:
+    total = 0
+    for item in items or []:
+        total += 1
+        total += _count_roadmap_items(item.get("children") or [])
+    return total
+
+
+def _normalize_guide_document(doc: Dict[str, Any]) -> Dict[str, Any]:
+    """Apply defaults for legacy docs missing guide_id/name."""
+    if not doc:
+        return doc
+    normalized = dict(doc)
+    if not normalized.get("guide_id"):
+        normalized["guide_id"] = LEGACY_GUIDE_ID
+    if not normalized.get("name"):
+        normalized["name"] = "Reading Roadmap"
+    if "custom_requirements" not in normalized:
+        normalized["custom_requirements"] = None
+    return normalized
+
+
+async def _migrate_legacy_reading_guide_doc(
+    collection, book_obj_id: ObjectId, user_id: str, doc: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Rewrite legacy single-guide docs to include guide_id."""
+    if doc.get("guide_id"):
+        return _normalize_guide_document(doc)
+    guide_id = LEGACY_GUIDE_ID
+    now = datetime.utcnow()
+    migrated = {
+        **doc,
+        "guide_id": guide_id,
+        "name": doc.get("name") or "Reading Roadmap",
+        "custom_requirements": doc.get("custom_requirements"),
+        "updated_at": now,
+    }
+    await collection.delete_one({"_id": doc["_id"]})
+    await collection.insert_one(migrated)
+    return _normalize_guide_document(migrated)
+
+
+def _book_obj_id_or_none(book_id: str) -> Optional[ObjectId]:
+    try:
+        return ObjectId(book_id)
     except Exception:
-        logger.error(f"Invalid book_id format for ObjectId in upsert_reading_guide: {book_id}")
+        logger.error(f"Invalid book_id format for ObjectId: {book_id}")
         return None
 
-    query = {"book_id": book_obj_id, "user_id": user_id}
+
+async def count_reading_guides(book_id: str, user_id: str) -> int:
+    collection = get_reading_guides_roadmap_collection()
+    book_obj_id = _book_obj_id_or_none(book_id)
+    if not book_obj_id:
+        return 0
+    try:
+        await _migrate_legacy_reading_guide_on_list(collection, book_obj_id, user_id)
+        return await collection.count_documents({"book_id": book_obj_id, "user_id": user_id})
+    except Exception as e:
+        logger.error(f"Error in count_reading_guides for book {book_id}: {e}", exc_info=True)
+        return 0
+
+
+async def _migrate_legacy_reading_guide_on_list(collection, book_obj_id: ObjectId, user_id: str) -> None:
+    """If a legacy doc exists (no guide_id), migrate it before list/count."""
+    legacy = await collection.find_one(
+        {"book_id": book_obj_id, "user_id": user_id, "guide_id": {"$exists": False}}
+    )
+    if legacy:
+        await _migrate_legacy_reading_guide_doc(collection, book_obj_id, user_id, legacy)
+    legacy_progress = get_reading_guide_progress_collection()
+    prog = await legacy_progress.find_one(
+        {"book_id": book_obj_id, "user_id": user_id, "guide_id": {"$exists": False}}
+    )
+    if prog:
+        now = datetime.utcnow()
+        await legacy_progress.delete_one({"_id": prog["_id"]})
+        await legacy_progress.insert_one({
+            **prog,
+            "guide_id": LEGACY_GUIDE_ID,
+            "updated_at": now,
+        })
+
+
+async def list_reading_guides(book_id: str, user_id: str) -> List[Dict[str, Any]]:
+    """Return guide summaries for a book and user."""
+    from backend.models.reading_guide import ReadingGuideSummary
+
+    collection = get_reading_guides_roadmap_collection()
+    book_obj_id = _book_obj_id_or_none(book_id)
+    if not book_obj_id:
+        return []
+
+    try:
+        await _migrate_legacy_reading_guide_on_list(collection, book_obj_id, user_id)
+        summaries = []
+        cursor = collection.find({"book_id": book_obj_id, "user_id": user_id}).sort("created_at", 1)
+        async for doc in cursor:
+            doc = _normalize_guide_document(doc)
+            items = doc.get("items") or []
+            summary = ReadingGuideSummary(
+                guide_id=doc["guide_id"],
+                name=doc.get("name") or "Reading Roadmap",
+                custom_requirements=doc.get("custom_requirements"),
+                created_at=doc.get("created_at") or datetime.utcnow(),
+                updated_at=doc.get("updated_at") or datetime.utcnow(),
+                item_count=_count_roadmap_items(items),
+            )
+            summaries.append(summary.model_dump())
+        return summaries
+    except Exception as e:
+        logger.error(f"Error in list_reading_guides for book {book_id}: {e}", exc_info=True)
+        return []
+
+
+async def get_reading_guide_by_id(
+    book_id: str, user_id: str, guide_id: str
+) -> Optional['ReadingGuideInDB']:
+    collection = get_reading_guides_roadmap_collection()
+    book_obj_id = _book_obj_id_or_none(book_id)
+    if not book_obj_id:
+        return None
+
+    try:
+        await _migrate_legacy_reading_guide_on_list(collection, book_obj_id, user_id)
+        if guide_id == LEGACY_GUIDE_ID:
+            doc = await collection.find_one(
+                {"book_id": book_obj_id, "user_id": user_id, "guide_id": LEGACY_GUIDE_ID}
+            )
+            if not doc:
+                doc = await collection.find_one(
+                    {"book_id": book_obj_id, "user_id": user_id, "guide_id": {"$exists": False}}
+                )
+                if doc:
+                    doc = await _migrate_legacy_reading_guide_doc(collection, book_obj_id, user_id, doc)
+        else:
+            doc = await collection.find_one(
+                {"book_id": book_obj_id, "user_id": user_id, "guide_id": guide_id}
+            )
+        if doc:
+            from backend.models.reading_guide import ReadingGuideInDB
+            return ReadingGuideInDB.model_validate(_normalize_guide_document(doc))
+        return None
+    except Exception as e:
+        logger.error(
+            f"Error in get_reading_guide_by_id for book {book_id} guide {guide_id}: {e}",
+            exc_info=True,
+        )
+        return None
+
+
+async def create_reading_guide(
+    book_id: str,
+    user_id: str,
+    guide_id: str,
+    name: str,
+    items: List[Dict],
+    custom_requirements: Optional[str] = None,
+    enriched: bool = False,
+) -> Optional['ReadingGuideInDB']:
+    collection = get_reading_guides_roadmap_collection()
+    book_obj_id = _book_obj_id_or_none(book_id)
+    if not book_obj_id:
+        return None
+
+    now = datetime.utcnow()
+    doc = {
+        "book_id": book_obj_id,
+        "user_id": user_id,
+        "guide_id": guide_id,
+        "name": name,
+        "custom_requirements": custom_requirements,
+        "items": items,
+        "enriched": enriched,
+        "created_at": now,
+        "updated_at": now,
+    }
+    try:
+        await collection.insert_one(doc)
+        from backend.models.reading_guide import ReadingGuideInDB
+        return ReadingGuideInDB.model_validate(_normalize_guide_document(doc))
+    except DuplicateKeyError:
+        logger.error(f"Duplicate reading guide {guide_id} for book {book_id}")
+        return None
+    except Exception as e:
+        logger.error(f"Error in create_reading_guide for book {book_id}: {e}", exc_info=True)
+        return None
+
+
+async def upsert_reading_guide(
+    book_id: str,
+    user_id: str,
+    items: List[Dict],
+    guide_id: str = LEGACY_GUIDE_ID,
+) -> Optional['ReadingGuideInDB']:
+    """Update items for an existing guide (does not create a new guide_id)."""
+    collection = get_reading_guides_roadmap_collection()
+    book_obj_id = _book_obj_id_or_none(book_id)
+    if not book_obj_id:
+        return None
+
+    now = datetime.utcnow()
+    query = {"book_id": book_obj_id, "user_id": user_id, "guide_id": guide_id}
     update = {
         "$set": {
             "items": items,
             "updated_at": now,
         },
-        "$setOnInsert": {"book_id": book_obj_id, "user_id": user_id, "created_at": now},
     }
     try:
         result_doc = await collection.find_one_and_update(
-            query, update, upsert=True, return_document=True
+            query, update, return_document=True
         )
+        if not result_doc and guide_id == LEGACY_GUIDE_ID:
+            legacy = await collection.find_one(
+                {"book_id": book_obj_id, "user_id": user_id, "guide_id": {"$exists": False}}
+            )
+            if legacy:
+                legacy = await _migrate_legacy_reading_guide_doc(collection, book_obj_id, user_id, legacy)
+                result_doc = await collection.find_one_and_update(
+                    {"book_id": book_obj_id, "user_id": user_id, "guide_id": LEGACY_GUIDE_ID},
+                    update,
+                    return_document=True,
+                )
         if result_doc:
             from backend.models.reading_guide import ReadingGuideInDB
-            return ReadingGuideInDB.model_validate(result_doc)
+            return ReadingGuideInDB.model_validate(_normalize_guide_document(result_doc))
         return None
     except Exception as e:
         logger.error(f"Error in upsert_reading_guide for book {book_id}: {e}", exc_info=True)
         return None
 
 
-async def get_reading_guide(book_id: str, user_id: str) -> Optional['ReadingGuideInDB']:
-    """Get the whole-book reading guide for a book and user."""
+async def update_reading_guide_metadata(
+    book_id: str,
+    user_id: str,
+    guide_id: str,
+    *,
+    items: Optional[List[Dict]] = None,
+    name: Optional[str] = None,
+    enriched: Optional[bool] = None,
+) -> Optional['ReadingGuideInDB']:
     collection = get_reading_guides_roadmap_collection()
-    try:
-        book_obj_id = ObjectId(book_id)
-    except Exception:
-        logger.error(f"Invalid book_id format for ObjectId in get_reading_guide: {book_id}")
+    book_obj_id = _book_obj_id_or_none(book_id)
+    if not book_obj_id:
         return None
 
+    set_fields: Dict[str, Any] = {"updated_at": datetime.utcnow()}
+    if items is not None:
+        set_fields["items"] = items
+    if name is not None:
+        set_fields["name"] = name
+    if enriched is not None:
+        set_fields["enriched"] = enriched
+
     try:
-        document = await collection.find_one({"book_id": book_obj_id, "user_id": user_id})
-        if document:
+        result_doc = await collection.find_one_and_update(
+            {"book_id": book_obj_id, "user_id": user_id, "guide_id": guide_id},
+            {"$set": set_fields},
+            return_document=True,
+        )
+        if result_doc:
             from backend.models.reading_guide import ReadingGuideInDB
-            return ReadingGuideInDB.model_validate(document)
+            return ReadingGuideInDB.model_validate(_normalize_guide_document(result_doc))
         return None
     except Exception as e:
-        logger.error(f"Error in get_reading_guide for book {book_id}: {e}", exc_info=True)
+        logger.error(f"Error in update_reading_guide_metadata: {e}", exc_info=True)
         return None
 
 
-async def get_reading_guide_progress(book_id: str, user_id: str) -> List[str]:
-    """Get list of completed item IDs for a book and user."""
-    collection = get_reading_guide_progress_collection()
+async def delete_reading_guide(book_id: str, user_id: str, guide_id: str) -> bool:
+    collection = get_reading_guides_roadmap_collection()
+    book_obj_id = _book_obj_id_or_none(book_id)
+    if not book_obj_id:
+        return False
+
     try:
-        book_obj_id = ObjectId(book_id)
-    except Exception:
-        logger.error(f"Invalid book_id format for ObjectId in get_reading_guide_progress: {book_id}")
+        result = await collection.delete_one(
+            {"book_id": book_obj_id, "user_id": user_id, "guide_id": guide_id}
+        )
+        if result.deleted_count > 0:
+            await delete_reading_guide_progress(book_id, user_id, guide_id)
+            await delete_all_card_chats_for_guide(book_id, user_id, guide_id)
+            return True
+        return False
+    except Exception as e:
+        logger.error(f"Error in delete_reading_guide: {e}", exc_info=True)
+        return False
+
+
+async def get_reading_guide(book_id: str, user_id: str) -> Optional['ReadingGuideInDB']:
+    """Legacy: get default guide."""
+    return await get_reading_guide_by_id(book_id, user_id, LEGACY_GUIDE_ID)
+
+
+async def get_reading_guide_progress(
+    book_id: str, user_id: str, guide_id: str = LEGACY_GUIDE_ID
+) -> List[str]:
+    collection = get_reading_guide_progress_collection()
+    book_obj_id = _book_obj_id_or_none(book_id)
+    if not book_obj_id:
         return []
 
     try:
-        doc = await collection.find_one({"book_id": book_obj_id, "user_id": user_id})
+        doc = await collection.find_one(
+            {"book_id": book_obj_id, "user_id": user_id, "guide_id": guide_id}
+        )
+        if not doc and guide_id == LEGACY_GUIDE_ID:
+            doc = await collection.find_one(
+                {"book_id": book_obj_id, "user_id": user_id, "guide_id": {"$exists": False}}
+            )
+            if doc:
+                now = datetime.utcnow()
+                await collection.delete_one({"_id": doc["_id"]})
+                doc = {**doc, "guide_id": LEGACY_GUIDE_ID, "updated_at": now}
+                await collection.insert_one(doc)
         if doc and "completed_ids" in doc:
             return list(doc["completed_ids"]) if doc["completed_ids"] else []
         return []
     except Exception as e:
-        logger.error(f"Error in get_reading_guide_progress for book {book_id}: {e}", exc_info=True)
+        logger.error(f"Error in get_reading_guide_progress: {e}", exc_info=True)
         return []
+
+
+async def delete_reading_guide_progress(book_id: str, user_id: str, guide_id: str) -> None:
+    collection = get_reading_guide_progress_collection()
+    book_obj_id = _book_obj_id_or_none(book_id)
+    if not book_obj_id:
+        return
+    try:
+        await collection.delete_one(
+            {"book_id": book_obj_id, "user_id": user_id, "guide_id": guide_id}
+        )
+    except Exception as e:
+        logger.error(f"Error in delete_reading_guide_progress: {e}", exc_info=True)
 
 
 async def update_reading_guide_progress(
-    book_id: str, user_id: str, item_id: str, completed: bool
+    book_id: str,
+    user_id: str,
+    item_id: str,
+    completed: bool,
+    guide_id: str = LEGACY_GUIDE_ID,
 ) -> List[str]:
-    """Add or remove an item_id from completed set. Returns updated completed_ids."""
     collection = get_reading_guide_progress_collection()
     now = datetime.utcnow()
-    try:
-        book_obj_id = ObjectId(book_id)
-    except Exception:
-        logger.error(f"Invalid book_id format for ObjectId in update_reading_guide_progress: {book_id}")
+    book_obj_id = _book_obj_id_or_none(book_id)
+    if not book_obj_id:
         return []
 
-    query = {"book_id": book_obj_id, "user_id": user_id}
+    query = {"book_id": book_obj_id, "user_id": user_id, "guide_id": guide_id}
     if completed:
         update = {
             "$addToSet": {"completed_ids": item_id},
             "$set": {"updated_at": now},
-            "$setOnInsert": {"book_id": book_obj_id, "user_id": user_id, "created_at": now},
+            "$setOnInsert": {
+                "book_id": book_obj_id,
+                "user_id": user_id,
+                "guide_id": guide_id,
+                "created_at": now,
+            },
         }
     else:
         update = {
             "$pull": {"completed_ids": item_id},
             "$set": {"updated_at": now},
-            "$setOnInsert": {"book_id": book_obj_id, "user_id": user_id, "created_at": now},
+            "$setOnInsert": {
+                "book_id": book_obj_id,
+                "user_id": user_id,
+                "guide_id": guide_id,
+                "created_at": now,
+            },
         }
 
     try:
@@ -1003,51 +1318,146 @@ async def update_reading_guide_progress(
             return list(result_doc["completed_ids"]) if result_doc["completed_ids"] else []
         return []
     except Exception as e:
-        logger.error(f"Error in update_reading_guide_progress for book {book_id}: {e}", exc_info=True)
+        logger.error(f"Error in update_reading_guide_progress: {e}", exc_info=True)
         return []
 
 
 async def update_reading_guide_items(
-    book_id: str, user_id: str, items: List[Dict], enriched: bool
+    book_id: str,
+    user_id: str,
+    items: List[Dict],
+    enriched: bool,
+    guide_id: str = LEGACY_GUIDE_ID,
 ) -> bool:
-    """
-    Update the items and enriched flag of a reading guide.
-    Used by the enrich endpoint to save enriched sub-points.
-
-    Args:
-        book_id: Book ID (string)
-        user_id: User ID (string)
-        items: List of item dicts (serialized ReadingGuideItem objects)
-        enriched: Whether the entire guide is now enriched
-
-    Returns:
-        True if update succeeded, False otherwise.
-    """
     collection = get_reading_guides_roadmap_collection()
-    now = datetime.utcnow()
-    try:
-        book_obj_id = ObjectId(book_id)
-    except Exception:
-        logger.error(f"Invalid book_id format for ObjectId in update_reading_guide_items: {book_id}")
+    book_obj_id = _book_obj_id_or_none(book_id)
+    if not book_obj_id:
         return False
 
-    query = {"book_id": book_obj_id, "user_id": user_id}
+    query = {"book_id": book_obj_id, "user_id": user_id, "guide_id": guide_id}
     update = {
         "$set": {
             "items": items,
             "enriched": enriched,
-            "updated_at": now,
+            "updated_at": datetime.utcnow(),
         }
     }
 
     try:
         result = await collection.update_one(query, update)
         if result.matched_count > 0:
-            logger.info(f"Updated reading guide for book {book_id}: enriched={enriched}, items count={len(items)}")
             return True
-        else:
-            logger.warning(f"No reading guide found to update for book {book_id} and user {user_id}")
-            return False
-    except Exception as e:
-        logger.error(f"Error in update_reading_guide_items for book {book_id}: {e}", exc_info=True)
+        logger.warning(f"No reading guide found to update for book {book_id} guide {guide_id}")
         return False
+    except Exception as e:
+        logger.error(f"Error in update_reading_guide_items: {e}", exc_info=True)
+        return False
+
+
+# --- Card chat persistence ---
+
+def _serialize_chat_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    out = []
+    for msg in messages or []:
+        out.append({
+            "role": msg.get("role"),
+            "content": msg.get("content"),
+            "created_at": msg.get("created_at") or datetime.utcnow(),
+        })
+    return out
+
+
+async def get_card_chat_messages(
+    book_id: str, user_id: str, guide_id: str, card_id: str
+) -> List[Dict[str, Any]]:
+    collection = get_reading_guide_card_chats_collection()
+    book_obj_id = _book_obj_id_or_none(book_id)
+    if not book_obj_id:
+        return []
+
+    try:
+        doc = await collection.find_one(
+            {
+                "book_id": book_obj_id,
+                "user_id": user_id,
+                "guide_id": guide_id,
+                "card_id": card_id,
+            }
+        )
+        if doc and doc.get("messages"):
+            return _serialize_chat_messages(doc["messages"])
+        return []
+    except Exception as e:
+        logger.error(f"Error in get_card_chat_messages: {e}", exc_info=True)
+        return []
+
+
+async def save_card_chat_messages(
+    book_id: str,
+    user_id: str,
+    guide_id: str,
+    card_id: str,
+    messages: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    collection = get_reading_guide_card_chats_collection()
+    book_obj_id = _book_obj_id_or_none(book_id)
+    if not book_obj_id:
+        return []
+
+    now = datetime.utcnow()
+    serialized = _serialize_chat_messages(messages)
+    query = {
+        "book_id": book_obj_id,
+        "user_id": user_id,
+        "guide_id": guide_id,
+        "card_id": card_id,
+    }
+    update = {
+        "$set": {"messages": serialized, "updated_at": now},
+        "$setOnInsert": {**query, "created_at": now},
+    }
+    try:
+        await collection.update_one(query, update, upsert=True)
+        return serialized
+    except Exception as e:
+        logger.error(f"Error in save_card_chat_messages: {e}", exc_info=True)
+        return []
+
+
+async def clear_card_chat(
+    book_id: str, user_id: str, guide_id: str, card_id: str
+) -> bool:
+    collection = get_reading_guide_card_chats_collection()
+    book_obj_id = _book_obj_id_or_none(book_id)
+    if not book_obj_id:
+        return False
+    try:
+        result = await collection.delete_one(
+            {
+                "book_id": book_obj_id,
+                "user_id": user_id,
+                "guide_id": guide_id,
+                "card_id": card_id,
+            }
+        )
+        return result.deleted_count > 0
+    except Exception as e:
+        logger.error(f"Error in clear_card_chat: {e}", exc_info=True)
+        return False
+
+
+async def delete_all_card_chats_for_guide(
+    book_id: str, user_id: str, guide_id: str
+) -> int:
+    collection = get_reading_guide_card_chats_collection()
+    book_obj_id = _book_obj_id_or_none(book_id)
+    if not book_obj_id:
+        return 0
+    try:
+        result = await collection.delete_many(
+            {"book_id": book_obj_id, "user_id": user_id, "guide_id": guide_id}
+        )
+        return result.deleted_count
+    except Exception as e:
+        logger.error(f"Error in delete_all_card_chats_for_guide: {e}", exc_info=True)
+        return 0

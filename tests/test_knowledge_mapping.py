@@ -107,18 +107,26 @@ async def test_api_generate_whole_book_reading_guide_returns_items(monkeypatch):
             )
         ]
 
-    async def fake_upsert_reading_guide(book_id: str, user_id: str, items):
-        return {
+    async def fake_get_reading_guide_by_id(book_id: str, user_id: str, guide_id: str):
+        return None
+
+    async def fake_create_reading_guide(book_id: str, user_id: str, guide_id: str, name: str, items, **kwargs):
+        from backend.models.reading_guide import ReadingGuideInDB, ReadingGuideItem
+
+        return ReadingGuideInDB.model_validate({
             "_id": ObjectId(),
             "book_id": ObjectId(book_id),
             "user_id": user_id,
-            "items": items,
-        }
+            "guide_id": guide_id,
+            "name": name,
+            "items": [ReadingGuideItem.model_validate(i) for i in items],
+        })
 
     monkeypatch.setattr(books_api, "get_book", fake_get_book)
     monkeypatch.setattr(books_api, "run_in_threadpool", fake_run_in_threadpool)
     monkeypatch.setattr(books_api.llm_service, "generate_roadmap", fake_generate_roadmap)
-    monkeypatch.setattr(books_api, "upsert_reading_guide", fake_upsert_reading_guide)
+    monkeypatch.setattr(books_api, "get_reading_guide_by_id", fake_get_reading_guide_by_id)
+    monkeypatch.setattr(books_api, "create_reading_guide", fake_create_reading_guide)
     monkeypatch.setattr(books_api, "CONTAINER_MARKDOWN_PATH", "/tmp")
 
     result = await books_api.generate_whole_book_reading_guide(

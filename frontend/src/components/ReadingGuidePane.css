@@ -454,6 +454,16 @@
   box-shadow: 0 2px 8px rgba(31, 45, 61, 0.08);
 }
 
+.roadmap-card--completed {
+  margin-bottom: 6px;
+  box-shadow: none;
+}
+
+.roadmap-card--completed .roadmap-title {
+  color: var(--color-text-subtle);
+  font-weight: 500;
+}
+
 .roadmap-field-label {
   display: block;
   font-size: 0.72rem;
@@ -881,6 +891,159 @@
 
 .roadmap-bulk-cancel-btn:hover {
   background: var(--color-bg-hover);
+}
+
+.reading-guide-switcher {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin-bottom: 8px;
+}
+
+.reading-guide-switcher-label {
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+}
+
+.reading-guide-select {
+  flex: 1 1 160px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--color-input-border);
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+}
+
+.reading-guide-delete-btn {
+  flex-shrink: 0;
+}
+
+.reading-guide-angle-hint {
+  width: 100%;
+  margin: 0 0 8px;
+  font-size: 0.82rem;
+  color: var(--color-text-muted);
+  line-height: 1.35;
+}
+
+.generate-guide-btn--secondary {
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  border: 1px solid var(--color-input-border);
+}
+
+.reading-guide-new-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+  font-size: 0.9rem;
+}
+
+.reading-guide-new-field input,
+.reading-guide-new-field textarea {
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid var(--color-input-border);
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  font-family: inherit;
+}
+
+.roadmap-card-chat {
+  margin-top: 12px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--color-bg-elevated);
+}
+
+.roadmap-card-chat summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.roadmap-card-chat-body {
+  margin-top: 10px;
+}
+
+.roadmap-card-chat-hint,
+.roadmap-card-chat-empty {
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+  margin: 0 0 8px;
+}
+
+.roadmap-card-chat-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 280px;
+  overflow-y: auto;
+  margin-bottom: 10px;
+}
+
+.roadmap-card-chat-message {
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 0.9rem;
+}
+
+.roadmap-card-chat-message--user {
+  background: var(--color-primary-muted, rgba(0, 100, 200, 0.12));
+  align-self: flex-end;
+  margin-left: 12%;
+}
+
+.roadmap-card-chat-message--assistant {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border-subtle);
+  margin-right: 8%;
+}
+
+.roadmap-card-chat-role {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  margin-bottom: 4px;
+}
+
+.roadmap-card-chat-content {
+  line-height: 1.45;
+}
+
+.roadmap-card-chat-compose {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.roadmap-card-chat-input {
+  width: 100%;
+  resize: vertical;
+  min-height: 48px;
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid var(--color-input-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: inherit;
+}
+
+.roadmap-card-chat-compose-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.roadmap-card-chat-error {
+  margin: 0 0 8px;
 }
 
 /* Appended for mobile merged NavBar + guide (see apply_navbar_guide_merge.py) */

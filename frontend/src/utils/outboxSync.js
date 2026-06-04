@@ -130,8 +130,11 @@ export async function flushOutbox() {
         await removeOutboxEntry(id);
         processed += 1;
       } else if (type === 'roadmap_progress') {
-        const { item_id, completed } = payload;
-        const res = await fetch(`/api/books/${bookId}/reading-guide/progress`, {
+        const { item_id, completed, guide_id: guideId } = payload;
+        const guideSegment = guideId
+          ? `/reading-guides/${encodeURIComponent(guideId)}`
+          : '/reading-guide';
+        const res = await fetch(`/api/books/${bookId}${guideSegment}/progress`, {
           method: 'POST',
           headers,
           body: JSON.stringify({ item_id, completed }),
