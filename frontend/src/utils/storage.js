@@ -93,16 +93,18 @@ export function setStoredReadingViewMode(bookId, viewMode) {
   localStorage.setItem(getReadingViewModeKey(bookId), normalized);
 }
 
+const VALID_THEME_OVERRIDES = new Set(['light', 'dark', 'sepia']);
+
 export function getStoredThemeOverride() {
   const saved = localStorage.getItem(STORAGE_KEYS.THEME_OVERRIDE);
-  if (saved === 'light' || saved === 'dark') {
+  if (VALID_THEME_OVERRIDES.has(saved)) {
     return saved;
   }
   return null;
 }
 
 export function setStoredThemeOverride(value) {
-  if (value === 'light' || value === 'dark') {
+  if (VALID_THEME_OVERRIDES.has(value)) {
     localStorage.setItem(STORAGE_KEYS.THEME_OVERRIDE, value);
     return;
   }

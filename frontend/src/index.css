@@ -211,3 +211,17 @@ code {
 .delete-button:hover {
   background-color: var(--color-danger-hover);
 }
+
+.theme-offline-banner {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  background-color: var(--color-warning-bg);
+  border: 1px solid var(--color-warning-text);
+  border-radius: 4px;
+  color: var(--color-warning-text);
+  font-size: 14px;
+}
+
+.theme-error-text {
+  color: var(--color-error-text);
+}

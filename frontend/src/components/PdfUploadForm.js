@@ -144,20 +144,11 @@ function PdfUploadForm() {
     <div className="book-list-container"> {/* Reuse container style */}
       <h2>Upload New Book</h2>
       {!netOnline && (
-        <p style={{
-          marginBottom: '15px',
-          padding: '10px 12px',
-          backgroundColor: '#fff8e6',
-          border: '1px solid #ffe0a3',
-          borderRadius: '4px',
-          color: '#664d03',
-          fontSize: '14px',
-          textAlign: 'center',
-        }}>
+        <p className="theme-offline-banner" style={{ textAlign: 'center' }}>
           Upload requires a connection to the server. You can still read cached books from the book list.
         </p>
       )}
-      {error && <p style={{ color: 'red', textAlign: 'center', marginBottom: '15px' }}>{error}</p>}
+      {error && <p className="theme-error-text" style={{ textAlign: 'center', marginBottom: '15px' }}>{error}</p>}
 
       {/* Form Fields Styling */}
       <div style={{ marginBottom: '15px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
@@ -168,9 +159,9 @@ function PdfUploadForm() {
           accept=".pdf,.epub,.mobi,.azw,.azw3,.docx,.txt,.html,.htm"
           onChange={handleFileChange}
           disabled={uploading || !netOnline}
-          style={{ border: '1px solid #ccc', padding: '8px', borderRadius: '4px', maxWidth: '400px', width: '100%' }}
+          style={{ border: '1px solid var(--color-input-border)', padding: '8px', borderRadius: '4px', maxWidth: '400px', width: '100%', backgroundColor: 'var(--color-input-bg)', color: 'var(--color-text)' }}
         />
-        {selectedFile && <p style={{ fontSize: '0.9em', marginTop: '5px', color: '#555' }}>Selected: {selectedFile.name}</p>}
+        {selectedFile && <p style={{ fontSize: '0.9em', marginTop: '5px', color: 'var(--color-text-muted)' }}>Selected: {selectedFile.name}</p>}
       </div>
 
       <div style={{ marginBottom: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
@@ -182,30 +173,27 @@ function PdfUploadForm() {
           onChange={handleTitleChange}
           placeholder="Leave blank to use filename"
           disabled={uploading || !netOnline}
-          style={{ border: '1px solid #ccc', padding: '8px', borderRadius: '4px', maxWidth: '400px', width: '100%' }}
+          style={{ border: '1px solid var(--color-input-border)', padding: '8px', borderRadius: '4px', maxWidth: '400px', width: '100%', backgroundColor: 'var(--color-input-bg)', color: 'var(--color-text)' }}
         />
       </div>
 
-      {/* Button Styling */}
-      <div style={{ textAlign: 'center' }}> {/* Center the button */}
+      <div style={{ textAlign: 'center' }}>
         <button
           onClick={handleUpload}
           disabled={!selectedFile || uploading || !netOnline}
-          // --- Reuse button style from BookList upload link ---
+          className="pdf-upload-submit-btn"
           style={{
             display: 'inline-block',
             padding: '10px 20px',
-            backgroundColor: (!selectedFile || uploading || !netOnline) ? '#ccc' : '#007bff', // Grey out when disabled
-            color: 'white',
+            backgroundColor: (!selectedFile || uploading || !netOnline) ? 'var(--color-border)' : 'var(--color-primary)',
+            color: 'var(--color-on-accent)',
             textDecoration: 'none',
-            border: 'none', // Remove default border
+            border: 'none',
             borderRadius: '5px',
             fontWeight: '500',
-            cursor: (!selectedFile || uploading || !netOnline) ? 'not-allowed' : 'pointer', // Change cursor when disabled
+            cursor: (!selectedFile || uploading || !netOnline) ? 'not-allowed' : 'pointer',
             transition: 'background-color 0.2s ease-in-out',
           }}
-          onMouseOver={(e) => { if (selectedFile && !uploading && netOnline) e.currentTarget.style.backgroundColor = '#0056b3'; }} // Hover effect only if enabled
-          onMouseOut={(e) => { if (selectedFile && !uploading && netOnline) e.currentTarget.style.backgroundColor = '#007bff'; }} // Restore color on mouse out
         >
           {uploading ? 'Uploading...' : 'Upload and Process'}
         </button>

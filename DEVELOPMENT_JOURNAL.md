@@ -29,6 +29,13 @@ Use a reverse-chronological list (newest first). Each entry should be short and 
 
 <!-- New entries go below this comment, newest first. -->
 
+## 2026-06-03 — Readable dark theme and sepia comfort mode
+
+- **What:** Refreshed dark mode using **@radix-ui/colors** (slate + blue scales with `.dark` on `<html>`). Added **sepia** as a third fixed theme (Kindle-style warm paper). Fixed surfaces that incorrectly used `--color-on-accent` as backgrounds (white panels in dark mode). Added `--color-highlight-*` tokens for note/search highlights. Theme toggle cycles **light → dark → sepia** when pinned; **Auto** restores system preference.
+- **Why:** Dark UI looked harsh (neon blues, flat grays, inverted white panels). Long reading benefits from industry palettes and an optional sepia mode.
+- **Where:** `frontend/src/theme.css`, `frontend/src/utils/theme.js`, `frontend/src/utils/storage.js`, `frontend/src/App.js`, `frontend/src/components/ThemeToggle.js`, `frontend/package.json`; `ReadingGuidePane.css`, `BookView.css`, `BookView.js`, `BookList.js`, `PdfUploadForm.js`, `UserManagementPage.css`, `textLinking.js`, `index.css`
+- **Notes:** Persisted override key unchanged (`readingPalThemeOverride`); new value `sepia`. Book pane uses `--font-reading` (Georgia stack). No backend changes.
+
 ## 2026-05-31 — Book list cancel, duplicate upload guard, title wrap
 
 - **What:** Enabled **Cancel** for `pending`/`processing` books (DELETE API); delete returns **404** when DB delete fails (no silent 204). Upload rejects duplicate titles per user via `sanitized_title` check before pdf_service (**409**). Fixed long titles not wrapping (scoped CSS to status badge). Offline list snapshot updated on delete (`removeBookFromListSnapshot`). Status polling reads current books from a ref after cancel.

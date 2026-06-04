@@ -365,7 +365,7 @@
 
 /* Styling for highlighted note text (from user selection for new notes) */
 .note-highlight {
-  background-color: rgba(255, 226, 146, 0.8);
+  background-color: var(--color-highlight-bg);
   cursor: pointer;
   transition: background-color 0.2s ease-in-out;
   border-radius: 2px;
@@ -374,7 +374,7 @@
 }
 
 .note-highlight:hover {
-  background-color: rgba(255, 210, 99, 0.9);
+  background-color: var(--color-highlight-bg-active);
 }
 
 /* Styling for the temporary highlight when scrolling to a note */
@@ -406,7 +406,7 @@
 }
 
 .modal-content {
-  background-color: var(--color-on-accent);
+  background-color: var(--color-bg-elevated);
   padding: 25px;
   border-radius: 8px;
   box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
@@ -577,7 +577,7 @@
   position: absolute;
   top: 100%; /* Position below the button */
   left: 0;
-  background-color: var(--color-on-accent);
+  background-color: var(--color-bg-elevated);
   border: 1px solid var(--color-border);
   border-radius: 4px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
@@ -666,7 +666,7 @@
   position: absolute;
   top: 100%; /* Position below the button */
   left: 0;
-  background-color: var(--color-on-accent);
+  background-color: var(--color-bg-elevated);
   border: 1px solid var(--color-border);
   border-radius: 4px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
@@ -831,7 +831,7 @@
   font-size: 0.875rem; 
   line-height: 30px; 
   color: var(--color-text); 
-  background-color: var(--color-on-accent); 
+  background-color: var(--color-bg-elevated); 
   border: 1px solid var(--color-border); 
   border-radius: 4px; 
   cursor: pointer;
@@ -898,7 +898,7 @@
   left: 0;
   width: 100%;
   height: 100%;
-  background-color: var(--color-on-accent); /* Or your app's background color */
+  background-color: var(--color-bg-elevated); /* Or your app's background color */
   z-index: 1001; /* Higher than note pane overlay if they can overlap, or same if not */
   display: flex; /* To make ReadingGuidePane component fill it */
   flex-direction: column;
@@ -994,7 +994,7 @@
 
 /* Optional: Style for options if needed, though browser defaults are usually fine */
 .bookmark-select option {
-  background-color: var(--color-on-accent); /* Ensure options have a standard background */
+  background-color: var(--color-bg-elevated); /* Ensure options have a standard background */
   color: black; /* Ensure options have standard text color */
 }
 
@@ -1118,7 +1118,7 @@
                       /* Adjust this value as needed based on your content */
     
     box-sizing: border-box; 
-    background-color: var(--color-on-accent);
+    background-color: var(--color-bg-elevated);
     border: 1px solid var(--color-border);
     border-radius: 4px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);

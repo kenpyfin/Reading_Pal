@@ -99,7 +99,7 @@ export function scrollToOffsetWithHighlight(container, offset, rawPageContent, h
 
       const highlightSpan = document.createElement('span');
       highlightSpan.className = 'text-link-highlight';
-      highlightSpan.style.backgroundColor = 'rgba(255, 255, 0, 0.7)'; // Slightly more visible
+      highlightSpan.style.backgroundColor = 'var(--color-highlight-bg)';
       highlightSpan.style.transition = 'background-color 1s ease-out';
       highlightSpan.style.padding = '2px 0';
       highlightSpan.style.borderRadius = '2px';

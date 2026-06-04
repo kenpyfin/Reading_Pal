@@ -1,3 +1,5 @@
+export const THEME_OVERRIDE_CYCLE = ['light', 'dark', 'sepia'];
+
 export function getSystemPrefersDark() {
   if (typeof window === 'undefined' || !window.matchMedia) {
     return false;
@@ -6,20 +8,34 @@ export function getSystemPrefersDark() {
 }
 
 export function getEffectiveTheme(override) {
-  if (override === 'light') {
-    return 'light';
-  }
-  if (override === 'dark') {
-    return 'dark';
+  if (override === 'light' || override === 'dark' || override === 'sepia') {
+    return override;
   }
   return getSystemPrefersDark() ? 'dark' : 'light';
+}
+
+export function getNextThemeOverride(currentOverride) {
+  if (currentOverride === null) {
+    return THEME_OVERRIDE_CYCLE[0];
+  }
+  const index = THEME_OVERRIDE_CYCLE.indexOf(currentOverride);
+  if (index === -1) {
+    return THEME_OVERRIDE_CYCLE[0];
+  }
+  return THEME_OVERRIDE_CYCLE[(index + 1) % THEME_OVERRIDE_CYCLE.length];
 }
 
 export function applyThemeToDocument(theme) {
   if (typeof document === 'undefined') {
     return;
   }
-  document.documentElement.setAttribute('data-theme', theme === 'dark' ? 'dark' : 'light');
+  const resolved = theme === 'dark' || theme === 'sepia' || theme === 'light' ? theme : 'light';
+  document.documentElement.setAttribute('data-theme', resolved);
+  if (resolved === 'dark') {
+    document.documentElement.classList.add('dark');
+  } else {
+    document.documentElement.classList.remove('dark');
+  }
 }
 
 export function subscribeToSystemTheme(callback) {
@@ -37,5 +53,21 @@ export function subscribeToSystemTheme(callback) {
 }
 
 export function getThemeMetaColor(theme) {
-  return theme === 'dark' ? '#121212' : '#ffffff';
+  if (theme === 'dark') {
+    return '#111113';
+  }
+  if (theme === 'sepia') {
+    return '#FBF0D9';
+  }
+  return '#fcfcfd';
+}
+
+export function getThemeLabel(theme) {
+  if (theme === 'dark') {
+    return 'dark';
+  }
+  if (theme === 'sepia') {
+    return 'sepia';
+  }
+  return 'light';
 }

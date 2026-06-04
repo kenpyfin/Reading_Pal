@@ -69,36 +69,36 @@ function BookList() {
   const baseButtonStyle = {
     padding: '6px 10px',
     fontSize: '13px',
-    border: '1px solid #d9d9d9',
+    border: '1px solid var(--color-border-light)',
     borderRadius: '4px',
     cursor: 'pointer',
-    backgroundColor: '#ffffff',
+    backgroundColor: 'var(--color-bg-elevated)',
+    color: 'var(--color-text)',
     transition: 'background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease',
     lineHeight: '1.5',
-    boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+    boxShadow: 'var(--shadow-md)',
   };
-  
+
   const renameButtonStyle = {
     ...baseButtonStyle,
-    color: '#333',
   };
-  
-  const renameButtonHoverStyle = { // Specific hover style for rename button
-    backgroundColor: '#f0f0f0', // Lighter grey
-    borderColor: '#c0c0c0',
-    boxShadow: '0 2px 4px rgba(0,0,0,0.07)',
+
+  const renameButtonHoverStyle = {
+    backgroundColor: 'var(--color-bg-hover)',
+    borderColor: 'var(--color-border)',
+    boxShadow: 'var(--shadow-md)',
   };
 
   const deleteButtonStyle = {
     ...baseButtonStyle,
-    color: '#ff4d4f',
-    borderColor: '#ff7875',
+    color: 'var(--color-danger)',
+    borderColor: 'var(--color-danger)',
   };
 
-  const deleteButtonHoverStyle = { // Specific hover style for delete button
-    backgroundColor: '#fff1f0',
-    borderColor: '#ff4d4f',
-    boxShadow: '0 2px 4px rgba(0,0,0,0.07)',
+  const deleteButtonHoverStyle = {
+    backgroundColor: 'var(--color-error-bg)',
+    borderColor: 'var(--color-danger)',
+    boxShadow: 'var(--shadow-md)',
   };
   // --- End of style definitions ---
 
@@ -410,29 +410,21 @@ function BookList() {
 
   // Display error message, but still render the book list if books are available
   if (error && books.length === 0) { // Only show full page error if no books can be displayed
-    return <div style={{ padding: '20px', color: 'red' }}>Error: {error}</div>;
+    return <div className="theme-error-text" style={{ padding: '20px' }}>Error: {error}</div>;
   }
 
 
   return (
-    <div className="book-list-container" style={{ fontFamily: 'Arial, sans-serif', padding: '20px' }}>
-      <h2 style={{ marginBottom: '20px', color: '#333' }}>Available Books</h2>
+    <div className="book-list-container">
+      <h2>Available Books</h2>
       {listReadOnly && books.length > 0 && (
-        <p style={{
-          marginBottom: '12px',
-          padding: '10px 12px',
-          backgroundColor: '#fff8e6',
-          border: '1px solid #ffe0a3',
-          borderRadius: '4px',
-          color: '#664d03',
-          fontSize: '14px',
-        }}>
+        <p className="theme-offline-banner">
           Offline — showing cached book list. Rename, delete, and pagination need a connection.
         </p>
       )}
-      {error && <p style={{ color: 'red', marginBottom: '15px' }}>Error: {error}</p>} {/* Display error message above list */}
+      {error && <p className="theme-error-text" style={{ marginBottom: '15px' }}>Error: {error}</p>}
       {books.length === 0 && !loading ? (
-        <p>No books found. <Link to="/upload" style={{ color: '#007bff' }}>Upload a book</Link> to get started!</p>
+        <p>No books found. <Link to="/upload">Upload a book</Link> to get started!</p>
       ) : (
         <ul style={{ listStyleType: 'none', paddingLeft: '0' }}>
           {books.map(book => (
@@ -446,12 +438,12 @@ function BookList() {
               style={{
                 position: 'relative', // Needed for absolute positioning of actions
                 padding: '12px 15px',
-                borderBottom: '1px solid #e0e0e0',
+                borderBottom: '1px solid var(--color-border-light)',
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'center',
                 transition: 'background-color 0.2s ease',
-                backgroundColor: hoveredBookId === book.id ? '#f9f9f9' : 'transparent',
+                backgroundColor: hoveredBookId === book.id ? 'var(--color-bg-hover)' : 'transparent',
               }}
             >
               <div className="book-list-item-main">
@@ -555,7 +547,7 @@ function BookList() {
               Previous
           </button>
           
-          <span style={{ fontSize: '14px', color: '#666' }}>
+          <span style={{ fontSize: '14px', color: 'var(--color-text-muted)' }}>
               Page <strong>{currentPage}</strong> of <strong>{Math.ceil(totalBooks / PAGE_SIZE) || 1}</strong>
           </span>
 
@@ -571,25 +563,13 @@ function BookList() {
               Next
           </button>
           
-          <span style={{ fontSize: '12px', color: '#999', marginLeft: 'auto' }}>
+          <span style={{ fontSize: '12px', color: 'var(--color-text-subtle)', marginLeft: 'auto' }}>
               Total: {totalBooks} books
           </span>
       </div>
 
-      <div className="upload-link-container" style={{ marginTop: '25px', borderTop: '1px solid #eee', paddingTop: '20px' }}>
-         <Link to="/upload" style={{
-             display: 'inline-block',
-             padding: '10px 15px',
-             backgroundColor: '#007bff',
-             color: 'white',
-             textDecoration: 'none',
-             borderRadius: '4px',
-             fontWeight: '500',
-             transition: 'background-color 0.2s'
-         }}
-         onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#0056b3'}
-         onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#007bff'}
-         >Upload a New Book</Link>
+      <div className="upload-link-container">
+         <Link to="/upload">Upload a New Book</Link>
       </div>
     </div>
   );

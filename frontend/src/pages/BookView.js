@@ -2942,7 +2942,7 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
                 const scrollTopTarget = Math.max(0, spanOffsetTop - 20); 
                 bookElement.scrollTop = scrollTopTarget;
                 highlightSpan.style.transition = 'background-color 0.5s ease-out';
-                highlightSpan.style.backgroundColor = 'rgba(255, 255, 0, 0.5)'; 
+                highlightSpan.style.backgroundColor = 'var(--color-highlight-bg)'; 
                 setTimeout(() => { if (highlightSpan) { highlightSpan.style.backgroundColor = ''; } }, 1500); 
 
               } catch (e) {
@@ -2952,7 +2952,7 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
                     const markerSpan = document.createElement("span");
                     markerSpan.className = 'highlighted-note-scroll-target-marker';
                     markerSpan.style.outline = "2px solid red"; 
-                    markerSpan.style.backgroundColor = "rgba(255, 0, 0, 0.2)";
+                    markerSpan.style.backgroundColor = 'var(--color-error-bg)';
                     range.insertNode(markerSpan); 
                     scrollTargetHighlightRef.current = markerSpan;
                     let markerOffsetTop = 0;
@@ -3692,14 +3692,14 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
       {serverOffline && (
         <div
           role="status"
+          className="theme-offline-banner"
           style={{
             width: '100%',
             padding: '8px 16px',
-            background: '#fff3cd',
-            borderBottom: '1px solid #ffc107',
+            borderBottom: '1px solid var(--color-warning-text)',
             fontSize: '14px',
-            color: '#664d03',
             flexShrink: 0,
+            marginBottom: 0,
           }}
         >
           {outboxPendingCount > 0

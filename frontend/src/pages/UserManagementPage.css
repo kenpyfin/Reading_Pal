@@ -8,41 +8,41 @@
 .user-management-container h1 {
   text-align: center;
   margin-bottom: 30px;
-  color: #333;
+  color: var(--color-text);
 }
 
 .users-table {
   width: 100%;
   border-collapse: collapse;
   margin-top: 20px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-md);
 }
 
 .users-table th,
 .users-table td {
-  border: 1px solid #ddd;
+  border: 1px solid var(--color-border-light);
   padding: 12px;
   text-align: left;
   font-size: 14px;
 }
 
 .users-table th {
-  background-color: #f8f9fa;
-  color: #333;
+  background-color: var(--color-bg-muted);
+  color: var(--color-text);
   font-weight: bold;
 }
 
 .users-table tr:nth-child(even) {
-  background-color: #f2f2f2;
+  background-color: var(--color-bg-hover);
 }
 
 .users-table tr:hover {
-  background-color: #e9ecef;
+  background-color: var(--color-bg-muted);
 }
 
-.delete-button {
-  background-color: #dc3545;
-  color: white;
+.user-management-container .delete-button {
+  background-color: var(--color-danger);
+  color: var(--color-on-accent);
   border: none;
   padding: 8px 12px;
   border-radius: 4px;
@@ -51,103 +51,103 @@
   transition: background-color 0.2s ease-in-out;
 }
 
-.delete-button:hover {
-  background-color: #c82333;
+.user-management-container .delete-button:hover {
+  background-color: var(--color-danger-hover);
 }
 
-.delete-button:disabled {
-  background-color: #6c757d;
+.user-management-container .delete-button:disabled {
+  background-color: var(--color-text-subtle);
   cursor: not-allowed;
 }
 
 .error-message {
-  color: #dc3545;
-  background-color: #f8d7da;
-  border: 1px solid #f5c6cb;
+  color: var(--color-error-text);
+  background-color: var(--color-error-bg);
+  border: 1px solid var(--color-border);
   padding: 10px;
   border-radius: 4px;
   margin-bottom: 20px;
   text-align: center;
 }
 
-/* Loading message styling */
 .user-management-container p:first-child {
-    text-align: center;
-    font-size: 1.2em;
-    color: #555;
+  text-align: center;
+  font-size: 1.2em;
+  color: var(--color-text-muted);
 }
 
-/* Stats Container Styling */
 .stats-container {
   display: flex;
   justify-content: space-around;
   margin-bottom: 40px;
-  gap: 20px; /* Adds space between cards */
-  flex-wrap: wrap; /* Allows cards to wrap on smaller screens */
+  gap: 20px;
+  flex-wrap: wrap;
 }
 
 .stat-card {
-  background-color: #fff;
+  background-color: var(--color-bg-elevated);
   padding: 20px;
   border-radius: 8px;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  box-shadow: var(--shadow-md);
   text-align: center;
-  flex-basis: 200px; /* Starting basis for card width */
-  flex-grow: 1; /* Allows cards to grow and fill space */
-  min-width: 180px; /* Minimum width before wrapping */
+  flex-basis: 200px;
+  flex-grow: 1;
+  min-width: 180px;
 }
 
 .stat-card h2 {
   margin-top: 0;
   margin-bottom: 10px;
   font-size: 1.2em;
-  color: #555;
+  color: var(--color-text-muted);
 }
 
 .stat-card p {
   font-size: 2em;
   font-weight: bold;
-  color: #007bff; /* Blue color for numbers */
+  color: var(--color-primary);
   margin: 0;
 }
 
-.user-management-container h2 { /* Style for "User Management" heading */
+.user-management-container h2 {
   text-align: center;
-  margin-top: 40px; /* Add some space above the table heading */
+  margin-top: 40px;
   margin-bottom: 20px;
-  color: #333;
+  color: var(--color-text);
 }
 
-.activate-button, .deactivate-button {
-  color: white;
+.activate-button,
+.deactivate-button {
+  color: var(--color-on-accent);
   border: none;
   padding: 8px 12px;
   border-radius: 4px;
   cursor: pointer;
   font-size: 13px;
   transition: background-color 0.2s ease-in-out;
-  margin-left: 5px; /* Add some space next to the delete button */
+  margin-left: 5px;
 }
 
 .activate-button {
-  background-color: #28a745; /* Green */
+  background-color: var(--grass-9);
 }
 
 .activate-button:hover {
-  background-color: #218838; /* Darker green */
+  background-color: var(--grass-10);
 }
 
 .deactivate-button {
-  background-color: #ffc107; /* Yellow/Orange */
-  color: #212529; /* Dark text for better contrast on yellow */
+  background-color: var(--amber-9);
+  color: var(--slate-12);
 }
 
 .deactivate-button:hover {
-  background-color: #e0a800; /* Darker yellow/orange */
+  background-color: var(--amber-10);
 }
 
-.activate-button:disabled, .deactivate-button:disabled {
-  background-color: #6c757d;
+.activate-button:disabled,
+.deactivate-button:disabled {
+  background-color: var(--color-text-subtle);
   cursor: not-allowed;
-  color: white;
+  color: var(--color-on-accent);
 }

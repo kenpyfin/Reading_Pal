@@ -21,6 +21,7 @@ import {
 import {
   applyThemeToDocument,
   getEffectiveTheme,
+  getNextThemeOverride,
   getThemeMetaColor,
   subscribeToSystemTheme,
 } from './utils/theme';
@@ -72,16 +73,10 @@ function App() {
   }, [themeOverride]);
 
   const handleThemeToggle = useCallback(() => {
-    if (themeOverride === null) {
-      const next = effectiveTheme === 'dark' ? 'light' : 'dark';
-      setStoredThemeOverride(next);
-      setThemeOverride(next);
-      return;
-    }
-    const next = themeOverride === 'dark' ? 'light' : 'dark';
+    const next = getNextThemeOverride(themeOverride);
     setStoredThemeOverride(next);
     setThemeOverride(next);
-  }, [themeOverride, effectiveTheme]);
+  }, [themeOverride]);
 
   const handleUseSystemTheme = useCallback(() => {
     clearStoredThemeOverride();

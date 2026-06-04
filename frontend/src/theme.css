@@ -1,80 +1,144 @@
+/* Radix color scales (light on :root; dark on .dark) */
+@import '@radix-ui/colors/slate.css';
+@import '@radix-ui/colors/slate-dark.css';
+@import '@radix-ui/colors/blue.css';
+@import '@radix-ui/colors/blue-dark.css';
+@import '@radix-ui/colors/red.css';
+@import '@radix-ui/colors/red-dark.css';
+@import '@radix-ui/colors/grass.css';
+@import '@radix-ui/colors/grass-dark.css';
+@import '@radix-ui/colors/amber.css';
+@import '@radix-ui/colors/amber-dark.css';
+
 /* Semantic theme tokens — consumed via var(--*) across app styles */
 
 [data-theme='light'],
 :root {
-  --color-bg: #f4f7f6;
-  --color-bg-elevated: #ffffff;
-  --color-bg-hover: #f8f9fa;
-  --color-bg-muted: #f1f3f5;
-  --color-text: #333333;
-  --color-text-secondary: #555555;
-  --color-text-muted: #666666;
-  --color-text-subtle: #6c757d;
-  --color-border: #cccccc;
-  --color-border-light: #e0e0e0;
-  --color-border-subtle: #eeeeee;
-  --color-primary: #007bff;
-  --color-primary-hover: #0056b3;
-  --color-primary-dark: #003d80;
-  --color-link: #0056b3;
-  --color-link-hover: #003d80;
-  --color-nav-bg: #333333;
-  --color-nav-text: #ffffff;
-  --color-danger: #ff4d4f;
-  --color-danger-hover: #d9363e;
-  --color-success-bg: #d4edda;
-  --color-success-text: #155724;
-  --color-warning-bg: #fff3cd;
-  --color-warning-text: #664d03;
-  --color-error-bg: #f8d7da;
-  --color-error-text: #b02a37;
-  --color-info-bg: #cfe2ff;
-  --color-info-text: #0056b3;
-  --color-input-bg: #ffffff;
-  --color-input-border: #ced4da;
+  --color-bg: var(--slate-2);
+  --color-bg-elevated: var(--slate-1);
+  --color-surface: var(--slate-1);
+  --color-bg-hover: var(--slate-3);
+  --color-bg-muted: var(--slate-3);
+  --color-text: var(--slate-12);
+  --color-text-secondary: var(--slate-11);
+  --color-text-muted: var(--slate-11);
+  --color-text-subtle: var(--slate-10);
+  --color-border: var(--slate-7);
+  --color-border-light: var(--slate-6);
+  --color-border-subtle: var(--slate-4);
+  --color-primary: var(--blue-9);
+  --color-primary-hover: var(--blue-10);
+  --color-primary-dark: var(--blue-11);
+  --color-link: var(--blue-11);
+  --color-link-hover: var(--blue-12);
+  --color-nav-bg: var(--slate-12);
+  --color-nav-text: var(--slate-1);
+  --color-danger: var(--red-9);
+  --color-danger-hover: var(--red-10);
+  --color-success-bg: var(--grass-3);
+  --color-success-text: var(--grass-11);
+  --color-warning-bg: var(--amber-3);
+  --color-warning-text: var(--amber-11);
+  --color-error-bg: var(--red-3);
+  --color-error-text: var(--red-11);
+  --color-info-bg: var(--blue-3);
+  --color-info-text: var(--blue-11);
+  --color-input-bg: var(--slate-1);
+  --color-input-border: var(--slate-7);
   --color-overlay: rgba(0, 0, 0, 0.5);
   --color-on-accent: #ffffff;
+  --color-highlight-bg: rgba(255, 226, 146, 0.85);
+  --color-highlight-border: var(--amber-9);
+  --color-highlight-bg-active: rgba(255, 210, 99, 0.9);
   --shadow-sm: 0 2px 10px rgba(0, 0, 0, 0.05);
   --shadow-md: 0 1px 4px rgba(0, 0, 0, 0.08);
   --shadow-lg: 0 4px 20px rgba(0, 0, 0, 0.15);
+  --font-reading: Georgia, 'Times New Roman', Times, serif;
 }
 
 [data-theme='dark'] {
-  --color-bg: #121212;
-  --color-bg-elevated: #1e1e1e;
-  --color-bg-hover: #2a2a2a;
-  --color-bg-muted: #252525;
-  --color-text: #e8e8e8;
-  --color-text-secondary: #d0d0d0;
-  --color-text-muted: #a0a0a0;
-  --color-text-subtle: #8a8a8a;
-  --color-border: #404040;
-  --color-border-light: #383838;
-  --color-border-subtle: #333333;
-  --color-primary: #4dabf7;
-  --color-primary-hover: #74c0fc;
-  --color-primary-dark: #339af0;
-  --color-link: #74c0fc;
-  --color-link-hover: #a5d8ff;
-  --color-nav-bg: #1a1a1a;
-  --color-nav-text: #e8e8e8;
-  --color-danger: #ff6b6b;
-  --color-danger-hover: #fa5252;
-  --color-success-bg: #2b3a2f;
-  --color-success-text: #8ce99a;
-  --color-warning-bg: #3d3520;
-  --color-warning-text: #ffe066;
-  --color-error-bg: #3d2024;
-  --color-error-text: #ff8787;
-  --color-info-bg: #1c3144;
-  --color-info-text: #74c0fc;
-  --color-input-bg: #2a2a2a;
-  --color-input-border: #505050;
-  --color-overlay: rgba(0, 0, 0, 0.7);
+  --color-bg: var(--slate-1);
+  --color-bg-elevated: var(--slate-2);
+  --color-surface: var(--slate-2);
+  --color-bg-hover: var(--slate-3);
+  --color-bg-muted: var(--slate-3);
+  --color-text: var(--slate-12);
+  --color-text-secondary: var(--slate-11);
+  --color-text-muted: var(--slate-11);
+  --color-text-subtle: var(--slate-10);
+  --color-border: var(--slate-7);
+  --color-border-light: var(--slate-6);
+  --color-border-subtle: var(--slate-4);
+  --color-primary: var(--blue-9);
+  --color-primary-hover: var(--blue-10);
+  --color-primary-dark: var(--blue-11);
+  --color-link: var(--blue-11);
+  --color-link-hover: var(--blue-12);
+  --color-nav-bg: var(--slate-2);
+  --color-nav-text: var(--slate-12);
+  --color-danger: var(--red-9);
+  --color-danger-hover: var(--red-10);
+  --color-success-bg: var(--grass-3);
+  --color-success-text: var(--grass-11);
+  --color-warning-bg: var(--amber-3);
+  --color-warning-text: var(--amber-11);
+  --color-error-bg: var(--red-3);
+  --color-error-text: var(--red-11);
+  --color-info-bg: var(--blue-3);
+  --color-info-text: var(--blue-11);
+  --color-input-bg: var(--slate-3);
+  --color-input-border: var(--slate-7);
+  --color-overlay: rgba(0, 0, 0, 0.72);
   --color-on-accent: #ffffff;
-  --shadow-sm: 0 2px 10px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 1px 4px rgba(0, 0, 0, 0.4);
-  --shadow-lg: 0 4px 20px rgba(0, 0, 0, 0.5);
+  --color-highlight-bg: rgba(255, 200, 80, 0.35);
+  --color-highlight-border: var(--amber-9);
+  --color-highlight-bg-active: rgba(255, 200, 80, 0.5);
+  --shadow-sm: 0 2px 10px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 1px 4px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 4px 20px rgba(0, 0, 0, 0.55);
+}
+
+[data-theme='sepia'] {
+  --color-bg: #f4ead8;
+  --color-bg-elevated: #fbf0d9;
+  --color-surface: #fbf0d9;
+  --color-bg-hover: #f0e4cc;
+  --color-bg-muted: #efe0c8;
+  --color-text: #5f4b32;
+  --color-text-secondary: #6b5640;
+  --color-text-muted: #7a6348;
+  --color-text-subtle: #8f7658;
+  --color-border: #d9c9b0;
+  --color-border-light: #e0d4c0;
+  --color-border-subtle: #e8dcc8;
+  --color-primary: #8b5e34;
+  --color-primary-hover: #a06d3d;
+  --color-primary-dark: #6d4a28;
+  --color-link: #7a5528;
+  --color-link-hover: #5c3f1c;
+  --color-nav-bg: #5f4b32;
+  --color-nav-text: #fbf0d9;
+  --color-danger: #c45c4a;
+  --color-danger-hover: #a84d3d;
+  --color-success-bg: #e2edd8;
+  --color-success-text: #3d5c32;
+  --color-warning-bg: #f5e6b8;
+  --color-warning-text: #6b5420;
+  --color-error-bg: #f5ddd8;
+  --color-error-text: #8b3a32;
+  --color-info-bg: #e8e0d0;
+  --color-info-text: #6b5420;
+  --color-input-bg: #fbf0d9;
+  --color-input-border: #d9c9b0;
+  --color-overlay: rgba(47, 38, 28, 0.45);
+  --color-on-accent: #fbf0d9;
+  --color-highlight-bg: rgba(212, 168, 75, 0.45);
+  --color-highlight-border: #b8860b;
+  --color-highlight-bg-active: rgba(212, 168, 75, 0.65);
+  --shadow-sm: 0 2px 10px rgba(47, 38, 28, 0.08);
+  --shadow-md: 0 1px 4px rgba(47, 38, 28, 0.12);
+  --shadow-lg: 0 4px 20px rgba(47, 38, 28, 0.18);
+  --font-reading: Georgia, 'Times New Roman', Times, serif;
 }
 
 html,
@@ -83,9 +147,16 @@ body {
   color: var(--color-text);
 }
 
-/* KaTeX readability in dark reading pane */
+/* Long-form reading typography in book pane */
+.book-pane {
+  font-family: var(--font-reading);
+}
+
+/* KaTeX readability in non-light reading panes */
 [data-theme='dark'] .book-pane .katex,
-[data-theme='dark'] .book-pane .katex-display {
+[data-theme='dark'] .book-pane .katex-display,
+[data-theme='sepia'] .book-pane .katex,
+[data-theme='sepia'] .book-pane .katex-display {
   color: var(--color-text);
 }
 
@@ -96,6 +167,14 @@ body {
 [data-theme='dark'] .book-pane .katex .mopen,
 [data-theme='dark'] .book-pane .katex .mclose,
 [data-theme='dark'] .book-pane .katex .mpunct,
-[data-theme='dark'] .book-pane .katex .minner {
+[data-theme='dark'] .book-pane .katex .minner,
+[data-theme='sepia'] .book-pane .katex .mord,
+[data-theme='sepia'] .book-pane .katex .mop,
+[data-theme='sepia'] .book-pane .katex .mbin,
+[data-theme='sepia'] .book-pane .katex .mrel,
+[data-theme='sepia'] .book-pane .katex .mopen,
+[data-theme='sepia'] .book-pane .katex .mclose,
+[data-theme='sepia'] .book-pane .katex .mpunct,
+[data-theme='sepia'] .book-pane .katex .minner {
   color: inherit;
 }
