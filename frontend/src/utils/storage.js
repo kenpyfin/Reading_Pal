@@ -1,6 +1,8 @@
-const STORAGE_KEYS = {
+export const STORAGE_KEYS = {
   AUTH_TOKEN: 'authToken',
   THEME_OVERRIDE: 'readingPalThemeOverride',
+  STORAGE_SCHEMA: 'readingPalStorageSchema',
+  DEPLOY_ID: 'readingPalDeployId',
 };
 
 const READING_POSITION_PREFIX = 'readingPalLastPosition_';

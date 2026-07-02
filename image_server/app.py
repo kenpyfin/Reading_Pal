@@ -60,7 +60,11 @@ ALLOWED_IMAGE_TYPES = {
     "image/webp", "image/bmp", "image/tiff", "image/svg+xml"
 }
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tiff", ".tif", ".svg"}
+ALLOWED_VIDEO_TYPES = {"video/mp4", "video/webm", "video/quicktime"}
+ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".webm", ".mov"}
+ALLOWED_MEDIA_EXTENSIONS = ALLOWED_EXTENSIONS | ALLOWED_VIDEO_EXTENSIONS
 MAX_FILE_SIZE = int(os.getenv("MAX_IMAGE_SIZE", "10485760"))  # Default 10MB in bytes
+MAX_VIDEO_SIZE = int(os.getenv("MAX_VIDEO_SIZE", "52428800"))  # Default 50MB in bytes
 
 # Authentication configuration
 IMAGE_UPLOAD_API_KEY = os.getenv("IMAGE_UPLOAD_API_KEY", "")
@@ -148,21 +152,30 @@ def sanitize_filename(filename: str) -> str:
 
 def validate_image_file(file: UploadFile) -> tuple[bool, Optional[str]]:
     """
-    Validates that the uploaded file is an image.
+    Validates that the uploaded file is an allowed image or video for public upload.
     Returns (is_valid, error_message)
     """
     if not file.filename:
         return False, "No filename provided"
-    
-    # Check file extension
+
     file_ext = os.path.splitext(file.filename)[1].lower()
-    if file_ext not in ALLOWED_EXTENSIONS:
-        return False, f"File extension '{file_ext}' not allowed. Allowed extensions: {', '.join(ALLOWED_EXTENSIONS)}"
-    
-    # Check content type
+    if file_ext not in ALLOWED_MEDIA_EXTENSIONS:
+        return False, (
+            f"File extension '{file_ext}' not allowed. "
+            f"Allowed extensions: {', '.join(sorted(ALLOWED_MEDIA_EXTENSIONS))}"
+        )
+
+    if file_ext in ALLOWED_VIDEO_EXTENSIONS:
+        if file.content_type and file.content_type not in ALLOWED_VIDEO_TYPES:
+            return False, (
+                f"Content type '{file.content_type}' not allowed. "
+                f"Allowed video types: {', '.join(sorted(ALLOWED_VIDEO_TYPES))}"
+            )
+        return True, None
+
     if file.content_type and file.content_type not in ALLOWED_IMAGE_TYPES:
         return False, f"Content type '{file.content_type}' not allowed. Allowed types: {', '.join(ALLOWED_IMAGE_TYPES)}"
-    
+
     return True, None
 
 @app.get("/images/public/{filepath:path}")
@@ -265,12 +278,15 @@ async def upload_image(
         # Read file content to check size
         file_content = await file.read()
         file_size = len(file_content)
-        
-        if file_size > MAX_FILE_SIZE:
-            logger.warning(f"File size {file_size} exceeds maximum {MAX_FILE_SIZE}")
+
+        file_ext = os.path.splitext(file.filename)[1].lower()
+        max_size = MAX_VIDEO_SIZE if file_ext in ALLOWED_VIDEO_EXTENSIONS else MAX_FILE_SIZE
+
+        if file_size > max_size:
+            logger.warning(f"File size {file_size} exceeds maximum {max_size}")
             raise HTTPException(
-                status_code=413, 
-                detail=f"File size ({file_size} bytes) exceeds maximum allowed size ({MAX_FILE_SIZE} bytes)"
+                status_code=413,
+                detail=f"File size ({file_size} bytes) exceeds maximum allowed size ({max_size} bytes)",
             )
         
         if file_size == 0:

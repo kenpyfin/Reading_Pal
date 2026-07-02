@@ -86,18 +86,114 @@
 
 /* New styles for the actions area (generate button) */
 .reading-guide-actions {
-  padding: 8px 12px;
+  padding: 6px 10px;
   border-bottom: 1px solid var(--color-border-subtle);
   flex-shrink: 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: stretch;
+  display: block;
   background-color: var(--color-bg-elevated);
   box-sizing: border-box;
   width: 100%;
   max-width: 100%;
   min-width: 0; /* Safari: allow flex row to shrink inside narrow panes */
+}
+
+.reading-guide-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+}
+
+.reading-guide-toolbar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+.reading-guide-overflow {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.reading-guide-overflow-trigger {
+  border: 1px solid var(--color-input-border);
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  min-width: 36px;
+}
+
+.reading-guide-overflow-trigger:hover {
+  background: var(--color-bg-hover);
+}
+
+.reading-guide-overflow-trigger[aria-expanded='true'] {
+  background: var(--color-bg-hover);
+  border-color: var(--color-primary);
+}
+
+.reading-guide-overflow-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 200;
+  min-width: 180px;
+  padding: 4px 0;
+  border-radius: 8px;
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-elevated);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+}
+
+.reading-guide-overflow-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--color-text);
+  padding: 8px 14px;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.reading-guide-overflow-item:hover:not(:disabled) {
+  background: var(--color-bg-hover);
+}
+
+.reading-guide-overflow-item:disabled {
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+}
+
+.reading-guide-toolbar-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 0 auto;
+  min-width: 0;
+  width: 100%;
+}
+
+.reading-guide-toolbar-progress .progress-text {
+  display: inline;
+  margin-bottom: 0;
+  white-space: nowrap;
+  font-size: 0.8rem;
+  flex-shrink: 0;
+}
+
+.reading-guide-toolbar-progress .progress-bar {
+  flex: 1;
+  min-width: 0;
+  height: 6px;
 }
 
 .reading-guide-pane-embed .reading-guide-actions {
@@ -895,39 +991,21 @@
 
 .reading-guide-switcher {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  width: 100%;
-  margin-bottom: 8px;
-}
-
-.reading-guide-switcher-label {
-  font-size: 0.85rem;
-  color: var(--color-text-muted);
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .reading-guide-select {
-  flex: 1 1 160px;
+  flex: 1;
   min-width: 0;
-  max-width: 100%;
+  width: 100%;
   padding: 6px 8px;
   border-radius: 6px;
   border: 1px solid var(--color-input-border);
   background: var(--color-bg-elevated);
   color: var(--color-text);
-}
-
-.reading-guide-delete-btn {
-  flex-shrink: 0;
-}
-
-.reading-guide-angle-hint {
-  width: 100%;
-  margin: 0 0 8px;
-  font-size: 0.82rem;
-  color: var(--color-text-muted);
-  line-height: 1.35;
+  font-size: 0.9rem;
 }
 
 .generate-guide-btn--secondary {
@@ -954,22 +1032,42 @@
   font-family: inherit;
 }
 
-.roadmap-card-chat {
-  margin-top: 12px;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: 8px;
-  padding: 8px 10px;
+.roadmap-card-chat-modal {
+  width: min(520px, 100%);
+  max-height: min(85vh, 640px);
+  display: flex;
+  flex-direction: column;
   background: var(--color-bg-elevated);
+  border-radius: 10px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
 }
 
-.roadmap-card-chat summary {
-  cursor: pointer;
-  font-weight: 600;
-  font-size: 0.9rem;
+.roadmap-card-chat-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  flex-shrink: 0;
 }
 
-.roadmap-card-chat-body {
-  margin-top: 10px;
+.roadmap-card-chat-modal-header h4 {
+  margin: 0;
+  font-size: 1rem;
+  color: var(--color-text);
+  line-height: 1.35;
+  min-width: 0;
+}
+
+.roadmap-card-chat-modal-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+  padding: 12px 14px 14px;
+  overflow: hidden;
 }
 
 .roadmap-card-chat-hint,
@@ -983,7 +1081,9 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
-  max-height: 280px;
+  flex: 1 1 auto;
+  min-height: 120px;
+  max-height: min(50vh, 400px);
   overflow-y: auto;
   margin-bottom: 10px;
 }

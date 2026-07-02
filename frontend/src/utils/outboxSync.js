@@ -12,8 +12,10 @@ import {
   removePendingCreateBookmark,
 } from './offlineBookCache';
 
+import { getStoredAuthToken } from './storage';
+
 async function getAuthHeaders() {
-  const token = typeof localStorage !== 'undefined' ? localStorage.getItem('authToken') : null;
+  const token = getStoredAuthToken();
   if (!token) return null;
   return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 }

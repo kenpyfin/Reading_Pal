@@ -99,6 +99,9 @@ fi
 
 purge_unused_docker_storage
 
+export REACT_APP_BUILD_ID="${REACT_APP_BUILD_ID:-$(git rev-parse --short HEAD 2>/dev/null || date +%s)}"
+echo "INFO: Frontend build id: ${REACT_APP_BUILD_ID}"
+
 mapfile -t DEPLOY_SERVICES < <(compose_services)
 PROFILE_ARGS=( $(compose_profile_args) )
 echo "INFO: Rebuilding Docker services with --no-cache: ${DEPLOY_SERVICES[*]}"

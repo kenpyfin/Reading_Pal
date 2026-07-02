@@ -84,6 +84,7 @@ services:
       args:
         # Pass the APP_IMAGE_SECRET from .env as REACT_APP_IMAGE_SECRET build arg
         REACT_APP_IMAGE_SECRET: ${APP_IMAGE_SECRET}
+        REACT_APP_BUILD_ID: ${REACT_APP_BUILD_ID:-dev}
     ports:
       # Map the host's FRONTEND_PORT to the container's FRONTEND_PORT
       # (where 'serve' is listening, as defined in frontend/Dockerfile)

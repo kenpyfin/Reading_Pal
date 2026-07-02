@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import './ReadingGuidePane.css';
@@ -56,11 +57,13 @@ function ancestorIdsToExpandForRoadmapItem(items, targetId) {
 
 function RoadmapCardChat({
   cardId,
+  cardTitle,
   onSendCardChat,
   onLoadCardChat,
   onClearCardChat,
   serverActionsDisabled = false,
 }) {
+  const [modalOpen, setModalOpen] = useState(false);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -69,7 +72,7 @@ function RoadmapCardChat({
   const loadedRef = useRef(false);
 
   const loadHistory = useCallback(async () => {
-    if (!onLoadCardChat || loadedRef.current) return;
+    if (!onLoadCardChat) return;
     setLoadingHistory(true);
     setError(null);
     try {
@@ -82,6 +85,24 @@ function RoadmapCardChat({
       setLoadingHistory(false);
     }
   }, [cardId, onLoadCardChat]);
+
+  const openModal = useCallback(() => {
+    setModalOpen(true);
+    loadHistory();
+  }, [loadHistory]);
+
+  const closeModal = useCallback(() => {
+    setModalOpen(false);
+  }, []);
+
+  useEffect(() => {
+    if (!modalOpen) return undefined;
+    const onEsc = (event) => {
+      if (event.key === 'Escape') setModalOpen(false);
+    };
+    document.addEventListener('keydown', onEsc);
+    return () => document.removeEventListener('keydown', onEsc);
+  }, [modalOpen]);
 
   const handleSend = async () => {
     const text = input.trim();
@@ -118,74 +139,112 @@ function RoadmapCardChat({
 
   if (!onSendCardChat) return null;
 
-  return (
-    <details
-      className="roadmap-card-chat"
-      onToggle={(e) => {
-        if (e.currentTarget.open) loadHistory();
-      }}
-    >
-      <summary>Chat about this section</summary>
-      <div className="roadmap-card-chat-body">
-        {serverActionsDisabled && (
-          <p className="roadmap-card-chat-hint">Chat requires an internet connection.</p>
-        )}
-        {loadingHistory && <p className="roadmap-card-chat-hint">Loading conversation…</p>}
-        <div className="roadmap-card-chat-messages" role="log" aria-live="polite">
-          {messages.length === 0 && !loadingHistory && (
-            <p className="roadmap-card-chat-empty">Ask a question about this section.</p>
-          )}
-          {messages.map((msg, idx) => (
-            <div
-              key={`${cardId}-msg-${idx}`}
-              className={`roadmap-card-chat-message roadmap-card-chat-message--${msg.role}`}
-            >
-              <span className="roadmap-card-chat-role">{msg.role === 'user' ? 'You' : 'Guide'}</span>
-              <div className="roadmap-card-chat-content">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
-              </div>
-            </div>
-          ))}
-        </div>
-        {error && <p className="error-message roadmap-card-chat-error">{error}</p>}
-        <div className="roadmap-card-chat-compose">
-          <textarea
-            className="roadmap-card-chat-input"
-            rows={2}
-            value={input}
-            disabled={serverActionsDisabled || loading}
-            placeholder="Ask about this section…"
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                handleSend();
-              }
-            }}
-          />
-          <div className="roadmap-card-chat-compose-actions">
+  const chatModal =
+    modalOpen &&
+    typeof document !== 'undefined' &&
+    createPortal(
+      <div
+        className="roadmap-modal-backdrop"
+        role="presentation"
+        onClick={closeModal}
+      >
+        <div
+          className="roadmap-card-chat-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={`roadmap-chat-title-${cardId}`}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="roadmap-card-chat-modal-header">
+            <h4 id={`roadmap-chat-title-${cardId}`}>
+              Chat: {cardTitle || 'This section'}
+            </h4>
             <button
               type="button"
-              className="guide-section-link"
-              disabled={serverActionsDisabled || loading || !input.trim()}
-              onClick={handleSend}
+              className="roadmap-modal-close"
+              onClick={closeModal}
+              aria-label="Close chat"
             >
-              {loading ? 'Sending…' : 'Send'}
+              &times;
             </button>
-            {messages.length > 0 && (
-              <button
-                type="button"
-                className="guide-section-link secondary"
-                disabled={serverActionsDisabled || loading}
-                onClick={handleClear}
-              >
-                Clear history
-              </button>
+          </div>
+          <div className="roadmap-card-chat-modal-body">
+            {serverActionsDisabled && (
+              <p className="roadmap-card-chat-hint">Chat requires an internet connection.</p>
             )}
+            {loadingHistory && <p className="roadmap-card-chat-hint">Loading conversation…</p>}
+            <div className="roadmap-card-chat-messages" role="log" aria-live="polite">
+              {messages.length === 0 && !loadingHistory && (
+                <p className="roadmap-card-chat-empty">Ask a question about this section.</p>
+              )}
+              {messages.map((msg, idx) => (
+                <div
+                  key={`${cardId}-msg-${idx}`}
+                  className={`roadmap-card-chat-message roadmap-card-chat-message--${msg.role}`}
+                >
+                  <span className="roadmap-card-chat-role">{msg.role === 'user' ? 'You' : 'Guide'}</span>
+                  <div className="roadmap-card-chat-content">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                  </div>
+                </div>
+              ))}
+            </div>
+            {error && <p className="error-message roadmap-card-chat-error">{error}</p>}
+            <div className="roadmap-card-chat-compose">
+              <textarea
+                className="roadmap-card-chat-input"
+                rows={3}
+                value={input}
+                disabled={serverActionsDisabled || loading}
+                placeholder="Ask about this section…"
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSend();
+                  }
+                }}
+              />
+              <div className="roadmap-card-chat-compose-actions">
+                <button
+                  type="button"
+                  className="guide-section-link"
+                  disabled={serverActionsDisabled || loading || !input.trim()}
+                  onClick={handleSend}
+                >
+                  {loading ? 'Sending…' : 'Send'}
+                </button>
+                {messages.length > 0 && (
+                  <button
+                    type="button"
+                    className="guide-section-link secondary"
+                    disabled={serverActionsDisabled || loading}
+                    onClick={handleClear}
+                  >
+                    Clear history
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
         </div>
-      </div>
-    </details>
+      </div>,
+      document.body,
+    );
+
+  return (
+    <>
+      <button
+        type="button"
+        className="guide-section-link secondary"
+        disabled={serverActionsDisabled}
+        onClick={openModal}
+        aria-haspopup="dialog"
+      >
+        Chat
+      </button>
+      {chatModal}
+    </>
   );
 }
 
@@ -405,17 +464,15 @@ function RoadmapCard({
         >
           {isOutsiderGuideLoading ? 'Generating outsider guide...' : 'Outsider Guide'}
         </button>
+        <RoadmapCardChat
+          cardId={idStr}
+          cardTitle={title}
+          onSendCardChat={onSendCardChat}
+          onLoadCardChat={onLoadCardChat}
+          onClearCardChat={onClearCardChat}
+          serverActionsDisabled={serverActionsDisabled}
+        />
       </div>
-      )}
-
-      {showDetails && (
-      <RoadmapCardChat
-        cardId={idStr}
-        onSendCardChat={onSendCardChat}
-        onLoadCardChat={onLoadCardChat}
-        onClearCardChat={onClearCardChat}
-        serverActionsDisabled={serverActionsDisabled}
-      />
       )}
 
       {showDetails && item.graph_image_url && (
@@ -506,9 +563,13 @@ const ReadingGuidePane = ({
   const [newGuideName, setNewGuideName] = useState('');
   const [newGuideRequirements, setNewGuideRequirements] = useState('');
   const [mobileHeaderHidden, setMobileHeaderHidden] = useState(false);
+  const [overflowOpen, setOverflowOpen] = useState(false);
+  const overflowRef = useRef(null);
 
   const canAddGuide = guidesList.length < maxGuides;
   const activeGuideSummary = guidesList.find((g) => g.guide_id === activeGuideId);
+  const isBulkRoadmapRunning = !!roadmapBulkJob;
+  const actionsBusy = isLoading || isGenerating || isBulkRoadmapRunning;
 
   const isMobileViewport = useCallback(
     () => typeof window !== 'undefined' && window.innerWidth <= MOBILE_MAX_WIDTH,
@@ -631,15 +692,31 @@ const ReadingGuidePane = ({
         setSelectedGraphImage(null);
         setShowBulkGenerateModal(false);
         setShowNewGuideModal(false);
+        setOverflowOpen(false);
       }
     };
-    if (selectedGraphImage || showBulkGenerateModal || showNewGuideModal) {
+    if (selectedGraphImage || showBulkGenerateModal || showNewGuideModal || overflowOpen) {
       document.addEventListener('keydown', onEsc);
     }
     return () => {
       document.removeEventListener('keydown', onEsc);
     };
-  }, [selectedGraphImage, showBulkGenerateModal, showNewGuideModal]);
+  }, [selectedGraphImage, showBulkGenerateModal, showNewGuideModal, overflowOpen]);
+
+  useEffect(() => {
+    if (!overflowOpen) return undefined;
+    const onPointerDown = (event) => {
+      if (overflowRef.current && !overflowRef.current.contains(event.target)) {
+        setOverflowOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('touchstart', onPointerDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('touchstart', onPointerDown);
+    };
+  }, [overflowOpen]);
 
   const handleOpenGraph = useCallback((url, title) => {
     setSelectedGraphImage({ url, title });
@@ -650,7 +727,6 @@ const ReadingGuidePane = ({
   const totalItems = roadmap?.items ? countItems(roadmap.items) : 0;
   const progressPct = totalItems > 0 ? Math.round((completedIds.length / totalItems) * 100) : 0;
   const progressBarWidthPct = totalItems > 0 ? Math.min(100, Math.round((completedIds.length / totalItems) * 100)) : 0;
-  const isBulkRoadmapRunning = !!roadmapBulkJob;
   const bulkRunningLabel =
     roadmapBulkJob === 'graphs'
       ? 'Generating all graphs...'
@@ -671,85 +747,133 @@ const ReadingGuidePane = ({
     setNewGuideRequirements('');
   };
 
+  const showGenerateRoadmap = onGenerateRoadmap && !roadmap?.items?.length;
+  const generateRoadmapLabel = isGenerating ? 'Generating…' : 'Generate roadmap';
+
   const roadmapActionsInner = (
-    <>
-      {guidesList.length > 0 && (
-        <div className="reading-guide-switcher">
-          <label className="reading-guide-switcher-label" htmlFor="reading-guide-select">
-            Guide
-          </label>
-          <select
-            id="reading-guide-select"
-            className="reading-guide-select"
-            value={activeGuideId || ''}
-            onChange={(e) => onSwitchGuide && onSwitchGuide(e.target.value)}
-            disabled={isLoading || isGenerating}
-          >
-            {guidesList.map((g) => (
-              <option key={g.guide_id} value={g.guide_id}>
-                {g.name}
-                {g.custom_requirements ? ` — ${String(g.custom_requirements).slice(0, 40)}` : ''}
-              </option>
-            ))}
-          </select>
-          {onDeleteGuide && guidesList.length > 0 && (
-            <button
-              type="button"
-              className="guide-section-link secondary reading-guide-delete-btn"
-              disabled={isLoading || isGenerating || serverActionsDisabled}
-              onClick={() => {
-                if (activeGuideId && window.confirm('Delete this reading guide?')) {
-                  onDeleteGuide(activeGuideId);
-                }
-              }}
+    <div className="reading-guide-toolbar">
+      <div className="reading-guide-toolbar-row">
+        {guidesList.length > 0 && (
+          <div className="reading-guide-switcher">
+            <select
+              id="reading-guide-select"
+              className="reading-guide-select"
+              aria-label="Reading guide"
+              title={
+                activeGuideSummary?.custom_requirements
+                  ? `Reading angle: ${activeGuideSummary.custom_requirements}`
+                  : undefined
+              }
+              value={activeGuideId || ''}
+              onChange={(e) => onSwitchGuide && onSwitchGuide(e.target.value)}
+              disabled={actionsBusy}
             >
-              Delete guide
-            </button>
+              {guidesList.map((g) => (
+                <option
+                  key={g.guide_id}
+                  value={g.guide_id}
+                  title={g.custom_requirements || g.name}
+                >
+                  {g.name}
+                  {g.custom_requirements ? ` — ${String(g.custom_requirements).slice(0, 40)}` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        <div className="reading-guide-overflow" ref={overflowRef}>
+          <button
+            type="button"
+            className="reading-guide-overflow-trigger"
+            aria-haspopup="menu"
+            aria-expanded={overflowOpen}
+            aria-label="Guide actions"
+            onClick={() => setOverflowOpen((v) => !v)}
+          >
+            ⋯
+          </button>
+          {overflowOpen && (
+            <div className="reading-guide-overflow-menu" role="menu">
+              {onCreateGuide && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="reading-guide-overflow-item"
+                  disabled={!canAddGuide || actionsBusy || serverActionsDisabled}
+                  onClick={() => {
+                    setOverflowOpen(false);
+                    setShowNewGuideModal(true);
+                  }}
+                >
+                  New guide…
+                </button>
+              )}
+              {onDeleteGuide && guidesList.length > 0 && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="reading-guide-overflow-item"
+                  disabled={actionsBusy || serverActionsDisabled}
+                  onClick={() => {
+                    setOverflowOpen(false);
+                    if (activeGuideId && window.confirm('Delete this reading guide?')) {
+                      onDeleteGuide(activeGuideId);
+                    }
+                  }}
+                >
+                  Delete guide
+                </button>
+              )}
+              {showGenerateRoadmap && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="reading-guide-overflow-item"
+                  disabled={actionsBusy || serverActionsDisabled}
+                  onClick={() => {
+                    setOverflowOpen(false);
+                    onGenerateRoadmap();
+                  }}
+                >
+                  {generateRoadmapLabel}
+                </button>
+              )}
+              {roadmap?.items?.length > 0 && onBulkGenerateRoadmap && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="reading-guide-overflow-item"
+                  disabled={actionsBusy || serverActionsDisabled}
+                  onClick={() => {
+                    setOverflowOpen(false);
+                    setShowBulkGenerateModal(true);
+                  }}
+                >
+                  {isBulkRoadmapRunning ? bulkRunningLabel : 'Generate all…'}
+                </button>
+              )}
+            </div>
           )}
         </div>
-      )}
-      {activeGuideSummary?.custom_requirements && (
-        <p className="reading-guide-angle-hint">
-          Reading angle: {activeGuideSummary.custom_requirements}
-        </p>
-      )}
-      {onCreateGuide && canAddGuide && (
-        <button
-          type="button"
-          className="generate-guide-btn generate-guide-btn--secondary"
-          disabled={isLoading || isGenerating || isBulkRoadmapRunning || serverActionsDisabled}
-          onClick={() => setShowNewGuideModal(true)}
-        >
-          New guide…
-        </button>
-      )}
-      <button
-        type="button"
-        onClick={onGenerateRoadmap}
-        disabled={isLoading || isGenerating || isBulkRoadmapRunning || serverActionsDisabled}
-        className="generate-guide-btn"
-      >
-        {isGenerating ? 'Generating...' : (roadmap ? 'Regenerate Roadmap' : 'Generate Roadmap')}
-      </button>
-      {roadmap?.items?.length > 0 && (
-        <button
-          type="button"
-          onClick={() => setShowBulkGenerateModal(true)}
-          disabled={isLoading || isGenerating || isBulkRoadmapRunning || serverActionsDisabled || !onBulkGenerateRoadmap}
-          className="generate-guide-btn generate-shortcuts-btn"
-        >
-          {isBulkRoadmapRunning ? bulkRunningLabel : 'Generate all…'}
-        </button>
-      )}
+      </div>
       {totalItems > 0 && (
-        <div className="reading-guide-progress">
-          <span className="progress-text">{completedIds.length} / {totalItems} completed ({progressPct}%)</span>
-          <div className="progress-bar" role="progressbar" aria-valuenow={completedIds.length} aria-valuemin={0} aria-valuemax={totalItems}>
+        <div
+          className="reading-guide-toolbar-progress reading-guide-progress"
+          role="progressbar"
+          aria-valuenow={completedIds.length}
+          aria-valuemin={0}
+          aria-valuemax={totalItems}
+          aria-label={`${completedIds.length} of ${totalItems} sections completed`}
+        >
+          <span className="progress-text">
+            {completedIds.length} / {totalItems} ({progressPct}%)
+          </span>
+          <div className="progress-bar">
             <div className="progress-bar-fill" style={{ width: `${progressBarWidthPct}%` }} />
           </div>
         </div>
       )}
-    </>
+    </div>
   );
 
   return (
@@ -783,7 +907,9 @@ const ReadingGuidePane = ({
         <div className="reading-guide-inner-content">
           {isLoading && <p>Loading roadmap...</p>}
           {error && <p className="error-message">Error: {error}</p>}
-          {!isLoading && !error && !roadmap && <p>No roadmap generated yet. Click &quot;Generate Roadmap&quot;.</p>}
+          {!isLoading && !error && !roadmap?.items?.length && (
+            <p>No roadmap yet. Open ⋯ and choose Generate roadmap, or create a new guide.</p>
+          )}
           {!isLoading && !error && roadmap?.items?.length > 0 && (
             <div className="structured-guide roadmap-tree">
               {roadmap.items.map((item) => (

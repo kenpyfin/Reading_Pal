@@ -1,9 +1,11 @@
 # Use Node 20 for better OpenSSL 3 compatibility (avoids ERR_SSL_CIPHER_OPERATION_FAILED)
 FROM node:20-alpine as builder
 
-# Accept build argument for image secret
+# Accept build argument for image secret and deploy build id
 ARG REACT_APP_IMAGE_SECRET
+ARG REACT_APP_BUILD_ID=dev
 ENV REACT_APP_IMAGE_SECRET=$REACT_APP_IMAGE_SECRET
+ENV REACT_APP_BUILD_ID=$REACT_APP_BUILD_ID
 
 # Set the working directory in the container
 WORKDIR /app

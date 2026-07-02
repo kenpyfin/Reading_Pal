@@ -11,6 +11,7 @@ import './BookView.css';
 import logger from '../utils/logger'; // Ensure logger is imported
 import { getPageForOffset } from '../utils/textLinking'; // Import text linking utilities
 import {
+  getStoredAuthToken,
   getStoredReadingPosition,
   getStoredReadingViewMode,
   setStoredReadingPosition,
@@ -897,7 +898,7 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
     setLoading(true);
     setError(null);
     try {
-      const token = localStorage.getItem('authToken');
+      const token = getStoredAuthToken();
       if (!token) {
         setError("Authentication token not found. Please log in.");
         setLoading(false);
@@ -977,7 +978,7 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
   const fetchBookmarks = async () => {
     if (!bookId) return;
     try {
-      const token = localStorage.getItem('authToken');
+      const token = getStoredAuthToken();
       if (!token) {
         // setError("Authentication token not found for fetching bookmarks. Please log in."); // Or handle silently
         logger.warn("[BookView - fetchBookmarks] Auth token not found.");
@@ -1055,7 +1056,7 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
     }
     logger.info(`[BookView - handleDeleteBookmark] Attempting to delete bookmark ID: ${bookmarkIdToDelete}`);
     try {
-      const token = localStorage.getItem('authToken');
+      const token = getStoredAuthToken();
       if (!token) {
         alert("Authentication token not found. Please log in to delete bookmarks.");
         logger.warn("[BookView - handleDeleteBookmark] Auth token not found.");
@@ -1239,7 +1240,7 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
     setGuideLoading(true);
     setGuideError(null);
     try {
-      const token = localStorage.getItem('authToken');
+      const token = getStoredAuthToken();
       if (!token) throw new Error('Authentication token not found.');
 
       const listResp = await fetch(`/api/books/${bookId}/reading-guides`, {
@@ -1321,8 +1322,8 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
       try {
         await flushOutbox();
         await refreshOutboxCount();
-        if (!bookId || !localStorage.getItem('authToken')) return;
-        const token = localStorage.getItem('authToken');
+        if (!bookId || !getStoredAuthToken()) return;
+        const token = getStoredAuthToken();
         const [bookmarksRes, notesRes] = await Promise.all([
           fetch(`/api/bookmarks/book/${bookId}`, {
             headers: { Authorization: `Bearer ${token}` },
@@ -1379,7 +1380,7 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
     if (!bookId) return;
     if (isOfflineSnapshot || !navigator.onLine) return;
     try {
-      const token = localStorage.getItem('authToken');
+      const token = getStoredAuthToken();
       if (!token) {
         logger.warn("[BookView - refreshImageUrls] Auth token not found.");
         return;
@@ -1409,7 +1410,7 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
       setGuideLoading(true);
       setGuideError(null);
       try {
-        const token = localStorage.getItem('authToken');
+        const token = getStoredAuthToken();
         if (!token) throw new Error('Authentication token not found.');
         const localGuide = await getGuide(bookId);
         await putGuide(bookId, { activeGuideId: guideId });
@@ -1437,7 +1438,7 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
     setIsGeneratingGuide(true);
     setGuideError(null);
     try {
-      const token = localStorage.getItem('authToken');
+      const token = getStoredAuthToken();
       if (!token) throw new Error('Authentication token not found.');
       const response = await fetch(`/api/books/${bookId}/reading-guides`, {
         method: 'POST',
@@ -1471,7 +1472,7 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
     }
     setGuideError(null);
     try {
-      const token = localStorage.getItem('authToken');
+      const token = getStoredAuthToken();
       if (!token) throw new Error('Authentication token not found.');
       const response = await fetch(
         `/api/books/${bookId}/reading-guides/${encodeURIComponent(guideId)}`,
@@ -1498,7 +1499,7 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
     setGuideError(null);
 
     try {
-      const token = localStorage.getItem('authToken');
+      const token = getStoredAuthToken();
       if (!token) throw new Error('Authentication token not found.');
 
       const hasActive = guidesList.some((g) => g.guide_id === activeGuideId);
@@ -1564,7 +1565,7 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
       return;
     }
     try {
-      const token = localStorage.getItem('authToken');
+      const token = getStoredAuthToken();
       if (!token) throw new Error("Authentication token not found.");
       const response = await fetch(guideApiPath('/progress'), {
         method: 'POST',
@@ -1611,7 +1612,7 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
     }
     setGraphLoadingById((prev) => ({ ...prev, [cardId]: true }));
     try {
-      const token = localStorage.getItem('authToken');
+      const token = getStoredAuthToken();
       if (!token) throw new Error("Authentication token not found.");
       const response = await fetch(guideApiPath(`/cards/${encodeURIComponent(cardId)}/graph`), {
         method: 'POST',
@@ -1712,7 +1713,7 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
 
     setAlternativeLoadingById((prev) => ({ ...prev, [cardId]: true }));
     try {
-      const token = localStorage.getItem('authToken');
+      const token = getStoredAuthToken();
       if (!token) throw new Error("Authentication token not found.");
       const response = await fetch(guideApiPath(`/cards/${encodeURIComponent(cardId)}/alternative-reading`), {
         method: 'POST',
@@ -1787,7 +1788,7 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
 
     setOutsiderLoadingById((prev) => ({ ...prev, [cardId]: true }));
     try {
-      const token = localStorage.getItem('authToken');
+      const token = getStoredAuthToken();
       if (!token) throw new Error("Authentication token not found.");
       const response = await fetch(guideApiPath(`/cards/${encodeURIComponent(cardId)}/outsider-guide`), {
         method: 'POST',
@@ -1817,7 +1818,7 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
       if (!navigator.onLine || isOfflineSnapshot) {
         throw new Error('Chat requires an internet connection.');
       }
-      const token = localStorage.getItem('authToken');
+      const token = getStoredAuthToken();
       if (!token) throw new Error('Authentication token not found.');
       const response = await fetch(guideApiPath(`/cards/${encodeURIComponent(cardId)}/chat`), {
         method: 'POST',
@@ -1841,7 +1842,7 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
     async (cardId) => {
       if (!bookId || !cardId) return [];
       if (!navigator.onLine || isOfflineSnapshot) return [];
-      const token = localStorage.getItem('authToken');
+      const token = getStoredAuthToken();
       if (!token) return [];
       const response = await fetch(guideApiPath(`/cards/${encodeURIComponent(cardId)}/chat`), {
         headers: { Authorization: `Bearer ${token}` },
@@ -1859,7 +1860,7 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
       if (!navigator.onLine || isOfflineSnapshot) {
         throw new Error('Clearing chat requires an internet connection.');
       }
-      const token = localStorage.getItem('authToken');
+      const token = getStoredAuthToken();
       if (!token) throw new Error('Authentication token not found.');
       const response = await fetch(guideApiPath(`/cards/${encodeURIComponent(cardId)}/chat`), {
         method: 'DELETE',
@@ -2243,7 +2244,7 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
     const fetchNotes = async () => {
       if (!bookId) return;
       try {
-        const token = localStorage.getItem('authToken');
+        const token = getStoredAuthToken();
         if (!token) {
           logger.warn("[BookView - fetchNotes] Auth token not found. Cannot fetch notes.");
           setNotes([]); // Clear notes if not authenticated
@@ -2869,7 +2870,7 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
     }
     logger.info(`[BookView - handleDeleteNote] Attempting to delete note ID: ${noteIdToDelete}`);
     try {
-      const token = localStorage.getItem('authToken');
+      const token = getStoredAuthToken();
       if (!token) {
         alert("Authentication token not found.");
         return;
@@ -3589,7 +3590,7 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
     logger.debug("Attempting to save bookmark with data:", bookmarkData);
 
     try {
-      const token = localStorage.getItem('authToken');
+      const token = getStoredAuthToken();
       if (!token) {
         setBookmarkError("Authentication token not found. Please log in to save bookmarks.");
         logger.warn("[BookView - handleSaveBookmark] Auth token not found.");
@@ -3668,7 +3669,7 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
     setReformatError(null);
 
     try {
-        const token = localStorage.getItem('authToken');
+        const token = getStoredAuthToken();
         if (!token) {
             throw new Error("Authentication token not found. Please log in.");
         }

@@ -29,6 +29,31 @@ Use a reverse-chronological list (newest first). Each entry should be short and 
 
 <!-- New entries go below this comment, newest first. -->
 
+## 2026-06-18 — Book list fixed width
+
+- **What:** `Available Books` panel keeps a stable width (`min(900px, 100%)`) instead of shrinking when a page has short titles or few items.
+- **Why:** Inside the flex `app-content-shell`, `max-width` alone let the block size to its content on paginated pages.
+- **Where:** `frontend/src/index.css` (`.book-list-container`, list item width rules)
+
+## 2026-06-18 — Service worker cache versioning and storage migrations
+
+- **What:** Versioned production service worker cache per deploy (`REACT_APP_BUILD_ID` / git SHA). Shell assets (`/`, `index.html`, manifest, favicon) use **network-first**; hashed `/static/*` stays cache-first. SW update triggers a one-time auto-reload. Added `storageMigrations.js` (schema v1) with deploy-id tracking and SW reload guard reset. Synced `index.html` theme boot script with sepia + `.dark` class. Centralized remaining `authToken` reads through `getStoredAuthToken()`.
+- **Why:** Stale `reading-pal-shell-v1` cache served old JS after deploys; new features (e.g. theme toggle) appeared briefly after OAuth login then reverted on refresh.
+- **Where:** `frontend/public/sw.js`, `frontend/scripts/sw.template.js`, `frontend/scripts/inject-sw-build-id.js`, `frontend/src/index.js`, `frontend/src/utils/storageMigrations.js`, `frontend/src/utils/storage.js`, `frontend/public/index.html`, `frontend/Dockerfile`, `docker-compose.yml`, `deploy.sh`
+- **Notes:** `npm run prebuild` injects build id into `sw.js` and `.env.production.local`. `deploy.sh` sets `REACT_APP_BUILD_ID` from git SHA. User prefs (theme, reading position, auth) are preserved across deploys.
+
+## 2026-06-04 — Removed Regenerate roadmap from guide overflow menu
+
+- **What:** The ⋯ menu no longer shows Regenerate roadmap when a roadmap already has cards; **Generate roadmap** appears only when there are no roadmap items yet. Empty-state copy points to ⋯ or **New guide…**.
+- **Why:** Regeneration was unused; new guides already create a roadmap via **New guide…**.
+- **Where:** `frontend/src/components/ReadingGuidePane.js`
+
+## 2026-06-04 — Compact reading guide toolbar (overflow menu)
+
+- **What:** Replaced the tall multi-row guide actions strip with a two-row compact toolbar: guide select + overflow menu (New guide, Delete, Regenerate/Generate, Generate all…); inline progress on one line. Removed duplicate reading-angle hint and standalone action buttons from the main bar.
+- **Why:** Multi-guide controls wrapped on narrow panes (~148px toolbar height), wasting vertical space above roadmap cards.
+- **Where:** `frontend/src/components/ReadingGuidePane.js`, `frontend/src/components/ReadingGuidePane.css`
+
 ## 2026-06-04 — Reading guide: collapse completed roadmap cards
 
 - **What:** Checked roadmap items now hide signpost, reading notes, actions, chat, graphs, and child sections—only the checkbox and title remain visible. Unchecking restores full content.
