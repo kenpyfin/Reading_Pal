@@ -29,6 +29,12 @@ Use a reverse-chronological list (newest first). Each entry should be short and 
 
 <!-- New entries go below this comment, newest first. -->
 
+## 2026-07-02 — Reading guide empty state: fix misplaced actions
+
+- **What:** Right-aligned the ⋯ overflow trigger in the guide toolbar (`margin-left: auto`). Replaced the text-only empty roadmap message with a centered empty state: primary **Generate roadmap** button, optional **New guide…**, and a short hint for overflow actions.
+- **Why:** After the compact toolbar refactor, the overflow control sat on the left when no progress row was shown (no roadmap), and the main generate action was only reachable via ⋯.
+- **Where:** `frontend/src/components/ReadingGuidePane.js`, `frontend/src/components/ReadingGuidePane.css`
+
 ## 2026-06-18 — Book list fixed width
 
 - **What:** `Available Books` panel keeps a stable width (`min(900px, 100%)`) instead of shrinking when a page has short titles or few items.

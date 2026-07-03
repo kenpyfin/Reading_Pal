@@ -908,7 +908,34 @@ const ReadingGuidePane = ({
           {isLoading && <p>Loading roadmap...</p>}
           {error && <p className="error-message">Error: {error}</p>}
           {!isLoading && !error && !roadmap?.items?.length && (
-            <p>No roadmap yet. Open ⋯ and choose Generate roadmap, or create a new guide.</p>
+            <div className="reading-guide-empty-state">
+              <p className="reading-guide-empty-state-text">No roadmap yet.</p>
+              <div className="reading-guide-empty-state-actions">
+                {showGenerateRoadmap && (
+                  <button
+                    type="button"
+                    className="generate-guide-btn reading-guide-empty-state-primary"
+                    disabled={actionsBusy || serverActionsDisabled}
+                    onClick={onGenerateRoadmap}
+                  >
+                    {generateRoadmapLabel}
+                  </button>
+                )}
+                {onCreateGuide && canAddGuide && (
+                  <button
+                    type="button"
+                    className="generate-guide-btn generate-guide-btn--secondary"
+                    disabled={actionsBusy || serverActionsDisabled}
+                    onClick={() => setShowNewGuideModal(true)}
+                  >
+                    New guide…
+                  </button>
+                )}
+              </div>
+              <p className="reading-guide-empty-state-hint">
+                Or use ⋯ for more guide actions.
+              </p>
+            </div>
           )}
           {!isLoading && !error && roadmap?.items?.length > 0 && (
             <div className="structured-guide roadmap-tree">
