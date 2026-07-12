@@ -6,6 +6,7 @@ import {
   putBookListSnapshot,
   getBookListSnapshot,
   getBookSummariesFromMeta,
+  mergeBookListSources,
   isRecoverableListFetchError,
   removeBookFromListSnapshot,
 } from '../utils/offlineBookCache';
@@ -39,12 +40,21 @@ function BookList() {
     typeof navigator !== 'undefined' ? navigator.onLine : true
   );
   const [fromOfflineCache, setFromOfflineCache] = useState(false);
+  const [cachedBookCount, setCachedBookCount] = useState(0);
+  const cachedAllBooksRef = useRef([]);
+  const currentPageRef = useRef(currentPage);
 
-  const listReadOnly = !netOnline || fromOfflineCache;
+  const listActionsReadOnly = !netOnline || fromOfflineCache;
+  const offlinePaging = !netOnline || fromOfflineCache;
+  const pagingTotal = offlinePaging ? cachedBookCount : totalBooks;
 
   useEffect(() => {
     booksRef.current = books;
   }, [books]);
+
+  useEffect(() => {
+    currentPageRef.current = currentPage;
+  }, [currentPage]);
 
   // --- Style definitions for buttons and actions container ---
   const actionsContainerBaseStyle = {
@@ -102,6 +112,28 @@ function BookList() {
   };
   // --- End of style definitions ---
 
+  const applyOfflinePage = useCallback((page, allBooks) => {
+    cachedAllBooksRef.current = allBooks;
+    setCachedBookCount(allBooks.length);
+    const skip = (page - 1) * PAGE_SIZE;
+    setBooks(allBooks.slice(skip, skip + PAGE_SIZE));
+  }, []);
+
+  const loadOfflineBooks = useCallback(async (page) => {
+    const snap = await getBookListSnapshot();
+    const metaRows = await getBookSummariesFromMeta();
+    const merged = mergeBookListSources(snap, metaRows);
+    if (merged.length === 0) return false;
+    const validPage = Math.max(1, Math.min(page, Math.ceil(merged.length / PAGE_SIZE) || 1));
+    if (validPage !== page) {
+      setCurrentPage(validPage);
+    }
+    applyOfflinePage(validPage, merged);
+    setFromOfflineCache(true);
+    setError(null);
+    return true;
+  }, [applyOfflinePage]);
+
   const fetchBooks = useCallback(async () => {
       console.log("[BookList.js SRC CONSOLE.LOG] Fetching books list from backend...");
       const authHeaders = getAuthHeaders();
@@ -110,6 +142,22 @@ function BookList() {
           setError("Authentication token not found. Please log in.");
           setLoading(false);
           return;
+      }
+
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        if (cachedAllBooksRef.current.length > 0) {
+          applyOfflinePage(currentPage, cachedAllBooksRef.current);
+          setFromOfflineCache(true);
+          setError(null);
+          setLoading(false);
+          return;
+        }
+        const ok = await loadOfflineBooks(currentPage);
+        if (!ok) {
+          setError('Offline and no cached book list found. Reconnect once to load your library.');
+        }
+        setLoading(false);
+        return;
       }
 
       const requestHeaders = {
@@ -168,31 +216,8 @@ function BookList() {
           console.error("[BookList.js SRC CONSOLE.ERROR] Error fetching books:", error);
           if (isRecoverableListFetchError(error)) {
             try {
-              const snap = await getBookListSnapshot();
-              const metaRows = await getBookSummariesFromMeta();
-              const seen = new Set();
-              const merged = [];
-              for (const b of snap?.books || []) {
-                if (b && b.id != null) {
-                  merged.push(b);
-                  seen.add(String(b.id));
-                }
-              }
-              for (const m of metaRows) {
-                if (m && m.id != null && !seen.has(String(m.id))) {
-                  merged.push(m);
-                  seen.add(String(m.id));
-                }
-              }
-              if (merged.length > 0) {
-                setBooks(merged);
-                setTotalBooks(Math.max(snap?.totalBooks || 0, merged.length));
-                if (snap && typeof snap.currentPage === 'number' && snap.currentPage > 0) {
-                  setCurrentPage(snap.currentPage);
-                }
-                setFromOfflineCache(true);
-                setError(null);
-              } else {
+              const ok = await loadOfflineBooks(currentPage);
+              if (!ok) {
                 setError(error.message || "Failed to load books. Please try again later.");
               }
             } catch (cacheErr) {
@@ -205,7 +230,7 @@ function BookList() {
       } finally {
           setLoading(false);
       }
-  }, [currentPage]);
+  }, [currentPage, applyOfflinePage, loadOfflineBooks]);
 
   const checkBookStatus = async (bookId, jobId) => {
       if (!jobId) return null;
@@ -240,13 +265,19 @@ function BookList() {
         fetchBooks();
       }
     };
+    const onOffline = () => {
+      syncOnline();
+      loadOfflineBooks(currentPageRef.current).catch((err) => {
+        console.warn('[BookList] Failed to load offline books on disconnect:', err);
+      });
+    };
     window.addEventListener('online', onOnline);
-    window.addEventListener('offline', syncOnline);
+    window.addEventListener('offline', onOffline);
     return () => {
       window.removeEventListener('online', onOnline);
-      window.removeEventListener('offline', syncOnline);
+      window.removeEventListener('offline', onOffline);
     };
-  }, [fetchBooks]);
+  }, [fetchBooks, loadOfflineBooks]);
 
   useEffect(() => {
       if (typeof navigator !== 'undefined' && !navigator.onLine) return;
@@ -303,7 +334,7 @@ function BookList() {
   }, [books, fromOfflineCache]);
 
   const handleDeleteBook = async (bookId, bookTitle, inFlight = false) => {
-    if (listReadOnly) {
+    if (listActionsReadOnly) {
       return;
     }
     const confirmMessage = inFlight
@@ -353,7 +384,7 @@ function BookList() {
   };
 
   const handleRenameBook = async (bookId, currentTitle) => {
-    if (listReadOnly) {
+    if (listActionsReadOnly) {
       return;
     }
     const newTitle = window.prompt("Enter the new title for the book:", currentTitle);
@@ -417,9 +448,9 @@ function BookList() {
   return (
     <div className="book-list-container">
       <h2>Available Books</h2>
-      {listReadOnly && books.length > 0 && (
+      {listActionsReadOnly && books.length > 0 && (
         <p className="theme-offline-banner">
-          Offline — showing cached book list. Rename, delete, and pagination need a connection.
+          Offline — showing cached books. Rename and delete need a connection; use Previous/Next to browse cached pages.
         </p>
       )}
       {error && <p className="theme-error-text" style={{ marginBottom: '15px' }}>Error: {error}</p>}
@@ -474,7 +505,7 @@ function BookList() {
                 <button
                   title="Rename Book"
                   onClick={(e) => { e.stopPropagation(); handleRenameBook(book.id, book.title || book.original_filename);}}
-                  disabled={listReadOnly || renamingId === book.id || deletingId === book.id || isInFlightStatus(book.status)}
+                  disabled={listActionsReadOnly || renamingId === book.id || deletingId === book.id || isInFlightStatus(book.status)}
                   style={renamingId === book.id ? {...renameButtonStyle, backgroundColor: renameButtonHoverStyle.backgroundColor} : renameButtonStyle}
                   onMouseEnter={(e) => {
                     if (!(renamingId === book.id || deletingId === book.id || isInFlightStatus(book.status))) {
@@ -503,7 +534,7 @@ function BookList() {
                       isInFlightStatus(book.status)
                     );
                   }}
-                  disabled={listReadOnly || deletingId === book.id || renamingId === book.id}
+                  disabled={listActionsReadOnly || deletingId === book.id || renamingId === book.id}
                   style={deletingId === book.id ? {...deleteButtonStyle, backgroundColor: deleteButtonHoverStyle.backgroundColor} : deleteButtonStyle}
                    onMouseEnter={(e) => {
                     if (!(renamingId === book.id || deletingId === book.id)) {
@@ -537,34 +568,34 @@ function BookList() {
       }}>
           <button 
               onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-              disabled={listReadOnly || currentPage === 1}
+              disabled={currentPage === 1}
               style={{
                   ...baseButtonStyle,
-                  opacity: listReadOnly || currentPage === 1 ? 0.5 : 1,
-                  cursor: listReadOnly || currentPage === 1 ? 'not-allowed' : 'pointer'
+                  opacity: currentPage === 1 ? 0.5 : 1,
+                  cursor: currentPage === 1 ? 'not-allowed' : 'pointer'
               }}
           >
               Previous
           </button>
           
           <span style={{ fontSize: '14px', color: 'var(--color-text-muted)' }}>
-              Page <strong>{currentPage}</strong> of <strong>{Math.ceil(totalBooks / PAGE_SIZE) || 1}</strong>
+              Page <strong>{currentPage}</strong> of <strong>{Math.ceil(pagingTotal / PAGE_SIZE) || 1}</strong>
           </span>
 
           <button 
               onClick={() => setCurrentPage(p => p + 1)}
-              disabled={listReadOnly || currentPage * PAGE_SIZE >= totalBooks}
+              disabled={currentPage * PAGE_SIZE >= pagingTotal}
               style={{
                   ...baseButtonStyle,
-                  opacity: listReadOnly || currentPage * PAGE_SIZE >= totalBooks ? 0.5 : 1,
-                  cursor: listReadOnly || currentPage * PAGE_SIZE >= totalBooks ? 'not-allowed' : 'pointer'
+                  opacity: currentPage * PAGE_SIZE >= pagingTotal ? 0.5 : 1,
+                  cursor: currentPage * PAGE_SIZE >= pagingTotal ? 'not-allowed' : 'pointer'
               }}
           >
               Next
           </button>
           
           <span style={{ fontSize: '12px', color: 'var(--color-text-subtle)', marginLeft: 'auto' }}>
-              Total: {totalBooks} books
+              {offlinePaging ? `Cached: ${cachedBookCount} books` : `Total: ${totalBooks} books`}
           </span>
       </div>
 

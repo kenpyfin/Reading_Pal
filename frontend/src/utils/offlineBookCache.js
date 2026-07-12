@@ -239,11 +239,47 @@ export async function getBookMeta(bookId) {
   });
 }
 
+/** Merge book rows by id, preserving order and preferring newer entries. */
+export function mergeBooksIntoList(existingList, newBooks) {
+  const byId = new Map();
+  const order = [];
+  for (const b of existingList || []) {
+    if (b?.id == null) continue;
+    const key = String(b.id);
+    if (!byId.has(key)) order.push(key);
+    byId.set(key, b);
+  }
+  for (const b of newBooks || []) {
+    if (b?.id == null) continue;
+    const key = String(b.id);
+    if (!byId.has(key)) order.push(key);
+    byId.set(key, b);
+  }
+  return order.map((key) => byId.get(key));
+}
+
+/** Combined list from snapshot (all cached pages) plus per-book meta rows. */
+export function mergeBookListSources(snapshot, metaRows = []) {
+  const sources = [
+    ...(snapshot?.allBooks || []),
+    ...(snapshot?.books || []),
+    ...(metaRows || []),
+  ];
+  return mergeBooksIntoList([], sources);
+}
+
 /** Last successful paginated book list from the API (for offline navigation back to BookList). */
-export async function putBookListSnapshot({ books, totalBooks, currentPage }) {
+export async function putBookListSnapshot({ books, totalBooks, currentPage, allBooks }) {
   const db = await openDb();
+  const existing = await getBookListSnapshot();
+  const previousAll = existing?.allBooks || existing?.books || [];
+  const mergedAll =
+    allBooks !== undefined
+      ? mergeBooksIntoList([], allBooks)
+      : mergeBooksIntoList(previousAll, books || []);
   const rec = {
     scope: BOOK_LIST_SCOPE_DEFAULT,
+    allBooks: mergedAll,
     books: Array.isArray(books) ? books.map((b) => ({ ...b })) : [],
     totalBooks: typeof totalBooks === 'number' ? totalBooks : 0,
     currentPage: typeof currentPage === 'number' && currentPage > 0 ? currentPage : 1,
@@ -268,12 +304,14 @@ export async function getBookListSnapshot() {
 /** Remove one book from the cached list snapshot (e.g. after cancel/delete). */
 export async function removeBookFromListSnapshot(bookId) {
   const snap = await getBookListSnapshot();
-  if (!snap?.books?.length) return;
+  const source = snap?.allBooks || snap?.books || [];
+  if (!source.length) return;
   const idStr = String(bookId);
-  const filtered = snap.books.filter((b) => b && String(b.id) !== idStr);
-  if (filtered.length === snap.books.length) return;
+  const filtered = source.filter((b) => b && String(b.id) !== idStr);
+  if (filtered.length === source.length) return;
   await putBookListSnapshot({
-    books: filtered,
+    books: [],
+    allBooks: filtered,
     totalBooks: Math.max(0, (snap.totalBooks || filtered.length) - 1),
     currentPage: snap.currentPage || 1,
   });

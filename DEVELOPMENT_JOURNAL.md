@@ -2,7 +2,13 @@
 
 Chronological log of meaningful implementation work: decisions, behavior changes, and where to look in the codebase. Agents and humans should **read relevant sections before** planning or changing related code, and **append an entry after** non-trivial work.
 
-## How to write an entry
+## 2026-07-03 — Offline book list pagination
+
+- **What:** Book list pagination works offline by accumulating books across online page fetches into `allBooks` in the IndexedDB snapshot, then client-slicing cached rows when offline. Rename/delete stay disabled offline; banner copy updated.
+- **Why:** Offline mode previously showed one flat merged list with pagination disabled; users with many books could not browse cached pages without a connection.
+- **Where:** `frontend/src/utils/offlineBookCache.js`, `frontend/src/pages/BookList.js`
+- **Notes:** Only pages visited while online are cached; offline page count reflects cached books, not server total.
+
 
 Use a reverse-chronological list (newest first). Each entry should be short and include:
 
