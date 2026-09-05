@@ -464,7 +464,12 @@ function calculatePageBoundaries(markdown, targetCharsPerPage) {
   return boundaries;
 }
 
-function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavBarScrollSync = null } = {}) {
+function BookView({
+  setNavBarExtra = null,
+  navBarActiveScrollRef = null,
+  bumpNavBarScrollSync = null,
+  mobileChromeHidden = false,
+} = {}) {
   const { bookId } = useParams();
   const [bookData, setBookData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -573,26 +578,23 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
 
   const getTrackedScrollContainers = useCallback(() => {
     const outer = bookPaneContainerRef.current;
-    const inner = viewMode === 'guide' ? guideScrollContainerRef.current : null;
-    const containers = [...new Set([outer, inner].filter(Boolean))];
-    return { outer, inner, containers };
+    const inner = guideScrollContainerRef.current;
+    if (viewMode === 'guide') {
+      const active = inner || outer;
+      return { outer, inner, active, containers: active ? [active] : [] };
+    }
+    return { outer, inner: null, active: outer, containers: outer ? [outer] : [] };
   }, [viewMode]);
 
   const getEffectiveScrollState = useCallback(() => {
-    const { outer, inner, containers } = getTrackedScrollContainers();
-    if (containers.length === 0) {
+    const { active, containers } = getTrackedScrollContainers();
+    if (!active || containers.length === 0) {
       return null;
     }
-    const top = Math.max(...containers.map((el) => el.scrollTop || 0));
-    const maxScroll = Math.max(
-      ...containers.map((el) => Math.max(0, (el.scrollHeight || 0) - (el.clientHeight || 0))),
-    );
-    const active =
-      viewMode === 'guide'
-        ? (inner && inner.scrollHeight > inner.clientHeight ? inner : (outer || inner))
-        : outer;
+    const top = active.scrollTop || 0;
+    const maxScroll = Math.max(0, (active.scrollHeight || 0) - (active.clientHeight || 0));
     return { top, maxScroll, active, containers };
-  }, [getTrackedScrollContainers, viewMode]);
+  }, [getTrackedScrollContainers]);
 
   const updateScrollToTopVisibility = useCallback(() => {
     const state = getEffectiveScrollState();
@@ -2199,21 +2201,30 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
   }, []);
 
   useLayoutEffect(() => {
-    if (!navBarMergeScrollRef || !bumpNavBarScrollSync) {
+    if (!navBarActiveScrollRef || !bumpNavBarScrollSync) {
       return undefined;
     }
-    const want = viewMode === 'guide' && isMobileView;
-    const next = want ? guideScrollContainerRef.current : null;
-    const prev = navBarMergeScrollRef.current;
-    navBarMergeScrollRef.current = next;
+    let next = null;
+    if (isMobileView) {
+      next = viewMode === 'guide'
+        ? guideScrollContainerRef.current
+        : bookPaneContainerRef.current;
+    }
+    const prev = navBarActiveScrollRef.current;
+    navBarActiveScrollRef.current = next;
     if (prev !== next) {
       bumpNavBarScrollSync();
     }
-    return undefined;
+    return () => {
+      if (navBarActiveScrollRef.current) {
+        navBarActiveScrollRef.current = null;
+        bumpNavBarScrollSync();
+      }
+    };
   }, [
     viewMode,
     isMobileView,
-    navBarMergeScrollRef,
+    navBarActiveScrollRef,
     bumpNavBarScrollSync,
     guideLoading,
     readingRoadmap,
@@ -4127,7 +4138,10 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
                 document.body,
               )}
 
-              <div className="book-pane-body" ref={bookPaneContainerRef}>
+              <div
+                className={`book-pane-body${viewMode === 'guide' ? ' book-pane-body--guide-scroll' : ''}`}
+                ref={bookPaneContainerRef}
+              >
               {viewMode === 'guide' ? (
                 <ReadingGuidePane
                   roadmap={readingRoadmap}
@@ -4171,6 +4185,7 @@ function BookView({ setNavBarExtra = null, navBarMergeScrollRef = null, bumpNavB
                   scrollContainerRef={guideScrollContainerRef}
                   scrollPositionToRestore={guideScrollToRestoreOnBack ?? guideScrollPositionByPage[currentPage] ?? 0}
                   hideHeader={isMobileView && viewMode === 'guide'}
+                  mobileChromeHidden={mobileChromeHidden}
                   embedInMainArea={true}
                   focusItemId={guideReturnItemId}
                   onRoadmapReturnFocusDone={handleRoadmapReturnFocusDone}

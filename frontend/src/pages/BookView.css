@@ -51,6 +51,9 @@
   overflow-x: hidden;
   padding: 20px;
   box-sizing: border-box;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
 }
 
 
@@ -1051,6 +1054,11 @@
 
   .main-content-area { /* This wraps Book and Note panes */
     flex-direction: column; /* Stack Book and Note panes if both are visible (though usually one is an overlay) */
+  }
+
+  .book-pane-body.book-pane-body--guide-scroll {
+    overflow: hidden;
+    padding: 0;
   }
   
   .book-pane-controls-header {

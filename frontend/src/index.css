@@ -32,10 +32,6 @@ body {
 @media (max-width: 768px) {
   .app-content-shell {
     padding-top: 55px;
-    transition: padding-top 0.3s ease;
-  }
-  html[data-mobile-navbar-hidden="1"] .app-content-shell {
-    padding-top: 0;
   }
 }
 

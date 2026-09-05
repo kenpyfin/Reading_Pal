@@ -2,6 +2,12 @@
 
 Chronological log of meaningful implementation work: decisions, behavior changes, and where to look in the codebase. Agents and humans should **read relevant sections before** planning or changing related code, and **append an entry after** non-trivial work.
 
+## 2026-07-12 — Mobile scroll and unified header hide
+
+- **What:** Stabilized mobile Book View scrolling with a single active scroller per mode (guide: `.reading-guide-content` only; original: `.book-pane-body`), fixed shell `padding-top: 55px` without animation on navbar hide, and a shared hysteresis scroll-chrome controller (`mobileScrollChrome.js`) scoped to the active reader container. NavBar hide now drives guide actions bar hide together via `mobileChromeHidden`. Added touch scroll CSS (`overscroll-behavior: contain`, `-webkit-overflow-scrolling: touch`).
+- **Why:** Nested scrollers, animated padding-top on hide, and document-wide scroll listeners caused uneven scrolling, position jumps, and split chrome (NavBar hid while guide actions scrolled away).
+- **Where:** `frontend/src/utils/mobileScrollChrome.js`, `frontend/src/components/NavBar.js`, `frontend/src/App.js`, `frontend/src/pages/BookView.js`, `frontend/src/pages/BookView.css`, `frontend/src/components/ReadingGuidePane.js`, `frontend/src/components/ReadingGuidePane.css`, `frontend/src/index.css`
+
 ## 2026-07-03 — Offline book list pagination
 
 - **What:** Book list pagination works offline by accumulating books across online page fetches into `allBooks` in the IndexedDB snapshot, then client-slicing cached rows when offline. Rename/delete stay disabled offline; banner copy updated.

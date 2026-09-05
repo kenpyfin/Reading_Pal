@@ -1,28 +1,10 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import ThemeToggle from './ThemeToggle';
+import { createScrollChromeController } from '../utils/mobileScrollChrome';
 import './NavBar.css';
 
 const MOBILE_MAX_WIDTH = 768;
-const SCROLL_DELTA_THRESHOLD = 6;
-
-function scrollEventTargetKey(target) {
-  if (target === document || target === document.documentElement || target === document.body) {
-    return document.documentElement;
-  }
-  return target;
-}
-
-function getScrollTopFromScrollEvent(event) {
-  const { target } = event;
-  if (target === document || target === document.documentElement || target === document.body) {
-    return window.pageYOffset || document.documentElement.scrollTop || 0;
-  }
-  if (target && typeof target.scrollTop === 'number') {
-    return target.scrollTop;
-  }
-  return null;
-}
 
 function NavBar({
   onLogout,
@@ -30,8 +12,9 @@ function NavBar({
   hidden = false,
   disableMobileScrollHide = false,
   extra = null,
-  mergeScrollContainerRef = null,
-  mergeScrollEpoch = 0,
+  activeScrollContainerRef = null,
+  activeScrollEpoch = 0,
+  onChromeHiddenChange = null,
   themeOverride = null,
   effectiveTheme = 'light',
   onToggle,
@@ -39,87 +22,75 @@ function NavBar({
 }) {
   const navigate = useNavigate();
   const [mobileNavHidden, setMobileNavHidden] = useState(false);
+  const onChromeHiddenChangeRef = useRef(onChromeHiddenChange);
+  onChromeHiddenChangeRef.current = onChromeHiddenChange;
+
   const isMobileViewport = useCallback(
     () => typeof window !== 'undefined' && window.innerWidth <= MOBILE_MAX_WIDTH,
     [],
   );
 
-  const applyScrollDelta = useCallback((event, lastScrollTopByTarget, setHidden) => {
-    const scrollTop = getScrollTopFromScrollEvent(event);
-    if (scrollTop === null) {
-      return;
-    }
-    const key = scrollEventTargetKey(event.target);
-    const prevTop = lastScrollTopByTarget.has(key)
-      ? lastScrollTopByTarget.get(key)
-      : scrollTop;
-    lastScrollTopByTarget.set(key, scrollTop);
-    const delta = scrollTop - prevTop;
-    if (scrollTop <= 0) {
-      setHidden(false);
-      return;
-    }
-    if (delta > SCROLL_DELTA_THRESHOLD) {
-      setHidden(true);
-    } else if (delta < -SCROLL_DELTA_THRESHOLD) {
-      setHidden(false);
-    }
+  const handleHiddenChange = useCallback((nextHidden) => {
+    setMobileNavHidden(nextHidden);
+    onChromeHiddenChangeRef.current?.(nextHidden);
   }, []);
 
   useEffect(() => {
     if (hidden || disableMobileScrollHide) {
       setMobileNavHidden(false);
+      onChromeHiddenChangeRef.current?.(false);
       return undefined;
     }
 
-    const lastScrollTopByTarget = new Map();
+    if (!isMobileViewport()) {
+      setMobileNavHidden(false);
+      onChromeHiddenChangeRef.current?.(false);
+      return undefined;
+    }
 
-    const onScroll = (event) => {
-      if (!isMobileViewport()) {
-        return;
+    const controller = createScrollChromeController({
+      onHiddenChange: handleHiddenChange,
+    });
+
+    const attach = () => {
+      const el = activeScrollContainerRef?.current;
+      if (!el) {
+        controller.reset();
+        return undefined;
       }
-      applyScrollDelta(event, lastScrollTopByTarget, setMobileNavHidden);
+
+      const onScroll = (event) => {
+        if (!isMobileViewport()) return;
+        controller.onScroll(event, el);
+      };
+
+      el.addEventListener('scroll', onScroll, { passive: true });
+      return () => {
+        el.removeEventListener('scroll', onScroll);
+      };
     };
+
+    let detach = attach();
 
     const onResize = () => {
       if (!isMobileViewport()) {
-        setMobileNavHidden(false);
+        controller.reset();
       }
     };
 
-    const scrollListenerOptions = { capture: true, passive: true };
-    document.addEventListener('scroll', onScroll, scrollListenerOptions);
     window.addEventListener('resize', onResize);
     return () => {
-      document.removeEventListener('scroll', onScroll, scrollListenerOptions);
+      if (detach) detach();
       window.removeEventListener('resize', onResize);
-    };
-  }, [isMobileViewport, hidden, disableMobileScrollHide, applyScrollDelta]);
-
-  useEffect(() => {
-    if (hidden || disableMobileScrollHide || !isMobileViewport() || !extra || !mergeScrollContainerRef) {
-      return undefined;
-    }
-    const lastScrollTopByTarget = new Map();
-    const onMergedScroll = (event) => {
-      applyScrollDelta(event, lastScrollTopByTarget, setMobileNavHidden);
-    };
-    const el = mergeScrollContainerRef.current;
-    if (!el) {
-      return undefined;
-    }
-    el.addEventListener('scroll', onMergedScroll, { passive: true });
-    return () => {
-      el.removeEventListener('scroll', onMergedScroll);
+      controller.reset();
     };
   }, [
     hidden,
     disableMobileScrollHide,
     isMobileViewport,
-    extra,
-    mergeScrollContainerRef,
-    mergeScrollEpoch,
-    applyScrollDelta,
+    activeScrollContainerRef,
+    activeScrollEpoch,
+    handleHiddenChange,
   ]);
 
   useEffect(() => {

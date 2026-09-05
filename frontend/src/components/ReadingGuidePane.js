@@ -4,27 +4,6 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import './ReadingGuidePane.css';
 
-const MOBILE_MAX_WIDTH = 768;
-const SCROLL_DELTA_THRESHOLD = 30;
-
-function scrollEventTargetKey(target) {
-  if (target === document || target === document.documentElement || target === document.body) {
-    return document.documentElement;
-  }
-  return target;
-}
-
-function getScrollTopFromScrollEvent(event) {
-  const { target } = event;
-  if (target === document || target === document.documentElement || target === document.body) {
-    return window.pageYOffset || document.documentElement.scrollTop || 0;
-  }
-  if (target && typeof target.scrollTop === 'number') {
-    return target.scrollTop;
-  }
-  return null;
-}
-
 function countItems(items) {
   let count = 0;
   const walk = (nodes) => {
@@ -555,6 +534,7 @@ const ReadingGuidePane = ({
   focusItemId = null,
   onRoadmapReturnFocusDone,
   hideHeader = false,
+  mobileChromeHidden = false,
 }) => {
   const paneRef = useRef(null);
   const [selectedGraphImage, setSelectedGraphImage] = useState(null);
@@ -562,7 +542,6 @@ const ReadingGuidePane = ({
   const [showNewGuideModal, setShowNewGuideModal] = useState(false);
   const [newGuideName, setNewGuideName] = useState('');
   const [newGuideRequirements, setNewGuideRequirements] = useState('');
-  const [mobileHeaderHidden, setMobileHeaderHidden] = useState(false);
   const [overflowOpen, setOverflowOpen] = useState(false);
   const overflowRef = useRef(null);
 
@@ -570,70 +549,6 @@ const ReadingGuidePane = ({
   const activeGuideSummary = guidesList.find((g) => g.guide_id === activeGuideId);
   const isBulkRoadmapRunning = !!roadmapBulkJob;
   const actionsBusy = isLoading || isGenerating || isBulkRoadmapRunning;
-
-  const isMobileViewport = useCallback(
-    () => typeof window !== 'undefined' && window.innerWidth <= MOBILE_MAX_WIDTH,
-    [],
-  );
-
-  useEffect(() => {
-    if ((!embedInMainArea && !isVisible) || hideHeader) {
-      setMobileHeaderHidden(false);
-    }
-  }, [embedInMainArea, isVisible, hideHeader]);
-
-  useEffect(() => {
-    if (hideHeader) {
-      return undefined;
-    }
-    const lastScrollTopByTarget = new Map();
-
-    const onScroll = (event) => {
-      if (!isMobileViewport()) {
-        return;
-      }
-      if (!embedInMainArea && !isVisible) {
-        return;
-      }
-      const container = scrollContainerRef?.current;
-      if (!container || event.target !== container) {
-        return;
-      }
-      const scrollTop = getScrollTopFromScrollEvent(event);
-      if (scrollTop === null) {
-        return;
-      }
-      const key = scrollEventTargetKey(event.target);
-      const prevTop = lastScrollTopByTarget.has(key)
-        ? lastScrollTopByTarget.get(key)
-        : scrollTop;
-      lastScrollTopByTarget.set(key, scrollTop);
-      const delta = scrollTop - prevTop;
-      if (scrollTop <= 0) {
-        setMobileHeaderHidden(false);
-        return;
-      }
-      if (delta > SCROLL_DELTA_THRESHOLD) {
-        setMobileHeaderHidden(true);
-      } else if (delta < -SCROLL_DELTA_THRESHOLD) {
-        setMobileHeaderHidden(false);
-      }
-    };
-
-    const onResize = () => {
-      if (!isMobileViewport()) {
-        setMobileHeaderHidden(false);
-      }
-    };
-
-    const scrollListenerOptions = { capture: true, passive: true };
-    document.addEventListener('scroll', onScroll, scrollListenerOptions);
-    window.addEventListener('resize', onResize);
-    return () => {
-      document.removeEventListener('scroll', onScroll, scrollListenerOptions);
-      window.removeEventListener('resize', onResize);
-    };
-  }, [isMobileViewport, embedInMainArea, isVisible, scrollContainerRef, hideHeader]);
 
   const mustExpandIds = useMemo(() => {
     if (!focusItemId || !roadmap?.items?.length) return null;
@@ -880,11 +795,13 @@ const ReadingGuidePane = ({
     <div className={`reading-guide-pane ${isVisible ? 'visible' : ''} ${embedInMainArea ? 'reading-guide-pane-embed' : ''}`} ref={paneRef}>
       <div className="reading-guide-content" ref={scrollContainerRef}>
         {hideHeader ? (
-          <div className="reading-guide-actions reading-guide-actions--below-merged-nav">
+          <div
+            className={`reading-guide-actions reading-guide-actions--below-merged-nav${mobileChromeHidden ? ' chrome-hidden' : ''}`}
+          >
             {roadmapActionsInner}
           </div>
         ) : (
-          <div className={`reading-guide-top-container ${mobileHeaderHidden ? 'top-hidden' : ''}`}>
+          <div className="reading-guide-top-container">
             <div className="reading-guide-header">
               <h3>Reading Roadmap</h3>
               <div className="reading-guide-header-actions">

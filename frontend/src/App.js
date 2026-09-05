@@ -46,8 +46,9 @@ function App() {
   const [isAdmin, setIsAdmin] = useState(false);
 
   const [navBarExtra, setNavBarExtra] = useState(null);
-  const navBarMergeScrollRef = useRef(null);
+  const navBarActiveScrollRef = useRef(null);
   const [navBarScrollEpoch, setNavBarScrollEpoch] = useState(0);
+  const [mobileChromeHidden, setMobileChromeHidden] = useState(false);
   const bumpNavBarScrollSync = useCallback(() => setNavBarScrollEpoch((n) => n + 1), []);
 
   const [themeOverride, setThemeOverride] = useState(() => getStoredThemeOverride());
@@ -141,8 +142,9 @@ function App() {
             onLogout={handleLogout}
             isAdmin={isAdmin}
             extra={navBarExtra}
-            mergeScrollContainerRef={navBarMergeScrollRef}
-            mergeScrollEpoch={navBarScrollEpoch}
+            activeScrollContainerRef={navBarActiveScrollRef}
+            activeScrollEpoch={navBarScrollEpoch}
+            onChromeHiddenChange={setMobileChromeHidden}
             {...themeToggleProps}
           />
         )}
@@ -169,8 +171,9 @@ function App() {
                 <Route path="/book/:bookId" element={(
                     <BookView
                       setNavBarExtra={setNavBarExtra}
-                      navBarMergeScrollRef={navBarMergeScrollRef}
+                      navBarActiveScrollRef={navBarActiveScrollRef}
                       bumpNavBarScrollSync={bumpNavBarScrollSync}
+                      mobileChromeHidden={mobileChromeHidden}
                     />
                   )}
                   /> />
@@ -190,8 +193,9 @@ function App() {
                 <Route path="/book/:bookId" element={(
                     <BookView
                       setNavBarExtra={setNavBarExtra}
-                      navBarMergeScrollRef={navBarMergeScrollRef}
+                      navBarActiveScrollRef={navBarActiveScrollRef}
                       bumpNavBarScrollSync={bumpNavBarScrollSync}
+                      mobileChromeHidden={mobileChromeHidden}
                     />
                   )}
                   /> />

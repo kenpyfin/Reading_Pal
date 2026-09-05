@@ -279,6 +279,9 @@
   min-height: 0; /* Let flex item shrink so overflow-y applies here; otherwise the outer book pane scrolls only */
   font-size: 0.9em; /* Adjust base font size for guide content */
   line-height: 1.5;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
 }
 
 .reading-guide-inner-content {
@@ -1188,9 +1191,19 @@
 /* Appended for mobile merged NavBar + guide (see apply_navbar_guide_merge.py) */
 @media (max-width: 768px) {
   .reading-guide-actions--below-merged-nav {
+    position: sticky;
+    top: 0;
+    z-index: 100;
     flex-shrink: 0;
     background-color: var(--color-bg-elevated);
     border-bottom: 1px solid var(--color-border-subtle);
+    transition: transform 0.3s ease, opacity 0.3s ease;
+  }
+
+  .reading-guide-actions--below-merged-nav.chrome-hidden {
+    transform: translateY(-100%);
+    opacity: 0;
+    pointer-events: none;
   }
 
   .reading-guide-pane-embed .reading-guide-actions--below-merged-nav {
