@@ -41,6 +41,13 @@ Use a reverse-chronological list (newest first). Each entry should be short and 
 
 <!-- New entries go below this comment, newest first. -->
 
+## 2026-09-05 — Reading guide prompts: articulation + full-scope cards
+
+- **What:** Redesigned whole-book roadmap generation prompts (Pass 1 segmentation + Pass 2 card fill) so cards stay highly granular and knowledge-complete as a book surrogate, while preserving the author's tone, vocabulary, and craft of articulation. Extended the same stance to page-level structured guides, per-card chat, Author Shortcut, Outsider Guide, and custom-angle framing. Raised card JSON `max_output_tokens` to 5120 for denser takeaways.
+- **Why:** Generic mentor summaries were flattening authorial art; readers still need detailed cards they can consume instead of the full book, and want to learn how the author articulates ideas.
+- **Where:** `backend/services/llm_service.py`
+- **Notes:** Schema/UI unchanged (`ReadingGuideItem` / `ReadingGuidePane`). Regenerate an existing guide to pick up the new prompts.
+
 ## 2026-07-02 — Reading guide empty state: fix misplaced actions
 
 - **What:** Right-aligned the ⋯ overflow trigger in the guide toolbar (`margin-left: auto`). Replaced the text-only empty roadmap message with a centered empty state: primary **Generate roadmap** button, optional **New guide…**, and a short hint for overflow actions.

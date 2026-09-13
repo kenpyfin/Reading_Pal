@@ -521,19 +521,19 @@ Reformat the following markdown:
             return {"sections": [], "document_structure_map": {}}
 
         brevity_instruction = {
-            "summary": "For each section provide: 1) key_takeaway: one sentence capturing the main idea; 2) rewritten_content: 2-4 bullet points OR 1-3 sentences. Be concise.",
-            "comprehensive": "For each section provide: 1) key_takeaway: one sentence main idea; 2) rewritten_content: a condensed rewrite preserving key information, in simpler language when appropriate.",
-            "quick_reference": "For each section provide: 1) key_takeaway: one sentence main idea; 2) rewritten_content: one line only (one short sentence or phrase).",
+            "summary": "For each section provide: 1) key_takeaway: one sentence capturing the main idea in the author's tone and vocabulary; 2) rewritten_content: 2-4 bullet points OR 1-3 sentences that preserve the author's diction and nuance. Be concise but not dumbed-down.",
+            "comprehensive": "For each section provide: 1) key_takeaway: one sentence main idea in the author's register; 2) rewritten_content: a condensed rewrite that preserves key information, the author's terms of art, tone, and intellectual nuance—do not simplify into generic paraphrase.",
+            "quick_reference": "For each section provide: 1) key_takeaway: one sentence main idea; 2) rewritten_content: one line only (one short sentence or phrase), keeping the author's key terms when possible.",
         }.get(guide_type, "For each section provide: 1) key_takeaway: one sentence main idea; 2) rewritten_content: 2-4 bullet points OR 1-3 sentences. Be concise.")
 
-        system_prompt = f"""You are an expert reading assistant. Your task is to create a READING GUIDE that helps readers quickly absorb the main ideas of a book. The guide is a replacement for skimming—readers use it to grasp the content fast, then click through to the original text when they want to go deeper.
+        system_prompt = f"""You are an expert reading assistant and stylistic mentor. Your task is to create a READING GUIDE that helps readers absorb the full substance of a book while learning how the author articulates ideas. The guide is a replacement for skimming—readers use it to grasp the content fast, then click through to the original text when they want to go deeper. Preserve the author's tone, vocabulary, and intellectual nuance; do not flatten into generic summary language.
 
 CONTEXT:
 - Book: "{book_title}"
 - This is page {page_number} of {total_pages}
 
 INPUT:
-The following content is pre-segmented by headings. Each section has a title and content. Your job is to summarize each section concisely.
+The following content is pre-segmented by headings. Each section has a title and content. Your job is to summarize each section concisely while retaining the author's craft of articulation.
 
 TASK:
 {brevity_instruction}
@@ -851,12 +851,14 @@ Return ONLY valid JSON, no other text."""
             return (
                 f"\n\nREADER'S CUSTOM ANGLE: {req}\n"
                 "Shape pillar boundaries and titles to serve this angle while still grounding every pillar "
-                "in the manuscript's actual structure and content."
+                "in the manuscript's actual structure and content. Do not drop substantive ideas that fall "
+                "outside the angle—keep full knowledge coverage; only reframe emphasis and naming."
             )
         return (
             f"\n\nREADER'S CUSTOM ANGLE: {req}\n"
-            "Frame purpose, takeaway, reading_summary, and bullets through this lens; "
-            "remain strictly grounded in SOURCE TEXT."
+            "Frame purpose, takeaway, reading_summary, bullets, and thought_process through this lens; "
+            "remain strictly grounded in SOURCE TEXT. Preserve the author's vocabulary, tone, and "
+            "articulation craft while serving the angle—do not flatten or omit core claims."
         )
 
     async def _build_semantic_reading_guide_items(
@@ -885,14 +887,17 @@ Return ONLY valid JSON, no other text."""
         segmentation_system = (
             "You are the book's structural architect. Your job is to reveal the manuscript's LOGICAL ARCHITECTURE in high fidelity. "
             "Create a comprehensive, high-resolution set of movements, arcs, or argumentative pillars—capturing the full depth of the book's structure. "
+            "The resulting card roadmap must be granular enough that a reader can consume the cards instead of the whole book "
+            "and still receive the full scope of knowledge—every essential idea, distinction, argument step, lesson, and case. "
             "Each segment is an architectural pillar: name it for the role it plays in the whole (e.g. stakes, turn, synthesis), "
             "but prioritize specificity and detail. "
-            "Split pillars whenever a new distinct idea, sub-topic, lesson, or story begins. "
+            "Split pillars whenever a new distinct idea, sub-topic, lesson, argumentative move, or story begins. "
             "Only group adjacent headings when they are strictly part of the exact same narrow point. "
             "Headings and chapter breaks are strong signals for pillar boundaries; use them as primary guides unless they are clearly repetitive layout noise (like page numbers or headers/footers). "
             "CRITICAL: Preserve the core narrative and all instructional content. Only discard absolute 'Parse Noise' and 'Boilerplate Fragments' that provide zero value (e.g., page numbers, repetitive author/book names that appear on every page, or ISBN metadata). "
             "If a section has very little standalone content, keep it as its own pillar unless it is obvious layout noise (for example repeated headers/footers or page labels). "
-            "Do not omit section IDs that contain actual book content, however brief."
+            "Do not omit section IDs that contain actual book content, however brief. "
+            "Anchor pillar titles in the author's own logic, terms, and rhetorical movements—not generic TOC labels."
             + self._custom_angle_prompt_block(custom_requirements, for_segmentation=True)
         )
         segmentation_user = (
@@ -912,10 +917,11 @@ Return ONLY valid JSON, no other text."""
             "  ]\n"
             "}\n"
             "Rules: preserve reading order; every substantive section id must appear in exactly one segment; "
-            "Aim for high granularity—every distinct sub-topic, lesson, or logical movement should be its own pillar. "
+            "Aim for high granularity—every distinct sub-topic, lesson, case study, or logical movement should be its own pillar. "
             "Do NOT group independent ideas just to keep the list small. We prefer a long, detailed list of pillars over a condensed one. "
             "If in doubt, preserve the section as a separate pillar rather than merging it. "
-            'Anchor titles in the author\'s logic, not the table of contents.'
+            "The card list must be a complete knowledge surrogate for the book: do not collapse multiple lessons into one pillar. "
+            "Anchor titles in the author's logic and diction, not the table of contents."
         )
         seg_data = await self._generate_guide_json(segmentation_system, segmentation_user, max_output_tokens=12288)
         raw_segments = seg_data.get("segments", []) if seg_data else []
@@ -949,19 +955,31 @@ Return ONLY valid JSON, no other text."""
                 continue
 
             card_system = (
-                "You are an experienced reading mentor sitting beside the reader—warm, clear, and substantive. "
-                "No filler, no generic study-guide boilerplate. Ground every sentence in the SOURCE TEXT. "
-                "You MUST keep two different roles explicit at all times: "
-                "(1) purpose = the signpost: why this stretch of the book matters for the reader's map of the whole work—orientation, stakes, or pivot; "
-                "(2) takeaway = the substance: what the text actually establishes, argues, or unfolds here—claims, developments, payoffs the reader should carry forward. "
-                "Purpose answers 'why read this now'; takeaway answers 'what do I leave with'. "
-                "Takeaway must be DETAILED and SUBSTANTIVE (3-5 sentences). Cite specific concepts, steps, or evidence found in the text. "
-                "Avoid generic summaries. If the author gives 3 rules, mention the rules. If they tell a story, mention the lesson. "
-                "Takeaway should be materially more concrete than purpose. "
-                "If the source text is non-substantive or purely metadata that slipped through filtering, do not hallucinate a deep meaning; "
-                "instead, provide a very brief, honest description or leave the fields empty. "
-                "If you find yourself repeating the same general advice for multiple thin segments, stop. "
-                "Only provide a takeaway if the text offers specific, new information."
+                "You are a master educator and stylistic mentor sitting beside the reader. "
+                "This card is a standalone knowledge unit: a reader who never opens the original passage "
+                "must still leave with the full substance of what the author teaches here. "
+                "Treat the reader as a language and rhetoric apprentice who wants to learn how this author "
+                "articulates ideas—word choice, tone, cadence, framing, and line of thought. "
+                "Ground every sentence in the SOURCE TEXT. No filler, no generic study-guide boilerplate. "
+                "PRESERVE AUTHORSHIP: mirror the author's register (philosophical, polemical, poetic, "
+                "contemplative, urgent, analytical, witty, etc.), keep their terms of art, metaphors, "
+                "and distinctive diction. Do not flatten nuance into corporate paraphrase. "
+                "FORBIDDEN openers and habits: 'The author explains…', 'In this section…', "
+                "'Key takeaways include…', 'It is important to note…', or any dumbed-down synonym swap "
+                "that erases the author's craft. "
+                "Field roles (keep them distinct): "
+                "(1) purpose = signpost: why this stretch matters in the arc of the whole work; "
+                "(2) takeaway = full substance the reader must carry forward—claims, mechanisms, "
+                "distinctions, evidence, and developments, written with the author's intellectual depth "
+                "and vocabulary (4–6 rich sentences; if the author gives 3 rules, name the rules); "
+                "(3) reading_summary = how to read AND how to observe the author's articulation craft "
+                "(tone shifts, metaphor, syntactic cadence, framing moves); "
+                "(4) reading_bullets = comprehensive specific points so no essential idea is lost; "
+                "(5) thought_process = the author's arc of articulation (premise → tension → "
+                "illustration/evidence → resolution); "
+                "(6) quote = verbatim sentences that best show the author's stylistic and rhetorical mastery. "
+                "If the source is non-substantive metadata, be brief and honest—do not invent depth. "
+                "Only provide a takeaway when the text offers specific, new information."
                 + self._custom_angle_prompt_block(custom_requirements, for_segmentation=False)
             )
             card_user = (
@@ -971,20 +989,22 @@ Return ONLY valid JSON, no other text."""
                 f"SOURCE TEXT:\n{source_text}\n\n"
                 "Return JSON only:\n"
                 '{\n'
-                '  "title": "refined card title (may match segment title)",\n'
-                '  "purpose": "one signpost sentence in mentor voice: why this segment matters in the arc of the book",\n'
-                '  "takeaway": "3–5 detailed sentences: the specific substance—detailed claims, reasoning moves, or developments the passage delivers. Be concrete.",\n'
-                '  "reading_summary": "1–2 sentences: how to read this segment—pace, focus, or what to notice (actionable)",\n'
-                '  "reading_bullets": ["specific bullet 1", "specific bullet 2", "specific bullet 3", "specific bullet 4", "specific bullet 5"],\n'
-                '  "thought_process": ["optional reasoning step 1", "step 2"],\n'
-                '  "quote": "verbatim 1–3 sentence quote from source",\n'
+                '  "title": "refined card title anchored in the author\'s logic and diction",\n'
+                '  "purpose": "1–2 signpost sentences: why this segment matters in the arc of the book",\n'
+                '  "takeaway": "4–6 detailed sentences: exhaustive substance—claims, mechanisms, distinctions, evidence—in the author\'s tone and vocabulary. A reader should not need the original for core knowledge.",\n'
+                '  "reading_summary": "1–2 sentences: how to read this segment and what to notice in the author\'s craft of articulation",\n'
+                '  "reading_bullets": ["specific point 1", "specific point 2", "specific point 3", "specific point 4", "specific point 5", "specific point 6"],\n'
+                '  "thought_process": ["step 1: opening premise or move", "step 2: tension, turn, or complication", "step 3: evidence or illustration", "step 4: resolution or payoff"],\n'
+                '  "quote": "verbatim 1–3 sentence quote chosen for literary beauty, rhetorical power, or signature articulation",\n'
                 '  "reference_paragraph": "optional longer excerpt for context"\n'
                 "}\n"
+                "reading_bullets: provide 4–6 concrete bullets covering every essential rule, distinction, fact, or signature phrasing. "
+                "thought_process: provide 3–5 progressive steps tracing how the author builds the idea. "
                 "If a field has no good value, use an empty string or []. "
                 "Always fill purpose and takeaway when the source supports it; make them clearly different in role even if themes overlap."
             )
 
-            card_data = await self._generate_guide_json(card_system, card_user, max_output_tokens=4096)
+            card_data = await self._generate_guide_json(card_system, card_user, max_output_tokens=5120)
             if not card_data:
                 excerpt = (source_text[:260] + "...") if len(source_text) > 260 else source_text
                 card_data = {
@@ -1059,9 +1079,10 @@ Return ONLY valid JSON, no other text."""
             )
 
         system_prompt = (
-            "You are a reading-map assistant. "
+            "You are a reading-map assistant and stylistic mentor. "
             "Write one concise purpose sentence per heading node. "
-            "Purpose should describe why the section matters to understanding the book."
+            "Purpose should describe why the section matters to understanding the book, "
+            "using language that respects the author's tone and terms when they appear in the snippet."
         )
         user_prompt = (
             "Return JSON only with this shape:\n"
@@ -1170,10 +1191,14 @@ Return ONLY valid JSON, no other text."""
 
         excerpt = (source_excerpt or "")[:10000]
         system_prompt = (
-            "You are a warm, substantive reading mentor helping the reader understand one section of a book. "
+            "You are a warm, substantive reading mentor and stylistic guide helping the reader understand "
+            "one section of a book. Treat the reader as a language and rhetoric apprentice: when useful, "
+            "illuminate the author's word choice, tone, rhetorical moves, and how the argument is articulated— "
+            "without losing factual substance. "
             "Answer using only the SOURCE EXCERPT and SECTION CONTEXT below. "
             "If the answer is not supported by those materials, say so honestly. "
-            "Do not invent quotes or facts. Keep replies focused and conversational.\n\n"
+            "Do not invent quotes or facts. Keep replies focused and conversational. "
+            "Preserve the author's terms of art when explaining ideas.\n\n"
             f"SECTION CONTEXT:\n{card_context}\n\n"
             f"SOURCE EXCERPT:\n{excerpt}"
         )
@@ -1281,9 +1306,12 @@ Return ONLY valid JSON, no other text."""
         target_word_count = int(source_word_count * 0.30)
         system_prompt = (
             "You are rewriting your own passage as the original author. "
-            "Produce an Author Shortcut that is about 30% of the source passage length while preserving the same claims, perspective, and tone. "
-            "Keep the author's point of view and rhetorical stance, but remove repetition and non-essential detail. "
+            "Produce an Author Shortcut that is about 30% of the source passage length while preserving "
+            "the same claims, perspective, tone, cadence, and signature diction. "
+            "Keep the author's point of view, rhetorical stance, metaphors, and terms of art; "
+            "remove only repetition and non-essential detail. "
             "Do not switch to editor commentary, meta explanation, or study-guide voice. "
+            "Do not flatten nuance or swap the author's precise language for generic paraphrase. "
             "Do not add new facts, examples, or interpretations not supported by the source."
         )
         user_prompt = (
@@ -1292,7 +1320,8 @@ Return ONLY valid JSON, no other text."""
             f"TARGET WORD COUNT (~30%): {target_word_count}\n\n"
             "SOURCE PASSAGE:\n"
             f"{trimmed_source}\n\n"
-            "Write an 'Author Shortcut' that is close to the target word count and easy to consume quickly. "
+            "Write an 'Author Shortcut' that is close to the target word count and easy to consume quickly, "
+            "while still sounding like the original author. "
             "Prefer a single concise paragraph in 3-6 sentences. "
             "Return only the rewritten passage text."
         )
@@ -1346,11 +1375,13 @@ Return ONLY valid JSON, no other text."""
         target_word_count = int(source_word_count * 0.40)
         system_prompt = (
             "You are rewriting your own passage as the original author, but for a reader who is completely new to this topic. "
-            "Write an Outsider Guide that keeps the author's voice, perspective, and core claims, while making the ideas easy for a first-time reader to follow. "
+            "Write an Outsider Guide that keeps the author's voice, perspective, core claims, and signature diction, "
+            "while making the ideas easy for a first-time reader to follow. "
             "Preserve factual meaning from the source passage. "
             "Keep the same authorial stance and tone; do not switch to editor or teacher meta voice. "
             "Assume zero prior topic exposure. "
-            "Explain specialized terms in plain language when needed. "
+            "Explain specialized terms in plain language when needed, but keep the author's key terms of art "
+            "so the reader still learns how the author names and articulates ideas. "
             "Prefer concrete, direct wording over abstract shorthand. "
             "Remove repetition and non-essential detail. "
             "Do not add facts, examples, or interpretations not supported by the source. "
