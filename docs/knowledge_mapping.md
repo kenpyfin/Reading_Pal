@@ -43,6 +43,18 @@ During the **Mentor Pass** (where the LLM generates the "Guide Card" for a pilla
 
 This ensures that if a fragment does slip through the previous layers, the resulting card is either empty or clearly identified as non-substantive, rather than being filled with "hallucinated depth."
 
+### Mentor Pass field model (Option A)
+
+Always-visible card body uses three orthogonal fields (full substance lives in Author Shortcut / Outsider Guide on demand):
+
+| UI label | Field | Job |
+|---|---|---|
+| Signpost | `purpose` | Why this stretch matters in the book’s arc (1–2 sentences) |
+| Read along | `thought_process` | Author’s moves in order (3–5 verb/move steps; primary guide) |
+| Carry forward | `takeaway` | Residue only (2–3 sentences max) |
+
+Anti-duplication: do not repeat the same claim across the three fields; thread steps are moves, not mini-summaries; takeaway compresses the thread’s payoff rather than retelling it. `reading_summary` / `reading_bullets` are legacy and no longer generated.
+
 ## Implementation Details
 
 - **Backend Logic**: `backend/services/knowledge_mapper.py`

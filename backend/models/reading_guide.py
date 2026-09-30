@@ -61,8 +61,14 @@ class ReadingGuideItem(BaseModel):
     """A single item in the whole-book reading roadmap (tree node)."""
     id: str = Field(..., description="Unique ID for progress tracking (UUID or slug)")
     title: str = Field(..., description="Section title from document")
-    takeaway: Optional[str] = Field(None, description="Short description or key takeaway from LLM")
-    thought_process: Optional[List[str]] = Field(None, description="Reasoning steps for understanding this section")
+    takeaway: Optional[str] = Field(
+        None,
+        description="Carry-forward residue — 2–3 sentences max; not a full substance dump",
+    )
+    thought_process: Optional[List[str]] = Field(
+        None,
+        description="Read-along steps — author's rhetorical/argumentative moves in order",
+    )
     alternative_reading: Optional[str] = Field(
         None,
         description="Short rewrite in the source author's style to help quick comprehension",
@@ -87,8 +93,14 @@ class ReadingGuideItem(BaseModel):
         None,
         description="Word count of the generated Outsider Guide text",
     )
-    reading_summary: Optional[str] = Field(None, description="Quick 1-2 sentence absorption summary for this section")
-    reading_bullets: Optional[List[str]] = Field(None, description="Short bullet points for quick reading absorption")
+    reading_summary: Optional[str] = Field(
+        None,
+        description="Deprecated (legacy; no longer generated). Pre–Option A absorption summary.",
+    )
+    reading_bullets: Optional[List[str]] = Field(
+        None,
+        description="Deprecated (legacy; no longer generated). Pre–Option A quick points.",
+    )
     start_offset: int = Field(..., description="Character offset in original markdown where this section starts")
     end_offset: int = Field(..., description="Character offset in original markdown where this section ends")
     level: int = Field(..., description="Heading level: 1=part, 2=chapter, 3=section, etc.")
@@ -101,7 +113,10 @@ class ReadingGuideItem(BaseModel):
     graph_status: Optional[str] = Field(None, description="Graph generation status: idle|generating|ready|failed")
     graph_prompt: Optional[str] = Field(None, description="Prompt used to generate concept graph")
     hub_score: Optional[int] = Field(0, description="Cross-reference count that marks this section as a knowledge hub")
-    purpose: Optional[str] = Field(None, description="Signpost sentence for why this section matters")
+    purpose: Optional[str] = Field(
+        None,
+        description="Signpost — why this stretch matters in the book's arc (1–2 sentences)",
+    )
 
 
 class ReadingGuide(BaseModel):

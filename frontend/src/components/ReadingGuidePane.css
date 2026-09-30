@@ -617,11 +617,13 @@
 }
 
 .roadmap-takeaway-block {
-  margin: 0 0 8px 16px;
+  margin: 4px 0 8px 16px;
 }
 
 .roadmap-takeaway-body {
-  line-height: 1.55;
+  line-height: 1.45;
+  font-size: 0.9em;
+  color: var(--color-text-subtle);
 }
 
 .roadmap-reading-summary-block,
@@ -630,18 +632,20 @@
 }
 
 .roadmap-thought-process {
-  margin: 8px 0 10px 16px;
-  padding: 8px 10px;
-  background: var(--color-bg-hover);
+  margin: 6px 0 10px 16px;
+  padding: 10px 12px 10px;
+  background: linear-gradient(180deg, var(--color-info-bg) 0%, var(--color-bg-hover) 100%);
+  border: 1px solid var(--color-info-bg);
+  border-left: 4px solid var(--color-primary);
   border-radius: 6px;
-  border: 1px solid var(--color-bg-hover);
+  box-shadow: 0 1px 4px rgba(13, 110, 253, 0.12);
 }
 
 .roadmap-thought-steps {
   margin: 6px 0 0 1.1em;
   padding: 0;
-  line-height: 1.45;
-  font-size: 0.88em;
+  line-height: 1.5;
+  font-size: 0.95em;
   color: var(--color-text);
 }
 
@@ -741,6 +745,7 @@
 }
 
 .roadmap-reading-prominent {
+  /* Legacy "How to read" block — unused under Option A; kept for dead-CSS tolerance */
   margin: 6px 0 10px 16px;
   padding: 10px 12px 10px;
   background: linear-gradient(180deg, var(--color-info-bg) 0%, var(--color-bg-hover) 100%);

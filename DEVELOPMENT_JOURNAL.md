@@ -39,6 +39,13 @@ Use a reverse-chronological list (newest first). Each entry should be short and 
 
 ## Entries
 
+## 2026-09-14 — Reading guide Option A (Signpost / Read along / Carry forward)
+
+- **What:** Refactored Mentor Pass prompts and UI so card body is orientation + read-along + residue: Signpost (`purpose`), Read along (`thought_process`, primary), Carry forward (`takeaway`, ≤3 sentences). Stopped generating `reading_summary` / `reading_bullets` (fields kept for API compat; hidden in UI). Softened “standalone knowledge unit” pressure; full substance stays in Author Shortcut / Outsider Guide. Rebuilt card-chat context around the three fields. Preserved Author Shortcut / Outsider Guide token-budget hotfix (thinking_budget=0, higher max_output_tokens, MAX_TOKENS retry).
+- **Why:** Card body was competing as a third summary; Option A makes each always-visible block one job and demotes takeaway to residue.
+- **Where:** `backend/services/llm_service.py`, `backend/models/reading_guide.py`, `frontend/src/components/ReadingGuidePane.js`, `frontend/src/components/ReadingGuidePane.css`, `docs/knowledge_mapping.md`, `.cursor-task.reading-guide-option-a.md`
+- **Notes:** Regenerate a guide to pick up new card shape. Pre–Option A saved guides still load; legacy summary/bullets are hidden. No DB migration.
+
 <!-- New entries go below this comment, newest first. -->
 
 ## 2026-09-05 — Reading guide prompts: articulation + full-scope cards

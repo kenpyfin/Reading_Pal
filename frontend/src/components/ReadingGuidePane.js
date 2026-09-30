@@ -266,8 +266,6 @@ function RoadmapCard({
   const takeawayRaw = typeof item.takeaway === 'string' ? item.takeaway.trim() : item.takeaway;
   const takeawayText = takeawayRaw && String(takeawayRaw).trim();
   const showTakeaway = !!takeawayText;
-  const hasReadingSummary = !!(item.reading_summary && String(item.reading_summary).trim());
-  const hasReadingBullets = Array.isArray(item.reading_bullets) && item.reading_bullets.length > 0;
   const showThoughtProcess =
     Array.isArray(item.thought_process) &&
     item.thought_process.length > 0 &&
@@ -334,39 +332,9 @@ function RoadmapCard({
         </div>
       )}
 
-      {showDetails && (hasReadingSummary || hasReadingBullets) && (
-        <div className="roadmap-reading roadmap-reading-prominent">
-          <h5 className="roadmap-subtitle roadmap-reading-heading">How to read this segment</h5>
-          {hasReadingSummary && (
-            <div className="roadmap-reading-summary-block">
-              <span className="roadmap-field-label">Summary</span>
-              <p className="roadmap-reading-summary">{item.reading_summary}</p>
-            </div>
-          )}
-          {hasReadingBullets && (
-            <div className="roadmap-reading-bullets-block">
-              <span className="roadmap-field-label">Quick points</span>
-              <ul className="roadmap-reading-bullets">
-                {item.reading_bullets.map((bullet, idx) => (
-                  <li key={`${item.id}-reading-${idx}`}>{bullet}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
-      )}
-
-      {showDetails && showTakeaway && (
-        <div className="roadmap-takeaway-block guide-section-content">
-          <span className="roadmap-field-label">Takeaway</span>
-          <div className="roadmap-takeaway-body">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.takeaway}</ReactMarkdown>
-          </div>
-        </div>
-      )}
       {showDetails && showThoughtProcess && (
         <div className="roadmap-thought-process">
-          <span className="roadmap-field-label">Follow the thread</span>
+          <span className="roadmap-field-label">Read along</span>
           <ol className="roadmap-thought-steps">
             {item.thought_process.map((step, idx) => (
               <li key={`${item.id}-tp-${idx}`}>{step}</li>
@@ -374,6 +342,20 @@ function RoadmapCard({
           </ol>
         </div>
       )}
+
+      {showDetails && showTakeaway && (
+        <div className="roadmap-takeaway-block guide-section-content">
+          <span className="roadmap-field-label">Carry forward</span>
+          <div className="roadmap-takeaway-body">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.takeaway}</ReactMarkdown>
+          </div>
+        </div>
+      )}
+
+      {showDetails && (item.preview_text || item.key_quote) && (
+        <blockquote className="roadmap-quote">{item.preview_text || item.key_quote}</blockquote>
+      )}
+
       {showDetails && typeof item.alternative_reading === 'string' && item.alternative_reading.trim() && (
         <details className="roadmap-alternative-reading">
           <summary>Author Shortcut</summary>
@@ -399,9 +381,6 @@ function RoadmapCard({
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.outsider_guide}</ReactMarkdown>
           </div>
         </details>
-      )}
-      {showDetails && (item.preview_text || item.key_quote) && (
-        <blockquote className="roadmap-quote">{item.preview_text || item.key_quote}</blockquote>
       )}
 
       {showDetails && (

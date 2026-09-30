@@ -856,7 +856,7 @@ Return ONLY valid JSON, no other text."""
             )
         return (
             f"\n\nREADER'S CUSTOM ANGLE: {req}\n"
-            "Frame purpose, takeaway, reading_summary, bullets, and thought_process through this lens; "
+            "Frame purpose, thought_process, and takeaway through this lens; "
             "remain strictly grounded in SOURCE TEXT. Preserve the author's vocabulary, tone, and "
             "articulation craft while serving the angle—do not flatten or omit core claims."
         )
@@ -956,10 +956,11 @@ Return ONLY valid JSON, no other text."""
 
             card_system = (
                 "You are a master educator and stylistic mentor sitting beside the reader. "
-                "This card is a standalone knowledge unit: a reader who never opens the original passage "
-                "must still leave with the full substance of what the author teaches here. "
-                "Treat the reader as a language and rhetoric apprentice who wants to learn how this author "
-                "articulates ideas—word choice, tone, cadence, framing, and line of thought. "
+                "This card body is orientation + read-along + residue—not a third full summary of the passage. "
+                "Full articulation and knowledge-surrogate depth live in Author Shortcut / Outsider Guide "
+                "(generated on demand); do not dump exhaustive substance into the always-visible fields. "
+                "Treat the reader as a language and rhetoric apprentice who wants to track how this author "
+                "moves—word choice, tone, cadence, framing, and line of thought. "
                 "Ground every sentence in the SOURCE TEXT. No filler, no generic study-guide boilerplate. "
                 "PRESERVE AUTHORSHIP: mirror the author's register (philosophical, polemical, poetic, "
                 "contemplative, urgent, analytical, witty, etc.), keep their terms of art, metaphors, "
@@ -967,17 +968,20 @@ Return ONLY valid JSON, no other text."""
                 "FORBIDDEN openers and habits: 'The author explains…', 'In this section…', "
                 "'Key takeaways include…', 'It is important to note…', or any dumbed-down synonym swap "
                 "that erases the author's craft. "
-                "Field roles (keep them distinct): "
-                "(1) purpose = signpost: why this stretch matters in the arc of the whole work; "
-                "(2) takeaway = full substance the reader must carry forward—claims, mechanisms, "
-                "distinctions, evidence, and developments, written with the author's intellectual depth "
-                "and vocabulary (4–6 rich sentences; if the author gives 3 rules, name the rules); "
-                "(3) reading_summary = how to read AND how to observe the author's articulation craft "
-                "(tone shifts, metaphor, syntactic cadence, framing moves); "
-                "(4) reading_bullets = comprehensive specific points so no essential idea is lost; "
-                "(5) thought_process = the author's arc of articulation (premise → tension → "
-                "illustration/evidence → resolution); "
-                "(6) quote = verbatim sentences that best show the author's stylistic and rhetorical mastery. "
+                "Field roles (orthogonal—one job each): "
+                "(1) purpose (Signpost) = Why am I here? Arc only: why this stretch matters in the book. "
+                "1–2 sentences. No claims list, no how-to-read instructions. "
+                "(2) thought_process (Read along) = What do I track as I read? 3–5 steps; each step is a "
+                "verb/move (opens with…, complicates with…, pays off by…). Optional craft hint may trail "
+                "a step after an em dash. Steps are NOT mini-summaries of conclusions. "
+                "(3) takeaway (Carry forward) = What do I keep when I leave? 2–3 sentences MAX. "
+                "Residue/compression of payoff already earned in the thread—not a new substance dump. "
+                "No claim that isn’t already earned in a thread step. Forbidden: 4–6 exhaustive substance "
+                "sentences (that role belongs to Author Shortcut). "
+                "(4) quote = verbatim sentences that best show the author's stylistic and rhetorical mastery. "
+                "ANTI-DUPLICATION: Do not repeat the same noun phrase or claim across purpose, "
+                "thought_process, and takeaway. Thread steps = moves, not restated conclusions. "
+                "Takeaway = compression of the thread’s payoff, not a retell. "
                 "If the source is non-substantive metadata, be brief and honest—do not invent depth. "
                 "Only provide a takeaway when the text offers specific, new information."
                 + self._custom_angle_prompt_block(custom_requirements, for_segmentation=False)
@@ -990,18 +994,17 @@ Return ONLY valid JSON, no other text."""
                 "Return JSON only:\n"
                 '{\n'
                 '  "title": "refined card title anchored in the author\'s logic and diction",\n'
-                '  "purpose": "1–2 signpost sentences: why this segment matters in the arc of the book",\n'
-                '  "takeaway": "4–6 detailed sentences: exhaustive substance—claims, mechanisms, distinctions, evidence—in the author\'s tone and vocabulary. A reader should not need the original for core knowledge.",\n'
-                '  "reading_summary": "1–2 sentences: how to read this segment and what to notice in the author\'s craft of articulation",\n'
-                '  "reading_bullets": ["specific point 1", "specific point 2", "specific point 3", "specific point 4", "specific point 5", "specific point 6"],\n'
-                '  "thought_process": ["step 1: opening premise or move", "step 2: tension, turn, or complication", "step 3: evidence or illustration", "step 4: resolution or payoff"],\n'
+                '  "purpose": "1–2 signpost sentences: why this stretch matters in the book\'s arc (no claims list)",\n'
+                '  "thought_process": ["opens with…", "complicates with…", "illustrates by…", "pays off by…"],\n'
+                '  "takeaway": "2–3 sentences max: residue to carry forward—compression of the thread\'s payoff, not a retell",\n'
                 '  "quote": "verbatim 1–3 sentence quote chosen for literary beauty, rhetorical power, or signature articulation",\n'
                 '  "reference_paragraph": "optional longer excerpt for context"\n'
                 "}\n"
-                "reading_bullets: provide 4–6 concrete bullets covering every essential rule, distinction, fact, or signature phrasing. "
-                "thought_process: provide 3–5 progressive steps tracing how the author builds the idea. "
+                "thought_process: provide 3–5 progressive verb/move steps (not mini-summaries). "
+                "takeaway: 2–3 sentences maximum; compress, do not dump. "
+                "Do not include reading_summary or reading_bullets. "
                 "If a field has no good value, use an empty string or []. "
-                "Always fill purpose and takeaway when the source supports it; make them clearly different in role even if themes overlap."
+                "Always fill purpose and thought_process when the source supports it; keep the three roles clearly distinct."
             )
 
             card_data = await self._generate_guide_json(card_system, card_user, max_output_tokens=5120)
@@ -1012,8 +1015,6 @@ Return ONLY valid JSON, no other text."""
                     "purpose": "",
                     "takeaway": excerpt,
                     "thought_process": [],
-                    "reading_summary": (source_text[:220] + "...") if len(source_text) > 220 else source_text,
-                    "reading_bullets": [],
                     "quote": "",
                     "reference_paragraph": source_text[:900],
                 }
@@ -1023,15 +1024,9 @@ Return ONLY valid JSON, no other text."""
                 thought_process = []
             thought_process = [str(step).strip() for step in thought_process if str(step).strip()][:5]
 
-            reading_bullets = card_data.get("reading_bullets") or []
-            if not isinstance(reading_bullets, list):
-                reading_bullets = []
-            reading_bullets = [str(b).strip() for b in reading_bullets if str(b).strip()][:8]
-
             purpose = (card_data.get("purpose") or "").strip() or None
             takeaway = (card_data.get("takeaway") or card_data.get("key_idea") or "").strip() or None
-
-            reading_summary = (card_data.get("reading_summary") or "").strip() or None
+            # Option A: never persist reading_summary/bullets on new cards (ignore if model returns them).
 
             reference_sentence = self._extract_first_meaningful_sentence(source_text)
             key_quote = (card_data.get("quote") or "").strip() or reference_sentence or ""
@@ -1046,8 +1041,8 @@ Return ONLY valid JSON, no other text."""
                     purpose=purpose,
                     takeaway=takeaway,
                     thought_process=thought_process or None,
-                    reading_summary=reading_summary,
-                    reading_bullets=reading_bullets or None,
+                    reading_summary=None,
+                    reading_bullets=None,
                     key_quote=key_quote or None,
                     preview_text=preview_text,
                     start_offset=start_offset,
@@ -1169,21 +1164,34 @@ Return ONLY valid JSON, no other text."""
             logger.warning("Card chat skipped: no guide Gemini client available.")
             return None
 
-        bullets = card.get("reading_bullets") or []
-        if isinstance(bullets, list):
-            bullets_text = "\n".join(f"- {b}" for b in bullets if str(b).strip())
+        thought_steps = card.get("thought_process") or []
+        if isinstance(thought_steps, list):
+            thread_text = "\n".join(
+                f"{i}. {s}" for i, s in enumerate(thought_steps, 1) if str(s).strip()
+            )
         else:
-            bullets_text = ""
+            thread_text = ""
 
         card_context = (
             f'BOOK: "{book_title}"\n'
             f'SECTION: "{card.get("title", "Section")}"\n'
-            f'Purpose: {card.get("purpose") or "—"}\n'
-            f'Takeaway: {card.get("takeaway") or "—"}\n'
-            f'Reading summary: {card.get("reading_summary") or "—"}\n'
-            f'Quick points:\n{bullets_text or "—"}\n'
+            f'Signpost (purpose): {card.get("purpose") or "—"}\n'
+            f'Read along (thought_process):\n{thread_text or "—"}\n'
+            f'Carry forward (takeaway): {card.get("takeaway") or "—"}\n'
             f'Quote/preview: {card.get("key_quote") or card.get("preview_text") or "—"}\n'
         )
+        legacy_summary = (card.get("reading_summary") or "").strip()
+        legacy_bullets = card.get("reading_bullets") or []
+        if isinstance(legacy_bullets, list):
+            legacy_bullets_text = "\n".join(f"- {b}" for b in legacy_bullets if str(b).strip())
+        else:
+            legacy_bullets_text = ""
+        if legacy_summary or legacy_bullets_text:
+            card_context += "Legacy fields (pre–Option A; only when present):\n"
+            if legacy_summary:
+                card_context += f"  reading_summary: {legacy_summary}\n"
+            if legacy_bullets_text:
+                card_context += f"  reading_bullets:\n{legacy_bullets_text}\n"
         if guide_custom_requirements and str(guide_custom_requirements).strip():
             card_context += (
                 f"\nGuide reading angle: {str(guide_custom_requirements).strip()}\n"
@@ -1312,7 +1320,9 @@ Return ONLY valid JSON, no other text."""
             "remove only repetition and non-essential detail. "
             "Do not switch to editor commentary, meta explanation, or study-guide voice. "
             "Do not flatten nuance or swap the author's precise language for generic paraphrase. "
-            "Do not add new facts, examples, or interpretations not supported by the source."
+            "Do not add new facts, examples, or interpretations not supported by the source. "
+            "Always finish every sentence; never stop mid-word or mid-clause. "
+            "A complete coherent rewrite is more important than hitting the target length exactly."
         )
         user_prompt = (
             f"CARD TITLE: {card_title}\n\n"
@@ -1327,14 +1337,36 @@ Return ONLY valid JSON, no other text."""
         )
 
         try:
+            # Gemini 3.x counts thinking tokens against max_output_tokens.
+            # Disable thinking so the full budget is available for visible text.
+            max_tokens = 4096 if source_word_count < 2500 else 8192
             response = await client.aio.models.generate_content(
                 model=model_name,
                 contents=user_prompt,
                 config=types.GenerateContentConfig(
                     system_instruction=system_prompt,
-                    max_output_tokens=1024,
+                    max_output_tokens=max_tokens,
+                    thinking_config=types.ThinkingConfig(thinking_budget=0),
                 ),
             )
+            finish_reason = None
+            candidates = getattr(response, "candidates", None) or []
+            if candidates:
+                finish_reason = getattr(candidates[0], "finish_reason", None)
+            if finish_reason is not None and "MAX_TOKENS" in str(finish_reason).upper():
+                logger.warning(
+                    "Author shortcut hit MAX_TOKENS (budget=%s); retrying once with higher budget.",
+                    max_tokens,
+                )
+                response = await client.aio.models.generate_content(
+                    model=model_name,
+                    contents=user_prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_prompt,
+                        max_output_tokens=max(max_tokens, 8192),
+                        thinking_config=types.ThinkingConfig(thinking_budget=0),
+                    ),
+                )
             response_text = self._remove_think_tags(response.text if response and response.text else "").strip()
             if response_text.startswith("```"):
                 first_newline = response_text.find("\n")
@@ -1385,6 +1417,8 @@ Return ONLY valid JSON, no other text."""
             "Prefer concrete, direct wording over abstract shorthand. "
             "Remove repetition and non-essential detail. "
             "Do not add facts, examples, or interpretations not supported by the source. "
+            "Always finish every sentence; never stop mid-word or mid-clause. "
+            "A complete coherent rewrite is more important than hitting the target length exactly. "
             "Output only the final rewritten passage text with no title, bullets, or commentary."
         )
         user_prompt = (
@@ -1399,14 +1433,36 @@ Return ONLY valid JSON, no other text."""
         )
 
         try:
+            # Gemini 3.x counts thinking tokens against max_output_tokens.
+            # Disable thinking so the full budget is available for visible text.
+            max_tokens = 4096 if source_word_count < 2500 else 8192
             response = await client.aio.models.generate_content(
                 model=model_name,
                 contents=user_prompt,
                 config=types.GenerateContentConfig(
                     system_instruction=system_prompt,
-                    max_output_tokens=1024,
+                    max_output_tokens=max_tokens,
+                    thinking_config=types.ThinkingConfig(thinking_budget=0),
                 ),
             )
+            finish_reason = None
+            candidates = getattr(response, "candidates", None) or []
+            if candidates:
+                finish_reason = getattr(candidates[0], "finish_reason", None)
+            if finish_reason is not None and "MAX_TOKENS" in str(finish_reason).upper():
+                logger.warning(
+                    "Outsider guide hit MAX_TOKENS (budget=%s); retrying once with higher budget.",
+                    max_tokens,
+                )
+                response = await client.aio.models.generate_content(
+                    model=model_name,
+                    contents=user_prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_prompt,
+                        max_output_tokens=max(max_tokens, 8192),
+                        thinking_config=types.ThinkingConfig(thinking_budget=0),
+                    ),
+                )
             response_text = self._remove_think_tags(response.text if response and response.text else "").strip()
             if response_text.startswith("```"):
                 first_newline = response_text.find("\n")
