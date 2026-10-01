@@ -6,7 +6,7 @@ import remarkMath from 'remark-math'; // Import remark-math
 import rehypeKatex from 'rehype-katex'; // Import rehype-katex
 import 'katex/dist/katex.min.css'; // Import KaTeX CSS
 
-const BookPane = forwardRef(({ markdownContent, imageUrls, onTextSelect, onHighlightClick, fontSize = 16, lineHeight = 1.6 }, ref) => {
+const BookPane = forwardRef(({ markdownContent, imageUrls, onTextSelect, onHighlightClick, fontSize = 18, lineHeight = 1.7 }, ref) => {
 
   const handlePaneClick = useCallback((event) => {
     let target = event.target;
@@ -130,7 +130,7 @@ const BookPane = forwardRef(({ markdownContent, imageUrls, onTextSelect, onHighl
       style={{ position: 'relative' }}
     >
       {/* Apply font size AND line height to this div which wraps the markdown content */}
-      <div style={{ fontSize: `${fontSize}px`, lineHeight: lineHeight /* Apply unitless line height */ }}> 
+      <div className="book-pane-content" style={{ fontSize: `${fontSize}px`, lineHeight: lineHeight /* Apply unitless line height */ }}> 
         {markdownContent ? (
           <ReactMarkdown
             remarkPlugins={[remarkGfm, remarkMath]} // Add remarkMath

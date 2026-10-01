@@ -141,6 +141,35 @@
   --font-reading: Georgia, 'Times New Roman', Times, serif;
 }
 
+/* Radix Themes interop tokens */
+:root,
+.radix-themes {
+  --color-page-background: var(--color-bg);
+  --color-panel-solid: var(--color-surface);
+}
+
+[data-theme='dark'] .radix-themes {
+  --color-page-background: var(--color-bg);
+  --color-panel-solid: var(--color-surface);
+}
+
+[data-theme='sepia'] .radix-themes {
+  --color-page-background: var(--color-bg);
+  --color-panel-solid: var(--color-surface);
+  --gray-1: #fbf0d9;
+  --gray-2: #f4ead8;
+  --gray-3: #efe0c8;
+  --gray-4: #e8dcc8;
+  --gray-5: #e0d4c0;
+  --gray-6: #d9c9b0;
+  --gray-7: #cbb89c;
+  --gray-8: #bba485;
+  --gray-9: #8b5e34;
+  --gray-10: #7a5528;
+  --gray-11: #6b5640;
+  --gray-12: #5f4b32;
+}
+
 html,
 body {
   background-color: var(--color-bg);

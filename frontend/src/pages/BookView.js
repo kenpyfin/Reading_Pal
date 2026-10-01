@@ -695,8 +695,8 @@ function BookView({
   const [readingGuidePaneFlexBasis, setReadingGuidePaneFlexBasis] = useState('25%'); // Initial width
 
   // --- Font Control State (moved from BookPane) ---
-  const [fontSize, setFontSize] = useState(16);
-  const [lineHeight, setLineHeight] = useState(1.6);
+  const [fontSize, setFontSize] = useState(18);
+  const [lineHeight, setLineHeight] = useState(1.7);
   const FONT_SIZE_STEP = 1;
   const MIN_FONT_SIZE = 10;
   const MAX_FONT_SIZE = 32;

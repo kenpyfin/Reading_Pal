@@ -1,5 +1,9 @@
 # Repository Guidelines
 
+## Cursor rules
+
+- Before working in this repository, read `.cursor/rules/*.mdc` and follow the applicable instructions. Apply rules marked `alwaysApply: true` to all tasks; apply other rules according to their described scope and file globs.
+
 ## Development journal
 
 - **`DEVELOPMENT_JOURNAL.md`** (repo root) records meaningful implementations and decisions. Read it when planning or changing features; append a dated entry after non-trivial work (see `.cursor/rules/development-journal.mdc`).

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { Theme } from '@radix-ui/themes';
 import './theme.css';
 import './index.css';
 import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
@@ -134,86 +135,90 @@ function App() {
     // No need to navigate here, the conditional rendering will take care of it.
   };
 
+  const radixAppearance = effectiveTheme === 'dark' ? 'dark' : 'light';
+
   return (
-    <div className="App">
-      <Router>
-        {authToken && (
-          <NavBar
-            onLogout={handleLogout}
-            isAdmin={isAdmin}
-            extra={navBarExtra}
-            activeScrollContainerRef={navBarActiveScrollRef}
-            activeScrollEpoch={navBarScrollEpoch}
-            onChromeHiddenChange={setMobileChromeHidden}
-            {...themeToggleProps}
-          />
-        )}
-        <div className="app-content-shell">
-          <Routes>
-            {!authToken ? (
-              <>
-                <Route path="/login" element={<LoginPage {...themeToggleProps} />} />
-                <Route
-                  path="/admin/login"
-                  element={<AdminLoginPage setAuthToken={handleSetAuthToken} {...themeToggleProps} />}
-                />
-                <Route
-                  path="/auth/callback"
-                  element={<AuthCallbackPage setAuthToken={handleSetAuthToken} />}
-                />
-                <Route path="*" element={<Navigate to="/login" replace />} />
-              </>
-            ) : isAdmin ? ( // Logged in and IS ADMIN
-              <>
-                <Route path="/admin/user-management" element={<UserManagementPage />} />
-                {/* Decide if admins should access these or be redirected */}
-                <Route path="/upload" element={<PdfUploadForm />} />
-                <Route path="/book/:bookId" element={(
-                    <BookView
-                      setNavBarExtra={setNavBarExtra}
-                      navBarActiveScrollRef={navBarActiveScrollRef}
-                      bumpNavBarScrollSync={bumpNavBarScrollSync}
-                      mobileChromeHidden={mobileChromeHidden}
+    <Theme accentColor="blue" grayColor="slate" radius="medium" scaling="95%" appearance={radixAppearance}>
+      <div className="App">
+        <Router>
+          {authToken && (
+            <NavBar
+              onLogout={handleLogout}
+              isAdmin={isAdmin}
+              extra={navBarExtra}
+              activeScrollContainerRef={navBarActiveScrollRef}
+              activeScrollEpoch={navBarScrollEpoch}
+              onChromeHiddenChange={setMobileChromeHidden}
+              {...themeToggleProps}
+            />
+          )}
+          <div className="app-content-shell">
+            <Routes>
+              {!authToken ? (
+                <>
+                  <Route path="/login" element={<LoginPage {...themeToggleProps} />} />
+                  <Route
+                    path="/admin/login"
+                    element={<AdminLoginPage setAuthToken={handleSetAuthToken} {...themeToggleProps} />}
+                  />
+                  <Route
+                    path="/auth/callback"
+                    element={<AuthCallbackPage setAuthToken={handleSetAuthToken} />}
+                  />
+                  <Route path="*" element={<Navigate to="/login" replace />} />
+                </>
+              ) : isAdmin ? ( // Logged in and IS ADMIN
+                <>
+                  <Route path="/admin/user-management" element={<UserManagementPage />} />
+                  {/* Decide if admins should access these or be redirected */}
+                  <Route path="/upload" element={<PdfUploadForm />} />
+                  <Route path="/book/:bookId" element={(
+                      <BookView
+                        setNavBarExtra={setNavBarExtra}
+                        navBarActiveScrollRef={navBarActiveScrollRef}
+                        bumpNavBarScrollSync={bumpNavBarScrollSync}
+                        mobileChromeHidden={mobileChromeHidden}
+                      />
+                    )}
                     />
-                  )}
-                  /> />
-                <Route path="/" element={<Navigate to="/admin/user-management" replace />} />
+                  <Route path="/" element={<Navigate to="/admin/user-management" replace />} />
 
-                {/* Redirect login routes if admin is already logged in */}
-                <Route path="/login" element={<Navigate to="/admin/user-management" replace />} />
-                <Route path="/admin/login" element={<Navigate to="/admin/user-management" replace />} />
-                <Route path="/auth/callback" element={<Navigate to="/admin/user-management" replace />} />
-                {/* Catch-all for admin, redirect to their main page */}
-                <Route path="*" element={<Navigate to="/admin/user-management" replace />} />
-              </>
-            ) : ( // Logged in and IS NOT ADMIN (regular user)
-              <>
-                <Route path="/" element={<BookList />} />
-                <Route path="/upload" element={<PdfUploadForm />} />
-                <Route path="/book/:bookId" element={(
-                    <BookView
-                      setNavBarExtra={setNavBarExtra}
-                      navBarActiveScrollRef={navBarActiveScrollRef}
-                      bumpNavBarScrollSync={bumpNavBarScrollSync}
-                      mobileChromeHidden={mobileChromeHidden}
+                  {/* Redirect login routes if admin is already logged in */}
+                  <Route path="/login" element={<Navigate to="/admin/user-management" replace />} />
+                  <Route path="/admin/login" element={<Navigate to="/admin/user-management" replace />} />
+                  <Route path="/auth/callback" element={<Navigate to="/admin/user-management" replace />} />
+                  {/* Catch-all for admin, redirect to their main page */}
+                  <Route path="*" element={<Navigate to="/admin/user-management" replace />} />
+                </>
+              ) : ( // Logged in and IS NOT ADMIN (regular user)
+                <>
+                  <Route path="/" element={<BookList />} />
+                  <Route path="/upload" element={<PdfUploadForm />} />
+                  <Route path="/book/:bookId" element={(
+                      <BookView
+                        setNavBarExtra={setNavBarExtra}
+                        navBarActiveScrollRef={navBarActiveScrollRef}
+                        bumpNavBarScrollSync={bumpNavBarScrollSync}
+                        mobileChromeHidden={mobileChromeHidden}
+                      />
+                    )}
                     />
-                  )}
-                  /> />
 
-                {/* Redirect login routes if regular user is already logged in */}
-                <Route path="/login" element={<Navigate to="/" replace />} />
-                <Route path="/admin/login" element={<Navigate to="/" replace />} /> {/* Prevent access */}
-                <Route path="/auth/callback" element={<Navigate to="/" replace />} />
-                {/* Prevent access to admin pages */}
-                <Route path="/admin/user-management" element={<Navigate to="/" replace />} />
-                {/* Catch-all for regular user, redirect to their main page */}
-                <Route path="*" element={<Navigate to="/" replace />} />
-              </>
-            )}
-          </Routes>
-        </div>
-      </Router>
-    </div>
+                  {/* Redirect login routes if regular user is already logged in */}
+                  <Route path="/login" element={<Navigate to="/" replace />} />
+                  <Route path="/admin/login" element={<Navigate to="/" replace />} /> {/* Prevent access */}
+                  <Route path="/auth/callback" element={<Navigate to="/" replace />} />
+                  {/* Prevent access to admin pages */}
+                  <Route path="/admin/user-management" element={<Navigate to="/" replace />} />
+                  {/* Catch-all for regular user, redirect to their main page */}
+                  <Route path="*" element={<Navigate to="/" replace />} />
+                </>
+              )}
+            </Routes>
+          </div>
+        </Router>
+      </div>
+    </Theme>
   );
 }
 

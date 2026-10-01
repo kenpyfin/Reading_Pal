@@ -1,5 +1,5 @@
 /* eslint-disable no-restricted-globals */
-const CACHE_NAME = 'reading-pal-shell-c4537f2';
+const CACHE_NAME = 'reading-pal-shell-9e41204';
 
 self.addEventListener('install', (event) => {
   event.waitUntil(self.skipWaiting());

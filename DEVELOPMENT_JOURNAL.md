@@ -39,6 +39,13 @@ Use a reverse-chronological list (newest first). Each entry should be short and 
 
 ## Entries
 
+## 2026-09-30 — UI overhaul Phase 1: Radix Themes foundation & reading typography
+
+- **What:** Installed `@radix-ui/themes` and `@radix-ui/react-icons`. Wrapped `<App>` with `<Theme>` providing dynamic appearance (`light` / `dark` / `sepia` interop), slate/blue palette, and compact 95% density. Added Radix Themes token interop in `theme.css`. Standardized long-form reading typography in BookView (`fontSize=18px`, `lineHeight=1.7`, `max-width: 72ch` measure for optimal reading scannability), while maintaining utilitarian compact typography (13-14px) for side/utility panes (`ReadingGuidePane`, `NotePane`).
+- **Why:** Establish a robust design system foundation for upcoming compact prompt configuration and modern split-pane UI overhaul without CSS or token conflicts.
+- **Where:** `frontend/package.json`, `frontend/src/index.js`, `frontend/src/App.js`, `frontend/src/theme.css`, `frontend/src/index.css`, `frontend/src/pages/BookView.js`, `frontend/src/pages/BookView.css`, `frontend/src/components/BookPane.js`, `frontend/src/components/ReadingGuidePane.css`, `.cursor-task.ui-overhaul-phase1.md`
+- **Notes:** Full frontend build passes cleanly.
+
 ## 2026-09-14 — Reading guide Option A (Signpost / Read along / Carry forward)
 
 - **What:** Refactored Mentor Pass prompts and UI so card body is orientation + read-along + residue: Signpost (`purpose`), Read along (`thought_process`, primary), Carry forward (`takeaway`, ≤3 sentences). Stopped generating `reading_summary` / `reading_bullets` (fields kept for API compat; hidden in UI). Softened “standalone knowledge unit” pressure; full substance stays in Author Shortcut / Outsider Guide. Rebuilt card-chat context around the three fields. Preserved Author Shortcut / Outsider Guide token-budget hotfix (thinking_budget=0, higher max_output_tokens, MAX_TOKENS retry).

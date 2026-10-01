@@ -1,5 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import '@radix-ui/themes/styles.css';
 import App from './App';
 import { runStorageMigrations, SW_RELOAD_GUARD_KEY } from './utils/storageMigrations';
 
