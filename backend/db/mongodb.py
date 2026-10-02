@@ -294,6 +294,67 @@ async def get_user_by_id(user_id: str) -> Optional[Dict[str, Any]]:
         logger.error(f"Error fetching user by ID {user_id}: {e}", exc_info=True)
         return None
 
+async def get_user_prompt_overrides(user_id: str) -> Dict[str, Optional[str]]:
+    """Per-user reading-guide prompt overrides. Missing fields mean the built-in default."""
+    user_doc = await get_user_by_id(user_id)
+    if not user_doc:
+        return {"generation_prompt": None, "format_prompt": None}
+    generation = user_doc.get("guide_generation_prompt")
+    formatting = user_doc.get("guide_format_prompt")
+    return {
+        "generation_prompt": str(generation).strip() if isinstance(generation, str) and generation.strip() else None,
+        "format_prompt": str(formatting).strip() if isinstance(formatting, str) and formatting.strip() else None,
+    }
+
+
+async def save_user_prompt_overrides(
+    user_id: str,
+    generation_prompt: Optional[str],
+    format_prompt: Optional[str],
+) -> bool:
+    """Persist prompt overrides. None unsets the field so the built-in default is used."""
+    database = get_database()
+    if database is None or not ObjectId.is_valid(user_id):
+        return False
+    set_fields: Dict[str, Any] = {"updated_at": datetime.utcnow()}
+    unset_fields: Dict[str, str] = {}
+    if generation_prompt:
+        set_fields["guide_generation_prompt"] = generation_prompt
+    else:
+        unset_fields["guide_generation_prompt"] = ""
+    if format_prompt:
+        set_fields["guide_format_prompt"] = format_prompt
+    else:
+        unset_fields["guide_format_prompt"] = ""
+    update: Dict[str, Any] = {"$set": set_fields}
+    if unset_fields:
+        update["$unset"] = unset_fields
+    try:
+        result = await database.users.update_one({"_id": ObjectId(user_id)}, update)
+        return result.matched_count == 1
+    except Exception as e:
+        logger.error(f"Error saving prompt overrides for user {user_id}: {e}", exc_info=True)
+        return False
+
+
+async def get_user_by_email(email: str) -> Optional[Dict[str, Any]]:
+    """Retrieves a user by email, case-insensitive. Does not create or modify the user."""
+    database = get_database()
+    if database is None:
+        logger.error("Database not initialized for get_user_by_email.")
+        return None
+    normalized = str(email or "").strip().lower()
+    if not normalized or "@" not in normalized:
+        return None
+    try:
+        return await database.users.find_one(
+            {"email": {"$regex": f"^{re.escape(normalized)}$", "$options": "i"}}
+        )
+    except Exception as e:
+        logger.error(f"Error fetching user by email: {e}", exc_info=True)
+        return None
+
+
 async def get_user_by_google_id(google_id: str) -> Optional[Dict[str, Any]]:
     """Retrieves a user by their Google ID."""
     database = get_database()
@@ -955,6 +1016,10 @@ def _normalize_guide_document(doc: Dict[str, Any]) -> Dict[str, Any]:
         normalized["name"] = "Reading Roadmap"
     if "custom_requirements" not in normalized:
         normalized["custom_requirements"] = None
+    if "prompt_depth" not in normalized:
+        normalized["prompt_depth"] = None
+    if "prompt_emphasis" not in normalized:
+        normalized["prompt_emphasis"] = None
     return normalized
 
 
@@ -1040,6 +1105,8 @@ async def list_reading_guides(book_id: str, user_id: str) -> List[Dict[str, Any]
                 guide_id=doc["guide_id"],
                 name=doc.get("name") or "Reading Roadmap",
                 custom_requirements=doc.get("custom_requirements"),
+                prompt_depth=doc.get("prompt_depth"),
+                prompt_emphasis=doc.get("prompt_emphasis"),
                 created_at=doc.get("created_at") or datetime.utcnow(),
                 updated_at=doc.get("updated_at") or datetime.utcnow(),
                 item_count=_count_roadmap_items(items),
@@ -1094,6 +1161,8 @@ async def create_reading_guide(
     name: str,
     items: List[Dict],
     custom_requirements: Optional[str] = None,
+    prompt_depth: Optional[str] = None,
+    prompt_emphasis: Optional[str] = None,
     enriched: bool = False,
 ) -> Optional['ReadingGuideInDB']:
     collection = get_reading_guides_roadmap_collection()
@@ -1108,6 +1177,8 @@ async def create_reading_guide(
         "guide_id": guide_id,
         "name": name,
         "custom_requirements": custom_requirements,
+        "prompt_depth": prompt_depth,
+        "prompt_emphasis": prompt_emphasis,
         "items": items,
         "enriched": enriched,
         "created_at": now,

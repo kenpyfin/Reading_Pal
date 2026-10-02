@@ -2,6 +2,41 @@
 
 Chronological log of meaningful implementation work: decisions, behavior changes, and where to look in the codebase. Agents and humans should **read relevant sections before** planning or changing related code, and **append an entry after** non-trivial work.
 
+## 2026-10-01 — Prompt settings page and markdown section breaks
+
+- **What:** Added `/settings/prompts` so a signed-in user can read and replace the default reading-guide generation prompt and card format prompt. Overrides live on the user document and apply when a guide is created or regenerated. Reader page breaks and the knowledge map now also treat plain structural title lines (Chapter, Part, Section, front matter) as section starts. PDF and in-app reformat prompts promote those lines to ATX headings.
+- **Why:** The prompts were hardcoded, and books whose extraction never emitted Markdown headings were split only by character count.
+- **Where:** `backend/services/prompt_defaults.py`, `backend/services/llm_service.py`, `backend/services/knowledge_mapper.py`, `backend/api/auth_routes.py`, `backend/api/books.py`, `backend/db/mongodb.py`, `pdf_service/app.py`, `frontend/src/pages/PromptSettingsPage.js`, `frontend/src/pages/BookView.js`, `docs/architecture.md`, `docs/knowledge_mapping.md`, `tests/test_knowledge_mapping.py`
+- **Notes:** Existing stored markdown is not rewritten, so bookmarks stay valid. Re-upload only if the prose view itself should render those titles as headings. Toolbar depth, emphasis, and custom angle are still appended after the saved prompts.
+
+## 2026-10-01 — UI overhaul Phase 3: reading guide card hierarchy
+
+- **What:** Roadmap cards now show Signpost as a title tag, Read along as a clickable accent thread, and Carry forward as a high-contrast callout. Author Shortcut and Outsider Guide sit in collapsed drawers at the bottom of the card. The toolbar progress row adds a Current jump and one dot per top-level card; the card in view is highlighted.
+- **Why:** Option A fields were present but read as equal labeled blocks. The hierarchy should make the arc, the author moves, and the residue visually distinct, and make long roadmaps easier to scan.
+- **Where:** `frontend/src/components/ReadingGuidePane.js`, `frontend/src/components/ReadingGuidePane.css`, `.cursor-task.ui-overhaul-phase3.md`
+- **Notes:** No API or prompt change. Current jumps to the first incomplete top-level card. Nested cards stay inside their parent.
+
+## 2026-10-01 — Local tester uses the existing Gmail account
+
+- **What:** `POST /api/auth/dev/login` now signs in as the existing user `lgyhz1234@gmail.com` (override with `LOCAL_DEV_LOGIN_EMAIL`) instead of creating `dev.bypass@example.com`. The login page button says **Continue as lgyhz1234@gmail**. The Admin Login link was removed from that page; `/admin/login` is unchanged.
+- **Why:** Local and LAN testing needed the real library, and the admin URL should not be advertised on the login page.
+- **Where:** `backend/auth/local_dev.py`, `backend/api/auth_routes.py`, `backend/db/mongodb.py`, `frontend/src/pages/LoginPage.js`, `docker-compose.yml`, `docs/architecture.md`, `docs/operations.md`, `tests/test_local_dev_login.py`
+- **Notes:** Lookup is by email only. The route does not create a user and does not rewrite `google_id`. Confirmed `lgyhz1234@gmail.com` already exists and is active. LAN/localhost and trusted-peer gates are unchanged.
+
+## 2026-10-01 — Dev login on the LAN address
+
+- **What:** The local-tester bypass now accepts a private LAN `Host` (this server is `10.0.1.22`), not only `localhost` / `127.0.0.1`. The login button uses the same private-IPv4 check.
+- **Why:** The app is opened at `http://10.0.1.22:3100`. The previous gate hid the button and returned 404 for that host.
+- **Where:** `backend/auth/local_dev.py`, `backend/api/auth_routes.py`, `frontend/src/pages/LoginPage.js`, `tests/test_local_dev_login.py`
+- **Notes:** Public hostnames such as `readingpal.kenpyfin.com` are still rejected. The TCP peer must still be loopback or the Docker bridge.
+
+## 2026-10-01 — Localhost login bypass
+
+- **What:** Added `POST /api/auth/dev/login`, a localhost-only session for `dev.bypass@example.com`, and a **Continue as local tester** button on the login page. The frontend container now proxies `/api` and `/images` to the backend so that button (and the rest of the app) works on port 3100.
+- **Why:** Google OAuth on localhost never reached the backend, and the registered callback is the production domain. Local UI testing needed a real user JWT without Google Cloud Console changes.
+- **Where:** `backend/auth/local_dev.py`, `backend/api/auth_routes.py`, `frontend/serve_with_proxy.js`, `frontend/src/pages/LoginPage.js`, `frontend/Dockerfile`, `docker-compose.yml`
+- **Notes:** Enabled when `ALLOW_LOCAL_DEV_LOGIN=true` (compose default). Rejects non-local Host headers and non-loopback/non-Docker-bridge peers with 404. This user is not the Google account, so the library starts empty. Set `ALLOW_LOCAL_DEV_LOGIN=false` to disable.
+
 ## 2026-07-12 — Mobile scroll and unified header hide
 
 - **What:** Stabilized mobile Book View scrolling with a single active scroller per mode (guide: `.reading-guide-content` only; original: `.book-pane-body`), fixed shell `padding-top: 55px` without animation on navbar hide, and a shared hysteresis scroll-chrome controller (`mobileScrollChrome.js`) scoped to the active reader container. NavBar hide now drives guide actions bar hide together via `mobileChromeHidden`. Added touch scroll CSS (`overscroll-behavior: contain`, `-webkit-overflow-scrolling: touch`).
@@ -38,6 +73,13 @@ Use a reverse-chronological list (newest first). Each entry should be short and 
 ---
 
 ## Entries
+
+## 2026-10-01 — UI overhaul Phase 2: compact prompt configuration
+
+- **What:** Replaced the new-guide modal with a toolbar angle capsule and `PromptConfigPopover` (Radix Popover, preset pills, custom angle, depth and emphasis). Create-guide API now accepts `prompt_depth` and `prompt_emphasis`, stores them on the guide, and injects them into segmentation and card prompts. Regenerate reuses the stored controls.
+- **Why:** Prompt angle lived in a modal and could not steer granularity or emphasis. The capsule keeps the active lens visible in the reading toolbar.
+- **Where:** `frontend/src/components/PromptConfigPopover.js`, `frontend/src/components/ReadingGuidePane.js`, `frontend/src/pages/BookView.js`, `frontend/src/utils/offlineBookCache.js`, `backend/models/reading_guide.py`, `backend/api/books.py`, `backend/db/mongodb.py`, `backend/services/llm_service.py`, `docs/architecture.md`, `tests/test_knowledge_mapping.py`
+- **Notes:** Omitted or `standard` depth leaves the existing high-granularity prompts unchanged. Compact asks for 4–6 pillars. `high_fidelity` reinforces a detailed list and does not cap pillars at 8–12, so it does not fight the knowledge-mapping substance gates. Verified `_prompt_controls_block` and create-body validation in the backend container on 2026-10-01, then reloaded frontend and backend with `./reload_dev.sh`.
 
 ## 2026-09-30 — UI overhaul Phase 1: Radix Themes foundation & reading typography
 

@@ -7,6 +7,7 @@ This document describes the current architecture as implemented in the codebase.
 ## Frontend (`frontend/`)
 
 - React 18 SPA entry: `frontend/src/index.js`
+- Container static server: `frontend/serve_with_proxy.js` serves the production build and proxies `/api` and `/images` to `host.docker.internal:${BACKEND_PORT}`, preserving the browser `Host` header.
 - Route shell and auth token wiring: `frontend/src/App.js`
 - Primary pages:
   - `frontend/src/pages/BookList.js`
@@ -15,6 +16,7 @@ This document describes the current architecture as implemented in the codebase.
   - `frontend/src/pages/AuthCallbackPage.js`
   - `frontend/src/pages/AdminLoginPage.js`
   - `frontend/src/pages/UserManagementPage.js`
+  - `frontend/src/pages/PromptSettingsPage.js` (`/settings/prompts`)
 
 Frontend calls backend endpoints under `/api/*` and renders book markdown with image URLs that are rewritten to backend app-image routes.
 
@@ -40,6 +42,8 @@ Backend is the system-of-record service for user, book, note, bookmark, and read
 - Per-guide progress in `reading_guide_progress` (also keyed by `guide_id`).
 - Per-card LLM chat threads in `reading_guide_card_chats` (`book_id`, `user_id`, `guide_id`, `card_id`).
 - API routes under `/api/books/{book_id}/reading-guides/...` (legacy `/reading-guide` aliases default guide `guide_id=default`).
+- `POST /reading-guides` accepts optional `custom_requirements`, `prompt_depth` (`compact` | `standard` | `high_fidelity`), and `prompt_emphasis` (`balanced` | `author_craft` | `takeaways`). Omitted depth and emphasis keep the existing high-granularity mentor prompts. `high_fidelity` does not cap pillar count. Compact asks segmentation for 4–6 pillars. Stored values are reused on regenerate.
+- `GET` and `PUT /api/auth/prompt-config` store optional per-user overrides of the reading-guide generation prompt and card format prompt on the user document (`guide_generation_prompt`, `guide_format_prompt`). Blank or unchanged text clears the override. Toolbar angle, depth, and emphasis are still appended when a guide is generated.
 
 ## Document Service (`pdf_service/`)
 
@@ -51,7 +55,7 @@ Backend is the system-of-record service for user, book, note, bookmark, and read
   - Determine text PDF vs scanned PDF path for PDF uploads
   - Extract text/images when available
   - Produce markdown output
-  - Optionally reformat markdown through configured LLM
+  - Optionally reformat markdown through configured LLM. The upload reformat prompt promotes plain structural titles (Chapter, Part, Section, and front/back matter) to ATX headings. The reader and roadmap also recognize those lines in markdown that was saved before that prompt change, so existing books do not need a reprocess for page breaks or guide sections.
   - Callback to backend with processing result payload
 
 ## Image Server (`image_server/`)
@@ -78,6 +82,11 @@ flowchart LR
   PDFService --> SharedStorage
   ImageServer --> SharedStorage
 ```
+
+## Authentication
+
+- User login is Google OAuth (`GET /api/auth/login/google`). The callback issues a JWT whose `user_id` claim is the Mongo user id.
+- Local testing can skip Google with `POST /api/auth/dev/login`. That route looks up the existing user `LOCAL_DEV_LOGIN_EMAIL` (default `lgyhz1234@gmail.com`) and returns the same style of user JWT. It does not create a user and does not change that account's Google id. It responds only when `ALLOW_LOCAL_DEV_LOGIN=true`, the browser `Host` is `localhost`, `127.0.0.1`, or a private LAN address (this machine is `10.0.1.22`), and the TCP peer is loopback or a Docker bridge address (`172.16.0.0/12`). Public hosts get 404. The login page shows **Continue as lgyhz1234@gmail** only on localhost and private IPv4 hosts. The admin login page stays at `/admin/login` and is not linked from the public login page.
 
 ## Request Flows
 

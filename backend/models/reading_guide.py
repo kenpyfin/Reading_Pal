@@ -7,6 +7,8 @@ from pydantic import BaseModel, Field
 LEGACY_GUIDE_ID = "default"
 MAX_READING_GUIDES_PER_BOOK = 5
 MAX_CUSTOM_REQUIREMENTS_LEN = 2000
+PromptDepth = Literal["compact", "standard", "high_fidelity"]
+PromptEmphasis = Literal["balanced", "author_craft", "takeaways"]
 MAX_CARD_CHAT_MESSAGE_LEN = 4000
 MAX_CARD_CHAT_HISTORY_FOR_LLM = 20
 
@@ -129,6 +131,14 @@ class ReadingGuide(BaseModel):
         None,
         description="Optional reader angle used when generating this guide",
     )
+    prompt_depth: Optional[PromptDepth] = Field(
+        None,
+        description="Roadmap granularity: compact (4-6 pillars), standard, or high_fidelity",
+    )
+    prompt_emphasis: Optional[PromptEmphasis] = Field(
+        None,
+        description="Card emphasis: balanced, author_craft, or takeaways",
+    )
     items: List[ReadingGuideItem] = Field(default_factory=list, description="Root-level items (tree)")
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
@@ -149,6 +159,8 @@ class ReadingGuideSummary(BaseModel):
     guide_id: str
     name: str
     custom_requirements: Optional[str] = None
+    prompt_depth: Optional[PromptDepth] = None
+    prompt_emphasis: Optional[PromptEmphasis] = None
     created_at: datetime
     updated_at: datetime
     item_count: int = 0
@@ -158,6 +170,8 @@ class ReadingGuideCreateBody(BaseModel):
     """Request body for creating a new reading guide."""
     name: Optional[str] = Field(None, max_length=120)
     custom_requirements: Optional[str] = Field(None, max_length=MAX_CUSTOM_REQUIREMENTS_LEN)
+    prompt_depth: Optional[PromptDepth] = None
+    prompt_emphasis: Optional[PromptEmphasis] = None
 
 
 class GuideChatMessage(BaseModel):

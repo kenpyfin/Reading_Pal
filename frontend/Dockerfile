@@ -33,19 +33,15 @@ ENV FRONTEND_PORT=3100
 
 WORKDIR /app
 
-# Install 'serve' to serve static files
-RUN npm install -g serve
-
 # Copy the build output from the builder stage
 # This copies the contents of /app/build from the builder stage
 # into /app/build in the current stage (since WORKDIR is /app).
 COPY --from=builder /app/build ./build
+COPY serve_with_proxy.js ./serve_with_proxy.js
 
 # Expose the port the app runs on. Uses the FRONTEND_PORT env var.
 EXPOSE ${FRONTEND_PORT}
 
-# Command to serve the app using the FRONTEND_PORT environment variable.
-# The '-s' flag is important for Single Page Applications like React.
-# 'serve' will listen on 0.0.0.0 within the container.
-# The 'sh -c' form allows environment variable substitution in the CMD.
-CMD ["sh", "-c", "serve -s build -l tcp://0.0.0.0:${FRONTEND_PORT}"]
+# Static SPA plus reverse proxy for /api and /images.
+# FRONTEND_PORT and BACKEND_PORT come from the container environment.
+CMD ["node", "serve_with_proxy.js"]

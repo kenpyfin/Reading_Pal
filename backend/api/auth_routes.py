@@ -9,13 +9,27 @@ from pydantic import BaseModel # Import BaseModel for request body
 from typing import List, Dict, Any # Import List for response model
 
 from backend.auth.auth_handler import auth_handler_instance, ACCESS_TOKEN_EXPIRE_MINUTES, get_current_admin_user # For JWT creation/validation and admin check
+from backend.auth.local_dev import (
+    is_local_browser_host,
+    is_trusted_dev_peer,
+    local_dev_login_email,
+    local_dev_login_enabled,
+)
 from backend.db.mongodb import (
     get_user_by_google_id, create_or_update_user_from_google,
     get_all_users, delete_user_by_google_id, update_user_active_status, # Added update_user_active_status
     get_total_books_count, get_total_notes_count,
-    get_book_count_for_user, get_note_count_for_user, get_user_by_id # Import get_user_by_id
+    get_book_count_for_user, get_note_count_for_user, get_user_by_id, # Import get_user_by_id
+    get_user_by_email,
+    get_user_prompt_overrides,
+    save_user_prompt_overrides,
 )
 from backend.models.user import UserCreate, User # Pydantic models
+from backend.services.prompt_defaults import (
+    DEFAULT_GUIDE_FORMAT_PROMPT,
+    DEFAULT_GUIDE_GENERATION_PROMPT,
+    stored_prompt_value,
+)
 # from backend.core.config import settings # If you re-introduce settings
 
 logger = logging.getLogger(__name__)
@@ -95,6 +109,61 @@ async def admin_login(form_data: AdminLoginRequest):
             detail="Incorrect admin username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+@router.post("/dev/login", summary="Local and private-LAN login bypass for development")
+async def local_dev_login(request: Request):
+    """Issue a normal user JWT for the configured existing account, without Google.
+
+    Refuses unless all of these hold:
+    - ALLOW_LOCAL_DEV_LOGIN=true
+    - browser Host is localhost, 127.0.0.1, or a private LAN address
+      (this server is reached at 10.0.1.22)
+    - TCP peer is loopback or the Docker bridge (the frontend proxy)
+    Public hosts get 404 so the route is not advertised.
+
+    Looks up LOCAL_DEV_LOGIN_EMAIL (default lgyhz1234@gmail.com). Does not create
+    a user and does not change that account's Google id.
+    """
+    host_header = request.headers.get("host", "")
+    forwarded_host = request.headers.get("x-forwarded-host")
+    client_host = request.client.host if request.client else None
+    if not is_local_browser_host(host_header, forwarded_host) or not is_trusted_dev_peer(client_host):
+        logger.info(
+            "Rejected local dev login. host=%s forwarded=%s peer=%s",
+            host_header,
+            forwarded_host,
+            client_host,
+        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+
+    if not local_dev_login_enabled():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Local dev login is disabled. Set ALLOW_LOCAL_DEV_LOGIN=true.",
+        )
+
+    email = local_dev_login_email()
+    user_document = await get_user_by_email(email)
+    if not user_document:
+        logger.error("Local dev login: no user found for the configured email.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="The local testing account was not found.",
+        )
+    if not user_document.get("is_active", True):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="The local testing account is inactive.",
+        )
+
+    db_user_id_str = str(user_document["_id"])
+    display_name = user_document.get("full_name") or email
+    app_token = auth_handler_instance.create_access_token(
+        data={"sub": user_document.get("email") or email, "user_id": db_user_id_str, "name": display_name}
+    )
+    logger.info("Local dev login issued a token for %s (DB ID %s).", email, db_user_id_str)
+    return {"access_token": app_token, "token_type": "bearer"}
+
 
 # --- Google OAuth login ---
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
@@ -349,4 +418,60 @@ async def delete_user_admin(google_id: str, current_admin: Dict[str, Any] = Depe
     logger.info(f"User with Google ID {google_id} deleted successfully by admin '{current_admin.get('sub')}'.")
     return None # Returns 204 No Content on success
 
-# Add more authentication routes here (e.g., register, logout, password reset)
+class PromptConfigUpdate(BaseModel):
+    generation_prompt: str = ""
+    format_prompt: str = ""
+
+
+class PromptConfigResponse(BaseModel):
+    generation_prompt: str
+    format_prompt: str
+    generation_is_custom: bool
+    format_is_custom: bool
+    default_generation_prompt: str
+    default_format_prompt: str
+
+
+def _prompt_config_payload(overrides: Dict[str, Any]) -> PromptConfigResponse:
+    generation = overrides.get("generation_prompt") or DEFAULT_GUIDE_GENERATION_PROMPT
+    formatting = overrides.get("format_prompt") or DEFAULT_GUIDE_FORMAT_PROMPT
+    return PromptConfigResponse(
+        generation_prompt=generation,
+        format_prompt=formatting,
+        generation_is_custom=bool(overrides.get("generation_prompt")),
+        format_is_custom=bool(overrides.get("format_prompt")),
+        default_generation_prompt=DEFAULT_GUIDE_GENERATION_PROMPT,
+        default_format_prompt=DEFAULT_GUIDE_FORMAT_PROMPT,
+    )
+
+
+@router.get("/prompt-config", response_model=PromptConfigResponse, summary="Current user's reading guide prompts")
+async def get_prompt_config(request: Request):
+    """Return the effective generation and format prompts, plus the built-in defaults."""
+    from backend.api.books import get_current_user_id
+
+    user_id = await get_current_user_id(request)
+    overrides = await get_user_prompt_overrides(user_id)
+    return _prompt_config_payload(overrides)
+
+
+@router.put("/prompt-config", response_model=PromptConfigResponse, summary="Update reading guide prompts")
+async def update_prompt_config(body: PromptConfigUpdate, request: Request):
+    """
+    Save per-user overrides. A blank value, or text identical to the built-in prompt, clears the override.
+    Toolbar angle, depth, and emphasis are still appended at generation time.
+    """
+    from backend.api.books import get_current_user_id
+
+    user_id = await get_current_user_id(request)
+    try:
+        generation = stored_prompt_value(body.generation_prompt, DEFAULT_GUIDE_GENERATION_PROMPT)
+        formatting = stored_prompt_value(body.format_prompt, DEFAULT_GUIDE_FORMAT_PROMPT)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    saved = await save_user_prompt_overrides(user_id, generation, formatting)
+    if not saved:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
+    return _prompt_config_payload(
+        {"generation_prompt": generation, "format_prompt": formatting}
+    )

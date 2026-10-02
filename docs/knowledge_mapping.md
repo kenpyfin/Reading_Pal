@@ -2,6 +2,10 @@
 
 This document describes the implementation logic for semantic book mapping and the multi-layer filtering strategy used to eliminate "bad" titles and non-substantive fragments (e.g., layout artifacts like "The", "One", or "Page 1").
 
+## Structural titles without Markdown headings
+
+`KnowledgeMapper._collect_headings` treats a short whole line as a section when it is a Part, Book, Volume, Chapter, Lesson, Step, or Section plus a number or roman numeral, or a front/back-matter name (Preface, Introduction, and the same set). Part and Book are level 1, Chapter and front matter are level 2, Section is level 3. A line that continues into a sentence is left as prose. Reader page breaks use the same offsets, so a page can start on that line. Upload-time PDF reformatting now promotes the same lines to real Markdown headings; books already stored keep their text and pick up the structure at read time.
+
 ## The Problem: Fragment Hallucination
 
 When processing complex or poorly parsed PDFs, layout fragments often appear as high-level headings. If the LLM (acting as a "Structural Architect") is forced to find meaning in every heading, it may hallucinate deep philosophical significance for single words or metadata, leading to a confusing and noisy reading guide.
@@ -45,7 +49,7 @@ This ensures that if a fragment does slip through the previous layers, the resul
 
 ### Mentor Pass field model (Option A)
 
-Always-visible card body uses three orthogonal fields (full substance lives in Author Shortcut / Outsider Guide on demand):
+Always-visible card body uses three orthogonal fields (full substance lives in Author Shortcut / Outsider Guide on demand). In the guide pane, Signpost is a title tag, Read along is a clickable thread, and Carry forward is a callout. Shortcut and Outsider Guide stay in collapsed drawers at the bottom of the card:
 
 | UI label | Field | Job |
 |---|---|---|

@@ -42,6 +42,26 @@ def test_knowledge_mapper_hub_score_for_internal_references():
     assert items[0].children[0].children[0].hub_score > 0
 
 
+def test_prompt_controls_leave_standard_depth_unchanged_and_do_not_cap_high_fidelity():
+    from backend.services.llm_service import LLMService
+
+    standard = LLMService._prompt_controls_block("standard", "balanced", for_segmentation=True)
+    omitted = LLMService._prompt_controls_block(None, None, for_segmentation=True)
+    assert standard == ""
+    assert omitted == ""
+
+    compact = LLMService._prompt_controls_block("compact", "balanced", for_segmentation=True)
+    assert "4\u20136 pillars" in compact
+
+    detailed = LLMService._prompt_controls_block("high_fidelity", "takeaways", for_segmentation=True)
+    assert "Do not impose a small fixed pillar cap" in detailed
+    assert "8\u201312" not in detailed
+
+    cards = LLMService._prompt_controls_block("compact", "author_craft", for_segmentation=False)
+    assert "Author craft" in cards
+    assert "purpose 1 sentence" in cards
+
+
 def test_normalize_semantic_segments_preserves_pillars_and_fills_gaps():
     """Architect path: partial LLM pillars keep semantic grouping; omitted headings get gap segments in order."""
     mapper = KnowledgeMapper()
@@ -90,7 +110,7 @@ async def test_api_generate_whole_book_reading_guide_returns_items(monkeypatch):
     async def fake_run_in_threadpool(func, *args, **kwargs):
         return "# Chapter One\nSome text.\n## Chapter Two\nMore text."
 
-    async def fake_generate_roadmap(markdown_text: str):
+    async def fake_generate_roadmap(markdown_text: str, **kwargs):
         assert "Chapter One" in markdown_text
         return [
             ReadingGuideItem(
@@ -138,3 +158,41 @@ async def test_api_generate_whole_book_reading_guide_returns_items(monkeypatch):
     assert result["items"][0]["title"] == "Chapter One"
     assert result["items"][0]["hub_score"] == 1
     assert result["items"][0]["purpose"] == "Set the foundation"
+
+
+def test_plain_chapter_lines_become_sections():
+    mapper = KnowledgeMapper()
+    markdown = (
+        "# The Book\n"
+        "A short opening that is long enough to keep.\n\n"
+        "Chapter 1\n"
+        "Never outshine the master in front of the court.\n\n"
+        "Chapter 2\n"
+        "Always say less than necessary when you answer.\n"
+    )
+    titles = [node["title"] for node in mapper.flatten_document_sections_for_roadmap(markdown)]
+    assert "Chapter 1" in titles
+    assert "Chapter 2" in titles
+    assert mapper._structural_title_level("Chapter 1 shows why this sentence is prose.") is None
+
+
+def test_page_boundary_starts_on_chapter_line():
+    body = "word " * 1600
+    markdown = body + "\nChapter 2\n" + ("tail " * 200)
+    chapter_at = markdown.index("Chapter 2")
+    boundaries = books_api._calculate_page_boundaries(markdown, 8000)
+    assert any(boundary["start"] == chapter_at for boundary in boundaries)
+
+
+def test_prompt_override_blank_uses_default_and_custom_is_stored():
+    from backend.services.prompt_defaults import (
+        DEFAULT_GUIDE_FORMAT_PROMPT,
+        DEFAULT_GUIDE_GENERATION_PROMPT,
+        resolve_prompt,
+        stored_prompt_value,
+    )
+
+    assert resolve_prompt("  ", DEFAULT_GUIDE_GENERATION_PROMPT) == DEFAULT_GUIDE_GENERATION_PROMPT
+    assert resolve_prompt(DEFAULT_GUIDE_FORMAT_PROMPT, DEFAULT_GUIDE_FORMAT_PROMPT) == DEFAULT_GUIDE_FORMAT_PROMPT
+    assert stored_prompt_value(DEFAULT_GUIDE_GENERATION_PROMPT, DEFAULT_GUIDE_GENERATION_PROMPT) is None
+    assert stored_prompt_value("Use fewer pillars.", DEFAULT_GUIDE_GENERATION_PROMPT) == "Use fewer pillars."

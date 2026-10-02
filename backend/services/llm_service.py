@@ -14,6 +14,11 @@ import re # Import re for regular expressions
 import time
 import base64
 from backend.models.reading_guide import ReadingGuideItem, MAX_CARD_CHAT_HISTORY_FOR_LLM
+from backend.services.prompt_defaults import (
+    DEFAULT_GUIDE_FORMAT_PROMPT,
+    DEFAULT_GUIDE_GENERATION_PROMPT,
+    resolve_prompt,
+)
 from backend.services.knowledge_mapper import KnowledgeMapper
 
 load_dotenv()
@@ -382,8 +387,9 @@ class LLMService:
    - Maintain logical flow between paragraphs
 
 3. **PROPER HEADING HIERARCHY:**
-   - Analyze and maintain or improve the heading structure (#, ##, ###, etc.)
-   - Ensure headings accurately reflect the content hierarchy
+   - Keep existing Markdown headings.
+   - When a whole line is a structural title but not a heading, promote it without changing its words: # for Part or Book, ## for Chapter, Lesson, Preface, Introduction, Foreword, Prologue, Epilogue, Conclusion, Afterword, or Appendix, ### for Section.
+   - A structural title starts with Chapter, Part, Book, Volume, Section, Lesson, or Step plus a number or roman numeral, or is one of those front/back-matter names. Do not promote a normal sentence.
    - Add appropriate spacing before and after headings
    - Use consistent heading styles throughout
 
@@ -861,12 +867,64 @@ Return ONLY valid JSON, no other text."""
             "articulation craft while serving the angle—do not flatten or omit core claims."
         )
 
+    @staticmethod
+    def _prompt_controls_block(
+        prompt_depth: Optional[str],
+        prompt_emphasis: Optional[str],
+        for_segmentation: bool,
+    ) -> str:
+        depth = (prompt_depth or "standard").strip()
+        emphasis = (prompt_emphasis or "balanced").strip()
+        parts = []
+        if for_segmentation:
+            if depth == "compact":
+                parts.append(
+                    "\n\nDEPTH CONTROL: Compact. Aim for 4–6 pillars total. "
+                    "Merge adjacent headings that belong to the same movement. "
+                    "Still cover every major claim of the book; do not drop whole chapters."
+                )
+            elif depth == "high_fidelity":
+                parts.append(
+                    "\n\nDEPTH CONTROL: High fidelity. Keep a detailed pillar list. "
+                    "Split whenever a new distinct idea, lesson, case, or argumentative move begins. "
+                    "Do not impose a small fixed pillar cap."
+                )
+            if emphasis == "author_craft":
+                parts.append(
+                    "\nEMPHASIS: Name pillars for the author's rhetorical moves and diction, not generic topic labels."
+                )
+            elif emphasis == "takeaways":
+                parts.append(
+                    "\nEMPHASIS: Draw pillar boundaries around distinct claims the reader should keep."
+                )
+            return "".join(parts)
+
+        if emphasis == "author_craft":
+            parts.append(
+                "\n\nEMPHASIS: Author craft. thought_process should track diction, sequence of moves, "
+                "and how claims are articulated. Keep takeaway to 2 sentences of residue."
+            )
+        elif emphasis == "takeaways":
+            parts.append(
+                "\n\nEMPHASIS: Hard takeaways. takeaway is the sharpest residue (2–3 sentences). "
+                "thought_process is a short thread of only the decisive moves (3 steps)."
+            )
+        if depth == "compact":
+            parts.append(
+                " Keep each field tight: purpose 1 sentence, thought_process 3 steps, takeaway 2 sentences."
+            )
+        return "".join(parts)
+
     async def _build_semantic_reading_guide_items(
         self,
         heading_nodes: List[Dict[str, Any]],
         book_title: str,
         full_markdown: str,
         custom_requirements: Optional[str] = None,
+        prompt_depth: Optional[str] = None,
+        prompt_emphasis: Optional[str] = None,
+        generation_prompt: Optional[str] = None,
+        format_prompt: Optional[str] = None,
     ) -> List[ReadingGuideItem]:
         """
         Two-pass semantic roadmap: LLM clusters headings into pillars, then fills guide fields per pillar.
@@ -885,20 +943,9 @@ Return ONLY valid JSON, no other text."""
         sections_block = "\n\n".join(section_lines)
 
         segmentation_system = (
-            "You are the book's structural architect. Your job is to reveal the manuscript's LOGICAL ARCHITECTURE in high fidelity. "
-            "Create a comprehensive, high-resolution set of movements, arcs, or argumentative pillars—capturing the full depth of the book's structure. "
-            "The resulting card roadmap must be granular enough that a reader can consume the cards instead of the whole book "
-            "and still receive the full scope of knowledge—every essential idea, distinction, argument step, lesson, and case. "
-            "Each segment is an architectural pillar: name it for the role it plays in the whole (e.g. stakes, turn, synthesis), "
-            "but prioritize specificity and detail. "
-            "Split pillars whenever a new distinct idea, sub-topic, lesson, argumentative move, or story begins. "
-            "Only group adjacent headings when they are strictly part of the exact same narrow point. "
-            "Headings and chapter breaks are strong signals for pillar boundaries; use them as primary guides unless they are clearly repetitive layout noise (like page numbers or headers/footers). "
-            "CRITICAL: Preserve the core narrative and all instructional content. Only discard absolute 'Parse Noise' and 'Boilerplate Fragments' that provide zero value (e.g., page numbers, repetitive author/book names that appear on every page, or ISBN metadata). "
-            "If a section has very little standalone content, keep it as its own pillar unless it is obvious layout noise (for example repeated headers/footers or page labels). "
-            "Do not omit section IDs that contain actual book content, however brief. "
-            "Anchor pillar titles in the author's own logic, terms, and rhetorical movements—not generic TOC labels."
+            resolve_prompt(generation_prompt, DEFAULT_GUIDE_GENERATION_PROMPT)
             + self._custom_angle_prompt_block(custom_requirements, for_segmentation=True)
+            + self._prompt_controls_block(prompt_depth, prompt_emphasis, for_segmentation=True)
         )
         segmentation_user = (
             f'BOOK: "{book_title}"\n\n'
@@ -955,36 +1002,9 @@ Return ONLY valid JSON, no other text."""
                 continue
 
             card_system = (
-                "You are a master educator and stylistic mentor sitting beside the reader. "
-                "This card body is orientation + read-along + residue—not a third full summary of the passage. "
-                "Full articulation and knowledge-surrogate depth live in Author Shortcut / Outsider Guide "
-                "(generated on demand); do not dump exhaustive substance into the always-visible fields. "
-                "Treat the reader as a language and rhetoric apprentice who wants to track how this author "
-                "moves—word choice, tone, cadence, framing, and line of thought. "
-                "Ground every sentence in the SOURCE TEXT. No filler, no generic study-guide boilerplate. "
-                "PRESERVE AUTHORSHIP: mirror the author's register (philosophical, polemical, poetic, "
-                "contemplative, urgent, analytical, witty, etc.), keep their terms of art, metaphors, "
-                "and distinctive diction. Do not flatten nuance into corporate paraphrase. "
-                "FORBIDDEN openers and habits: 'The author explains…', 'In this section…', "
-                "'Key takeaways include…', 'It is important to note…', or any dumbed-down synonym swap "
-                "that erases the author's craft. "
-                "Field roles (orthogonal—one job each): "
-                "(1) purpose (Signpost) = Why am I here? Arc only: why this stretch matters in the book. "
-                "1–2 sentences. No claims list, no how-to-read instructions. "
-                "(2) thought_process (Read along) = What do I track as I read? 3–5 steps; each step is a "
-                "verb/move (opens with…, complicates with…, pays off by…). Optional craft hint may trail "
-                "a step after an em dash. Steps are NOT mini-summaries of conclusions. "
-                "(3) takeaway (Carry forward) = What do I keep when I leave? 2–3 sentences MAX. "
-                "Residue/compression of payoff already earned in the thread—not a new substance dump. "
-                "No claim that isn’t already earned in a thread step. Forbidden: 4–6 exhaustive substance "
-                "sentences (that role belongs to Author Shortcut). "
-                "(4) quote = verbatim sentences that best show the author's stylistic and rhetorical mastery. "
-                "ANTI-DUPLICATION: Do not repeat the same noun phrase or claim across purpose, "
-                "thought_process, and takeaway. Thread steps = moves, not restated conclusions. "
-                "Takeaway = compression of the thread’s payoff, not a retell. "
-                "If the source is non-substantive metadata, be brief and honest—do not invent depth. "
-                "Only provide a takeaway when the text offers specific, new information."
+                resolve_prompt(format_prompt, DEFAULT_GUIDE_FORMAT_PROMPT)
                 + self._custom_angle_prompt_block(custom_requirements, for_segmentation=False)
+                + self._prompt_controls_block(prompt_depth, prompt_emphasis, for_segmentation=False)
             )
             card_user = (
                 f'BOOK: "{book_title}"\n'
@@ -1106,6 +1126,10 @@ Return ONLY valid JSON, no other text."""
         self,
         markdown_text: str,
         custom_requirements: Optional[str] = None,
+        prompt_depth: Optional[str] = None,
+        prompt_emphasis: Optional[str] = None,
+        generation_prompt: Optional[str] = None,
+        format_prompt: Optional[str] = None,
     ) -> List[ReadingGuideItem]:
         """
         Build a semantic pillar roadmap: cluster headings with an LLM, then enrich each pillar.
@@ -1129,7 +1153,14 @@ Return ONLY valid JSON, no other text."""
             return []
         book_title = self._infer_book_title(md)
         return await self._build_semantic_reading_guide_items(
-            heading_nodes, book_title, md, custom_requirements=custom_requirements
+            heading_nodes,
+            book_title,
+            md,
+            custom_requirements=custom_requirements,
+            prompt_depth=prompt_depth,
+            prompt_emphasis=prompt_emphasis,
+            generation_prompt=generation_prompt,
+            format_prompt=format_prompt,
         )
 
     async def generate_whole_book_reading_roadmap(
@@ -1138,13 +1169,24 @@ Return ONLY valid JSON, no other text."""
         book_title: str,
         full_markdown: str,
         custom_requirements: Optional[str] = None,
+        prompt_depth: Optional[str] = None,
+        prompt_emphasis: Optional[str] = None,
+        generation_prompt: Optional[str] = None,
+        format_prompt: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         Same semantic two-pass pipeline as generate_roadmap, returning plain dicts for callers
         that do not use ReadingGuideItem directly.
         """
         items = await self._build_semantic_reading_guide_items(
-            heading_nodes, book_title, full_markdown, custom_requirements=custom_requirements
+            heading_nodes,
+            book_title,
+            full_markdown,
+            custom_requirements=custom_requirements,
+            prompt_depth=prompt_depth,
+            prompt_emphasis=prompt_emphasis,
+            generation_prompt=generation_prompt,
+            format_prompt=format_prompt,
         )
         return [item.model_dump() for item in items]
 

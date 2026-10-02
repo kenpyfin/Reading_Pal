@@ -51,6 +51,9 @@ Root `.env` is loaded by services. Important variables:
   - `PDF_GEMINI_REFORMAT_TIMEOUT_MS` (per-chunk Gemini reformat HTTP timeout in ms; default `360000`)
 - Image upload security
   - `IMAGE_UPLOAD_API_KEY` (optional; enables upload auth when non-empty)
+- Auth
+  - `ALLOW_LOCAL_DEV_LOGIN` (`true` or `false`). Compose defaults this to `true` when unset. `POST /api/auth/dev/login` still returns 404 unless the browser host is `localhost`, `127.0.0.1`, or a private LAN address, and the TCP peer is loopback or the frontend container on the Docker bridge. Set `ALLOW_LOCAL_DEV_LOGIN=false` to disable the bypass entirely.
+  - `LOCAL_DEV_LOGIN_EMAIL` (default `lgyhz1234@gmail.com`). The bypass signs in as this existing user. The account must already exist; the route does not create one. Anyone who can open the local or LAN login page can enter that library while the bypass is on.
 
 ## Storage and Mounting Rules
 
@@ -91,6 +94,7 @@ When using split mode:
 - Other services use bridged networking with published ports.
 - Compose includes `extra_hosts: host.docker.internal:host-gateway` so containers can call host services.
 - PDF callback URL in compose uses `host.docker.internal:${BACKEND_PORT}/api/books/callback`.
+- The frontend container proxies `/api` and `/images` to `http://host.docker.internal:${BACKEND_PORT}` (`frontend/serve_with_proxy.js`). Local testing works at `http://localhost:3100`, `http://127.0.0.1:3100`, or a private LAN address such as `http://10.0.1.22:3100`. The local-tester button is shown only on localhost and private IPv4 hosts.
 
 ## PDF service GPU notes
 

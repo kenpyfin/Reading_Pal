@@ -68,6 +68,35 @@
   border-radius: 50%;
 }
 
+.local-dev-login-button {
+  margin-top: 12px;
+  background-color: transparent;
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  padding: 12px 25px;
+  font-size: 16px;
+  font-weight: bold;
+  border-radius: 4px;
+  cursor: pointer;
+  width: 100%;
+}
+
+.local-dev-login-button:hover:not(:disabled) {
+  background-color: var(--color-bg);
+}
+
+.local-dev-login-button:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.local-dev-login-note {
+  margin-top: 10px;
+  margin-bottom: 0;
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
 .login-error-message {
   background-color: var(--color-error-bg);
   color: var(--color-error-text);

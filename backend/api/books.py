@@ -661,14 +661,37 @@ class ReadingGuideGenerateBody(BaseModel):
 # This is crucial for consistency.
 APPROX_CHARS_PER_PAGE_FOR_GUIDE = 8000
 
+def _snap_page_end_to_heading(
+    heading_offsets: List[int],
+    page_start: int,
+    proposed_end: int,
+    target_chars_per_page: int,
+    total_length: int,
+) -> int:
+    """Prefer ending a page at the next section heading when one sits near the target length."""
+    window_lo = page_start + int(target_chars_per_page * 0.55)
+    window_hi = min(total_length, page_start + int(target_chars_per_page * 1.35))
+    if window_lo >= window_hi:
+        return proposed_end
+    candidates = [h for h in heading_offsets if page_start < h <= window_hi and h >= window_lo]
+    if not candidates:
+        return proposed_end
+    return min(candidates, key=lambda h: (abs(h - proposed_end), h))
+
+
 def _calculate_page_boundaries(markdown: str, target_chars_per_page: int) -> List[Dict[str, int]]:
     """
     Calculates page boundaries respecting word breaks, mirroring frontend logic.
+    When a markdown or plain structural heading falls near the target length, the page
+    ends at that heading so the next page starts on the section.
     """
     if not markdown:
         logger.warning("[_calculate_page_boundaries] Markdown content is invalid or empty.")
         return []
-    
+
+    from backend.services.knowledge_mapper import KnowledgeMapper
+
+    heading_offsets = KnowledgeMapper().heading_start_offsets(markdown)
     boundaries = []
     current_offset = 0
     total_length = len(markdown)
@@ -702,6 +725,10 @@ def _calculate_page_boundaries(markdown: str, target_chars_per_page: int) -> Lis
 
             if (actual_end - page_start) < min_page_chars and (total_length - page_start) > target_chars_per_page:
                 actual_end = potential_end
+
+            actual_end = _snap_page_end_to_heading(
+                heading_offsets, page_start, actual_end, target_chars_per_page, total_length
+            )
 
         if actual_end <= page_start and page_start < total_length:
             logger.warning(f"[_calculate_page_boundaries] actual_end ({actual_end}) did not advance from page_start ({page_start}). Forcing advance.")
@@ -953,12 +980,29 @@ async def _load_book_for_roadmap(book_id: str, user_id: str) -> Book:
     return book
 
 
+async def _user_guide_prompts(user_id: Optional[str]) -> Dict[str, Optional[str]]:
+    if not user_id:
+        return {"generation_prompt": None, "format_prompt": None}
+    from backend.db.mongodb import get_user_prompt_overrides
+
+    return await get_user_prompt_overrides(user_id)
+
+
 async def _generate_roadmap_items(
     full_markdown: str,
     custom_requirements: Optional[str] = None,
+    prompt_depth: Optional[str] = None,
+    prompt_emphasis: Optional[str] = None,
+    user_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
+    prompts = await _user_guide_prompts(user_id)
     roadmap_items = await llm_service.generate_roadmap(
-        full_markdown, custom_requirements=custom_requirements
+        full_markdown,
+        custom_requirements=custom_requirements,
+        prompt_depth=prompt_depth,
+        prompt_emphasis=prompt_emphasis,
+        generation_prompt=prompts.get("generation_prompt"),
+        format_prompt=prompts.get("format_prompt"),
     )
     if roadmap_items:
         return [item.model_dump() for item in roadmap_items]
@@ -1617,9 +1661,17 @@ async def create_book_reading_guide(
     custom_requirements = _sanitize_custom_requirements(
         body.custom_requirements if body else None
     )
+    prompt_depth = body.prompt_depth if body else None
+    prompt_emphasis = body.prompt_emphasis if body else None
     name = (body.name.strip() if body and body.name and body.name.strip() else None) or _default_guide_name(existing)
     full_markdown = await _load_book_markdown(book)
-    items = await _generate_roadmap_items(full_markdown, custom_requirements=custom_requirements)
+    items = await _generate_roadmap_items(
+        full_markdown,
+        custom_requirements=custom_requirements,
+        prompt_depth=prompt_depth,
+        prompt_emphasis=prompt_emphasis,
+        user_id=current_user_id,
+    )
 
     guide_id = str(uuid.uuid4())
     db_guide = await create_reading_guide(
@@ -1629,6 +1681,8 @@ async def create_book_reading_guide(
         name=name,
         items=items,
         custom_requirements=custom_requirements,
+        prompt_depth=prompt_depth,
+        prompt_emphasis=prompt_emphasis,
     )
     if not db_guide:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to save reading roadmap.")
@@ -1674,7 +1728,11 @@ async def regenerate_book_reading_guide(
     book = await _load_book_for_roadmap(book_id, current_user_id)
     full_markdown = await _load_book_markdown(book)
     items = await _generate_roadmap_items(
-        full_markdown, custom_requirements=guide.custom_requirements
+        full_markdown,
+        custom_requirements=guide.custom_requirements,
+        prompt_depth=guide.prompt_depth,
+        prompt_emphasis=guide.prompt_emphasis,
+        user_id=current_user_id,
     )
     await delete_all_card_chats_for_guide(book_id, current_user_id, guide_id)
     updated = await update_reading_guide_metadata(
@@ -1983,7 +2041,9 @@ async def generate_whole_book_reading_guide(
 
     book = await _load_book_for_roadmap(book_id, current_user_id)
     full_markdown = await _load_book_markdown(book)
-    items = await _generate_roadmap_items(full_markdown, custom_requirements=None)
+    items = await _generate_roadmap_items(
+        full_markdown, custom_requirements=None, user_id=current_user_id
+    )
     db_guide = await create_reading_guide(
         book_id=book_id,
         user_id=current_user_id,

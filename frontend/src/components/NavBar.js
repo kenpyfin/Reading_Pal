@@ -147,12 +147,18 @@ function NavBar({
             <li>
               <Link to="/upload" className="nav-link">Upload Book</Link>
             </li>
+            <li>
+              <Link to="/settings/prompts" className="nav-link">Guide prompts</Link>
+            </li>
           </ul>
         )}
         {isAdmin && (
           <ul className="nav-links">
             <li>
               <Link to="/admin/user-management" className="nav-link">User Management</Link>
+            </li>
+            <li>
+              <Link to="/settings/prompts" className="nav-link">Guide prompts</Link>
             </li>
           </ul>
         )}

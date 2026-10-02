@@ -350,7 +350,52 @@ function resolveNoteHighlightRange(plainPageText, anchorInPage, sourceText) {
   };
 }
 
-// Helper function to calculate page boundaries respecting word breaks
+const STRUCTURAL_TITLE_LINE = /^(?:(Chapter|Part|Book|Volume|Section|Lesson|Step)\s+(?:\d+|[IVXLCDM]+)\b(.*)|(Preface|Introduction|Foreword|Prologue|Epilogue|Conclusion|Afterword|Appendix)\b(.*))$/i;
+
+function isStructuralTitleLine(line) {
+  let raw = String(line || '').trim();
+  if (!raw || raw.startsWith('#') || raw.length > 120) return false;
+  if (raw.endsWith('.') && (raw.match(/\./g) || []).length === 1 && raw.split(/\s+/).length <= 4) {
+    raw = raw.slice(0, -1).trim();
+  } else if (raw.includes('.')) {
+    return false;
+  }
+  if (raw.split(/\s+/).length > 14) return false;
+  return STRUCTURAL_TITLE_LINE.test(raw);
+}
+
+// Keep in sync with KnowledgeMapper.heading_start_offsets / books._snap_page_end_to_heading.
+function collectHeadingOffsets(markdown) {
+  const offsets = [];
+  let offset = 0;
+  let inFence = false;
+  const lines = markdown.split('\n');
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    const stripped = line.trim();
+    if (stripped.startsWith('```')) {
+      inFence = !inFence;
+    } else if (!inFence && stripped) {
+      if (/^#{1,6}\s+\S/.test(line) || isStructuralTitleLine(stripped)) {
+        offsets.push(offset);
+      }
+    }
+    offset += line.length + 1;
+  }
+  return offsets;
+}
+
+function snapPageEndToHeading(headingOffsets, pageStart, proposedEnd, targetCharsPerPage, totalLength) {
+  const windowLo = pageStart + Math.floor(targetCharsPerPage * 0.55);
+  const windowHi = Math.min(totalLength, pageStart + Math.floor(targetCharsPerPage * 1.35));
+  if (windowLo >= windowHi) return proposedEnd;
+  const candidates = headingOffsets.filter((h) => h > pageStart && h >= windowLo && h <= windowHi);
+  if (!candidates.length) return proposedEnd;
+  candidates.sort((a, b) => Math.abs(a - proposedEnd) - Math.abs(b - proposedEnd) || a - b);
+  return candidates[0];
+}
+
+// Helper function to calculate page boundaries respecting word breaks and section headings
 function calculatePageBoundaries(markdown, targetCharsPerPage) {
   if (!markdown || typeof markdown !== 'string') { // Added type check for markdown
     logger.warn("[calculatePageBoundaries] Markdown content is invalid or empty.");
@@ -359,6 +404,7 @@ function calculatePageBoundaries(markdown, targetCharsPerPage) {
   const boundaries = [];
   let currentOffset = 0;
   const totalLength = markdown.length;
+  const headingOffsets = collectHeadingOffsets(markdown);
   // Heuristic: Don't let pages become too small if a word break is found very early.
   // This means a page might be slightly larger than targetCharsPerPage if it prevents a tiny next page.
   const MIN_PAGE_CHARS = targetCharsPerPage * 0.5; // Page should be at least 50% of target
@@ -440,6 +486,14 @@ function calculatePageBoundaries(markdown, targetCharsPerPage) {
       if ((actualEnd - pageStart) < MIN_PAGE_CHARS && (totalLength - pageStart) > targetCharsPerPage) {
          actualEnd = potentialEnd;
       }
+
+      actualEnd = snapPageEndToHeading(
+        headingOffsets,
+        pageStart,
+        actualEnd,
+        targetCharsPerPage,
+        totalLength,
+      );
     }
     
     // Prevent infinite loop if actualEnd doesn't advance
@@ -1293,6 +1347,8 @@ function BookView({
                 guide_id: item.guideId,
                 name: item.name,
                 custom_requirements: item.custom_requirements,
+                prompt_depth: item.prompt_depth,
+                prompt_emphasis: item.prompt_emphasis,
                 item_count: item.roadmap?.items?.length || 0,
               })),
             );
@@ -1427,7 +1483,12 @@ function BookView({
     [bookId, activeGuideId, loadActiveGuideData],
   );
 
-  const handleCreateGuide = async ({ name, custom_requirements: customRequirements }) => {
+  const handleCreateGuide = async ({
+    name,
+    custom_requirements: customRequirements,
+    prompt_depth: promptDepth,
+    prompt_emphasis: promptEmphasis,
+  }) => {
     if (!bookId) return;
     if (!navigator.onLine || isOfflineSnapshot) {
       setGuideError('Roadmap generation requires an internet connection.');
@@ -1451,6 +1512,8 @@ function BookView({
         body: JSON.stringify({
           name: name || undefined,
           custom_requirements: customRequirements || undefined,
+          prompt_depth: promptDepth || undefined,
+          prompt_emphasis: promptEmphasis || undefined,
         }),
       });
       if (!response.ok) {

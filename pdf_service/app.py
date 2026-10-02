@@ -440,8 +440,10 @@ _GEMINI_REFORMAT_SYSTEM_INSTRUCTION = """
 You are an expert in Markdown formatting and text organization. Your task is to reformat the given Markdown text to significantly improve its readability, consistency, and structural organization.
 
 Rules:
-- Preserve all original text, headings, lists, code blocks, tables, and image links exactly (do not summarize or rephrase).
-- Improve paragraph breaks, heading hierarchy, list formatting, and spacing.
+- Preserve body wording verbatim. Do not summarize, translate, or rephrase sentences.
+- Keep existing Markdown headings, lists, code blocks, tables, and image links.
+- When a whole line is a structural title but not a Markdown heading, promote that line to an ATX heading without changing its words. Use # for Part or Book, ## for Chapter, Lesson, Preface, Introduction, Foreword, Prologue, Epilogue, Conclusion, Afterword, or Appendix, and ### for Section. A structural title starts with Chapter, Part, Book, Volume, Section, Lesson, or Step plus a number or roman numeral, or is one of those front/back-matter names. Do not promote a normal sentence.
+- Improve paragraph breaks, list formatting, and spacing.
 - Output ONLY the reformatted Markdown (no commentary, no wrapping code fences).
 """
 
@@ -528,8 +530,9 @@ def reformat_markdown_with_ollama(md_text):
    - Maintain logical flow between paragraphs
 
 3. **PROPER HEADING HIERARCHY:**
-   - Analyze and maintain or improve the heading structure (#, ##, ###, etc.)
-   - Ensure headings accurately reflect the content hierarchy
+   - Keep existing Markdown headings.
+   - When a whole line is a structural title but not a heading, promote it without changing its words: # for Part or Book, ## for Chapter, Lesson, Preface, Introduction, Foreword, Prologue, Epilogue, Conclusion, Afterword, or Appendix, ### for Section.
+   - A structural title starts with Chapter, Part, Book, Volume, Section, Lesson, or Step plus a number or roman numeral, or is one of those front/back-matter names. Do not promote a normal sentence.
    - Add appropriate spacing before and after headings
    - Use consistent heading styles throughout
 

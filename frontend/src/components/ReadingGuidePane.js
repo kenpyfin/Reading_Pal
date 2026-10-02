@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { createPortal } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import PromptConfigPopover from './PromptConfigPopover';
 import './ReadingGuidePane.css';
 
 function countItems(items) {
@@ -32,6 +33,51 @@ function ancestorIdsToExpandForRoadmapItem(items, targetId) {
   };
   const path = walk(items, []);
   return path === null ? [] : path;
+}
+
+function firstIncompleteTopLevelId(items, completedIds) {
+  const done = new Set((completedIds || []).map((id) => String(id)));
+  for (const item of items || []) {
+    const id = String(item.id);
+    if (!done.has(id)) return id;
+  }
+  return null;
+}
+
+function escapeRoadmapItemId(itemId) {
+  let escaped = String(itemId);
+  try {
+    if (typeof CSS !== 'undefined' && CSS.escape) {
+      escaped = CSS.escape(escaped);
+    }
+  } catch (_e) {
+    /* ignore */
+  }
+  return escaped;
+}
+
+function ReadAlongThread({ cardId, steps }) {
+  const [activeStep, setActiveStep] = useState(0);
+  return (
+    <div className="roadmap-thought-process">
+      <span className="roadmap-field-label">Read along</span>
+      <ol className="roadmap-thought-thread">
+        {steps.map((step, idx) => (
+          <li key={`${cardId}-tp-${idx}`}>
+            <button
+              type="button"
+              className={`roadmap-thought-step${idx === activeStep ? ' is-active' : ''}`}
+              aria-pressed={idx === activeStep}
+              onClick={() => setActiveStep(idx)}
+            >
+              <span className="roadmap-thought-marker" aria-hidden="true" />
+              <span className="roadmap-thought-step-text">{step}</span>
+            </button>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
 }
 
 function RoadmapCardChat({
@@ -246,6 +292,7 @@ function RoadmapCard({
   serverActionsDisabled = false,
   depth = 0,
   mustExpandIds,
+  activeItemId = null,
 }) {
   const {
     hub_score: hubScoreRaw,
@@ -270,6 +317,9 @@ function RoadmapCard({
     Array.isArray(item.thought_process) &&
     item.thought_process.length > 0 &&
     !String(item.thought_process[0] || '').startsWith('reference::');
+  const isActive = activeItemId != null && String(activeItemId) === idStr;
+  const hasShortcut = typeof item.alternative_reading === 'string' && item.alternative_reading.trim();
+  const hasOutsider = typeof item.outsider_guide === 'string' && item.outsider_guide.trim();
 
   useEffect(() => {
     if (mustExpand) setExpanded(true);
@@ -296,7 +346,7 @@ function RoadmapCard({
 
   return (
     <div
-      className={`guide-section roadmap-card${isCompleted ? ' roadmap-card--completed' : ''}`}
+      className={`guide-section roadmap-card${isCompleted ? ' roadmap-card--completed' : ''}${isActive ? ' roadmap-card--active' : ''}`}
       style={{ marginLeft: depth * 8 }}
       data-roadmap-item-id={idStr}
     >
@@ -326,61 +376,26 @@ function RoadmapCard({
       </div>
 
       {showDetails && signpost && (
-        <div className="roadmap-signpost-block">
-          <span className="roadmap-field-label">Signpost</span>
-          <p className="roadmap-signpost">{signpost}</p>
-        </div>
+        <p className="roadmap-signpost-tag" title={signpost}>
+          {signpost}
+        </p>
       )}
 
       {showDetails && showThoughtProcess && (
-        <div className="roadmap-thought-process">
-          <span className="roadmap-field-label">Read along</span>
-          <ol className="roadmap-thought-steps">
-            {item.thought_process.map((step, idx) => (
-              <li key={`${item.id}-tp-${idx}`}>{step}</li>
-            ))}
-          </ol>
-        </div>
+        <ReadAlongThread cardId={item.id} steps={item.thought_process} />
       )}
 
       {showDetails && showTakeaway && (
-        <div className="roadmap-takeaway-block guide-section-content">
+        <aside className="roadmap-takeaway-callout">
           <span className="roadmap-field-label">Carry forward</span>
           <div className="roadmap-takeaway-body">
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.takeaway}</ReactMarkdown>
           </div>
-        </div>
+        </aside>
       )}
 
       {showDetails && (item.preview_text || item.key_quote) && (
         <blockquote className="roadmap-quote">{item.preview_text || item.key_quote}</blockquote>
-      )}
-
-      {showDetails && typeof item.alternative_reading === 'string' && item.alternative_reading.trim() && (
-        <details className="roadmap-alternative-reading">
-          <summary>Author Shortcut</summary>
-          <div className="roadmap-alternative-reading-content">
-            {Number.isFinite(item.alternative_source_word_count) && Number.isFinite(item.alternative_word_count) && (
-              <p className="roadmap-alternative-reading-stats">
-                Reference words: {item.alternative_source_word_count} | Shortcut words: {item.alternative_word_count}
-              </p>
-            )}
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.alternative_reading}</ReactMarkdown>
-          </div>
-        </details>
-      )}
-      {showDetails && typeof item.outsider_guide === 'string' && item.outsider_guide.trim() && (
-        <details className="roadmap-outsider-guide">
-          <summary>Outsider Guide</summary>
-          <div className="roadmap-outsider-guide-content">
-            {Number.isFinite(item.outsider_source_word_count) && Number.isFinite(item.outsider_word_count) && (
-              <p className="roadmap-outsider-guide-stats">
-                Reference words: {item.outsider_source_word_count} | Guide words: {item.outsider_word_count}
-              </p>
-            )}
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.outsider_guide}</ReactMarkdown>
-          </div>
-        </details>
       )}
 
       {showDetails && (
@@ -395,32 +410,6 @@ function RoadmapCard({
           onClick={() => onGenerateGraph(item.id)}
         >
           {isGraphLoading ? 'Generating graph...' : 'Generate Graph'}
-        </button>
-        <button
-          className="guide-section-link secondary"
-          type="button"
-          disabled={
-            isAlternativeReadingLoading ||
-            roadmapBulkJob === 'shortcuts' ||
-            serverActionsDisabled ||
-            !onGenerateAlternativeReading
-          }
-          onClick={() => onGenerateAlternativeReading && onGenerateAlternativeReading(item.id)}
-        >
-          {isAlternativeReadingLoading ? 'Generating author shortcut...' : 'Author Shortcut'}
-        </button>
-        <button
-          className="guide-section-link secondary"
-          type="button"
-          disabled={
-            isOutsiderGuideLoading ||
-            roadmapBulkJob === 'outsiders' ||
-            serverActionsDisabled ||
-            !onGenerateOutsiderGuide
-          }
-          onClick={() => onGenerateOutsiderGuide && onGenerateOutsiderGuide(item.id)}
-        >
-          {isOutsiderGuideLoading ? 'Generating outsider guide...' : 'Outsider Guide'}
         </button>
         <RoadmapCardChat
           cardId={idStr}
@@ -443,6 +432,63 @@ function RoadmapCard({
           >
             <img src={item.graph_image_url} alt={`Concept graph for ${item.title}`} className="roadmap-graph-image" />
           </button>
+        </div>
+      )}
+
+      {showDetails && (
+        <div className="roadmap-secondary-drawers">
+          <details className="roadmap-alternative-reading roadmap-secondary-drawer">
+            <summary>{isAlternativeReadingLoading ? 'Generating author shortcut...' : 'Author Shortcut'}</summary>
+            <div className="roadmap-alternative-reading-content">
+              {hasShortcut && Number.isFinite(item.alternative_source_word_count) && Number.isFinite(item.alternative_word_count) && (
+                <p className="roadmap-alternative-reading-stats">
+                  Reference words: {item.alternative_source_word_count} | Shortcut words: {item.alternative_word_count}
+                </p>
+              )}
+              {hasShortcut && (
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.alternative_reading}</ReactMarkdown>
+              )}
+              <button
+                className="guide-section-link secondary"
+                type="button"
+                disabled={
+                  isAlternativeReadingLoading ||
+                  roadmapBulkJob === 'shortcuts' ||
+                  serverActionsDisabled ||
+                  !onGenerateAlternativeReading
+                }
+                onClick={() => onGenerateAlternativeReading && onGenerateAlternativeReading(item.id)}
+              >
+                {isAlternativeReadingLoading ? 'Generating author shortcut...' : hasShortcut ? 'Regenerate shortcut' : 'Generate shortcut'}
+              </button>
+            </div>
+          </details>
+          <details className="roadmap-outsider-guide roadmap-secondary-drawer">
+            <summary>{isOutsiderGuideLoading ? 'Generating outsider guide...' : 'Outsider Guide'}</summary>
+            <div className="roadmap-outsider-guide-content">
+              {hasOutsider && Number.isFinite(item.outsider_source_word_count) && Number.isFinite(item.outsider_word_count) && (
+                <p className="roadmap-outsider-guide-stats">
+                  Reference words: {item.outsider_source_word_count} | Guide words: {item.outsider_word_count}
+                </p>
+              )}
+              {hasOutsider && (
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.outsider_guide}</ReactMarkdown>
+              )}
+              <button
+                className="guide-section-link secondary"
+                type="button"
+                disabled={
+                  isOutsiderGuideLoading ||
+                  roadmapBulkJob === 'outsiders' ||
+                  serverActionsDisabled ||
+                  !onGenerateOutsiderGuide
+                }
+                onClick={() => onGenerateOutsiderGuide && onGenerateOutsiderGuide(item.id)}
+              >
+                {isOutsiderGuideLoading ? 'Generating outsider guide...' : hasOutsider ? 'Regenerate guide' : 'Generate guide'}
+              </button>
+            </div>
+          </details>
         </div>
       )}
 
@@ -469,6 +515,7 @@ function RoadmapCard({
               serverActionsDisabled={serverActionsDisabled}
               depth={depth + 1}
               mustExpandIds={mustExpandIds}
+              activeItemId={activeItemId}
             />
           ))}
         </div>
@@ -518,11 +565,20 @@ const ReadingGuidePane = ({
   const paneRef = useRef(null);
   const [selectedGraphImage, setSelectedGraphImage] = useState(null);
   const [showBulkGenerateModal, setShowBulkGenerateModal] = useState(false);
-  const [showNewGuideModal, setShowNewGuideModal] = useState(false);
-  const [newGuideName, setNewGuideName] = useState('');
-  const [newGuideRequirements, setNewGuideRequirements] = useState('');
+  const [promptOpen, setPromptOpen] = useState(false);
   const [overflowOpen, setOverflowOpen] = useState(false);
+  const [activeJumpId, setActiveJumpId] = useState(null);
   const overflowRef = useRef(null);
+
+  const scrollToRoadmapItem = useCallback((itemId) => {
+    const container = scrollContainerRef?.current;
+    if (!container || itemId == null) return;
+    const el = container.querySelector(`[data-roadmap-item-id="${escapeRoadmapItemId(itemId)}"]`);
+    if (el && typeof el.scrollIntoView === 'function') {
+      el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+    setActiveJumpId(String(itemId));
+  }, [scrollContainerRef]);
 
   const canAddGuide = guidesList.length < maxGuides;
   const activeGuideSummary = guidesList.find((g) => g.guide_id === activeGuideId);
@@ -545,6 +601,31 @@ const ReadingGuidePane = ({
     });
     return () => cancelAnimationFrame(raf);
   }, [scrollPositionToRestore, scrollContainerRef, roadmap]);
+
+  useEffect(() => {
+    if (focusItemId) setActiveJumpId(String(focusItemId));
+  }, [focusItemId]);
+
+  useEffect(() => {
+    const container = scrollContainerRef?.current;
+    const items = roadmap?.items;
+    if (!container || !items?.length || typeof IntersectionObserver === 'undefined') {
+      return undefined;
+    }
+    const nodes = items
+      .map((item) => container.querySelector(`[data-roadmap-item-id="${escapeRoadmapItemId(item.id)}"]`))
+      .filter(Boolean);
+    if (!nodes.length) return undefined;
+    const observer = new IntersectionObserver((entries) => {
+      const visible = entries
+        .filter((entry) => entry.isIntersecting)
+        .sort((a, b) => b.intersectionRatio - a.intersectionRatio);
+      const id = visible[0]?.target?.getAttribute('data-roadmap-item-id');
+      if (id) setActiveJumpId(id);
+    }, { root: container, threshold: [0.35, 0.6] });
+    nodes.forEach((node) => observer.observe(node));
+    return () => observer.disconnect();
+  }, [roadmap, scrollContainerRef]);
 
   useEffect(() => {
     if (!focusItemId || !scrollContainerRef?.current || !roadmap?.items?.length) {
@@ -585,17 +666,17 @@ const ReadingGuidePane = ({
       if (event.key === 'Escape') {
         setSelectedGraphImage(null);
         setShowBulkGenerateModal(false);
-        setShowNewGuideModal(false);
+        setPromptOpen(false);
         setOverflowOpen(false);
       }
     };
-    if (selectedGraphImage || showBulkGenerateModal || showNewGuideModal || overflowOpen) {
+    if (selectedGraphImage || showBulkGenerateModal || promptOpen || overflowOpen) {
       document.addEventListener('keydown', onEsc);
     }
     return () => {
       document.removeEventListener('keydown', onEsc);
     };
-  }, [selectedGraphImage, showBulkGenerateModal, showNewGuideModal, overflowOpen]);
+  }, [selectedGraphImage, showBulkGenerateModal, promptOpen, overflowOpen]);
 
   useEffect(() => {
     if (!overflowOpen) return undefined;
@@ -621,6 +702,9 @@ const ReadingGuidePane = ({
   const totalItems = roadmap?.items ? countItems(roadmap.items) : 0;
   const progressPct = totalItems > 0 ? Math.round((completedIds.length / totalItems) * 100) : 0;
   const progressBarWidthPct = totalItems > 0 ? Math.min(100, Math.round((completedIds.length / totalItems) * 100)) : 0;
+  const resumeId = firstIncompleteTopLevelId(roadmap?.items, completedIds);
+  const displayActiveId = activeJumpId || resumeId || (roadmap?.items?.[0] ? String(roadmap.items[0].id) : null);
+  const completedIdSet = new Set((completedIds || []).map((id) => String(id)));
   const bulkRunningLabel =
     roadmapBulkJob === 'graphs'
       ? 'Generating all graphs...'
@@ -630,15 +714,10 @@ const ReadingGuidePane = ({
           ? 'Generating all outsider guides...'
           : '';
 
-  const handleSubmitNewGuide = () => {
+  const handleSubmitNewGuide = (payload) => {
     if (!onCreateGuide) return;
-    onCreateGuide({
-      name: newGuideName.trim() || undefined,
-      custom_requirements: newGuideRequirements.trim() || undefined,
-    });
-    setShowNewGuideModal(false);
-    setNewGuideName('');
-    setNewGuideRequirements('');
+    onCreateGuide(payload);
+    setPromptOpen(false);
   };
 
   const showGenerateRoadmap = onGenerateRoadmap && !roadmap?.items?.length;
@@ -669,11 +748,20 @@ const ReadingGuidePane = ({
                   title={g.custom_requirements || g.name}
                 >
                   {g.name}
-                  {g.custom_requirements ? ` — ${String(g.custom_requirements).slice(0, 40)}` : ''}
                 </option>
               ))}
             </select>
           </div>
+        )}
+        {onCreateGuide && (
+          <PromptConfigPopover
+            open={promptOpen}
+            onOpenChange={setPromptOpen}
+            activeGuide={activeGuideSummary}
+            canCreate={canAddGuide}
+            disabled={actionsBusy || serverActionsDisabled}
+            onCreate={handleSubmitNewGuide}
+          />
         )}
         <div className="reading-guide-overflow" ref={overflowRef}>
           <button
@@ -696,7 +784,7 @@ const ReadingGuidePane = ({
                   disabled={!canAddGuide || actionsBusy || serverActionsDisabled}
                   onClick={() => {
                     setOverflowOpen(false);
-                    setShowNewGuideModal(true);
+                    setPromptOpen(true);
                   }}
                 >
                   New guide…
@@ -751,6 +839,7 @@ const ReadingGuidePane = ({
         </div>
       </div>
       {totalItems > 0 && (
+        <div className="reading-guide-progress-cluster">
         <div
           className="reading-guide-toolbar-progress reading-guide-progress"
           role="progressbar"
@@ -765,6 +854,38 @@ const ReadingGuidePane = ({
           <div className="progress-bar">
             <div className="progress-bar-fill" style={{ width: `${progressBarWidthPct}%` }} />
           </div>
+        </div>
+          {roadmap?.items?.length > 0 && (
+            <div className="reading-guide-jump" role="navigation" aria-label="Jump to roadmap card">
+              {resumeId && (
+                <button
+                  type="button"
+                  className="reading-guide-jump-current"
+                  onClick={() => scrollToRoadmapItem(resumeId)}
+                >
+                  Current
+                </button>
+              )}
+              <div className="reading-guide-jump-dots">
+                {roadmap.items.map((item, index) => {
+                  const id = String(item.id);
+                  const done = completedIdSet.has(id);
+                  const active = displayActiveId === id;
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      className={`reading-guide-jump-dot${done ? ' is-done' : ''}${active ? ' is-active' : ''}`}
+                      aria-label={`Section ${index + 1}: ${item.title || 'Untitled'}${done ? ', completed' : ''}`}
+                      aria-current={active ? 'true' : undefined}
+                      title={item.title || `Section ${index + 1}`}
+                      onClick={() => scrollToRoadmapItem(id)}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -822,7 +943,7 @@ const ReadingGuidePane = ({
                     type="button"
                     className="generate-guide-btn generate-guide-btn--secondary"
                     disabled={actionsBusy || serverActionsDisabled}
-                    onClick={() => setShowNewGuideModal(true)}
+                    onClick={() => setPromptOpen(true)}
                   >
                     New guide…
                   </button>
@@ -855,6 +976,7 @@ const ReadingGuidePane = ({
                   onOpenGraphImage={handleOpenGraph}
                   serverActionsDisabled={serverActionsDisabled}
                   mustExpandIds={mustExpandIds}
+                  activeItemId={displayActiveId}
                 />
               ))}
             </div>
@@ -888,70 +1010,6 @@ const ReadingGuidePane = ({
                 alt={`Large concept graph for ${selectedGraphImage.title}`}
                 className="roadmap-graph-image-large"
               />
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showNewGuideModal && (
-        <div
-          className="roadmap-modal-backdrop"
-          role="presentation"
-          onClick={() => setShowNewGuideModal(false)}
-        >
-          <div
-            className="roadmap-bulk-choice-modal reading-guide-new-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="reading-guide-new-modal-title"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="roadmap-bulk-choice-modal-header">
-              <h4 id="reading-guide-new-modal-title">New reading guide</h4>
-              <button
-                type="button"
-                className="roadmap-modal-close"
-                onClick={() => setShowNewGuideModal(false)}
-                aria-label="Close"
-              >
-                &times;
-              </button>
-            </div>
-            <p className="roadmap-bulk-choice-hint">
-              Optional custom angle shapes how pillars and cards are generated (e.g. focus on leadership lessons).
-            </p>
-            <label className="reading-guide-new-field">
-              <span>Name (optional)</span>
-              <input
-                type="text"
-                value={newGuideName}
-                maxLength={120}
-                onChange={(e) => setNewGuideName(e.target.value)}
-                placeholder="Guide 2"
-              />
-            </label>
-            <label className="reading-guide-new-field">
-              <span>Custom reading angle (optional)</span>
-              <textarea
-                rows={4}
-                value={newGuideRequirements}
-                maxLength={2000}
-                onChange={(e) => setNewGuideRequirements(e.target.value)}
-                placeholder="e.g. Read as a product manager looking for actionable frameworks"
-              />
-            </label>
-            <div className="roadmap-bulk-choice-footer">
-              <button type="button" className="roadmap-bulk-cancel-btn" onClick={() => setShowNewGuideModal(false)}>
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="roadmap-bulk-choice-btn roadmap-bulk-choice-btn--shortcut"
-                disabled={serverActionsDisabled || isGenerating}
-                onClick={handleSubmitNewGuide}
-              >
-                Create &amp; generate
-              </button>
             </div>
           </div>
         </div>

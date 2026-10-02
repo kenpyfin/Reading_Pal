@@ -11,6 +11,7 @@ import LoginPage from './pages/LoginPage';
 import AuthCallbackPage from './pages/AuthCallbackPage';
 import AdminLoginPage from './pages/AdminLoginPage';
 import UserManagementPage from './pages/UserManagementPage';
+import PromptSettingsPage from './pages/PromptSettingsPage';
 import {
   clearStoredAuthToken,
   clearStoredThemeOverride,
@@ -156,7 +157,7 @@ function App() {
             <Routes>
               {!authToken ? (
                 <>
-                  <Route path="/login" element={<LoginPage {...themeToggleProps} />} />
+                  <Route path="/login" element={<LoginPage setAuthToken={handleSetAuthToken} {...themeToggleProps} />} />
                   <Route
                     path="/admin/login"
                     element={<AdminLoginPage setAuthToken={handleSetAuthToken} {...themeToggleProps} />}
@@ -172,6 +173,7 @@ function App() {
                   <Route path="/admin/user-management" element={<UserManagementPage />} />
                   {/* Decide if admins should access these or be redirected */}
                   <Route path="/upload" element={<PdfUploadForm />} />
+                  <Route path="/settings/prompts" element={<PromptSettingsPage />} />
                   <Route path="/book/:bookId" element={(
                       <BookView
                         setNavBarExtra={setNavBarExtra}
@@ -194,6 +196,7 @@ function App() {
                 <>
                   <Route path="/" element={<BookList />} />
                   <Route path="/upload" element={<PdfUploadForm />} />
+                  <Route path="/settings/prompts" element={<PromptSettingsPage />} />
                   <Route path="/book/:bookId" element={(
                       <BookView
                         setNavBarExtra={setNavBarExtra}

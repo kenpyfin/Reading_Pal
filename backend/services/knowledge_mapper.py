@@ -12,6 +12,14 @@ class KnowledgeMapper:
     """
 
     _heading_re = re.compile(r"^(#{1,6})\s+(.*)$", re.MULTILINE)
+    _atx_line_re = re.compile(r"^(#{1,6})\s+(.*?)\s*$")
+    _structural_line_re = re.compile(
+        r"^(?:"
+        r"(?P<kind>Chapter|Part|Book|Volume|Section|Lesson|Step)\s+(?:\d+|[IVXLCDM]+)\b(?P<rest>.*)"
+        r"|(?P<front>Preface|Introduction|Foreword|Prologue|Epilogue|Conclusion|Afterword|Appendix)\b(?P<frest>.*)"
+        r")$",
+        re.IGNORECASE,
+    )
     _ref_patterns = [
         r"\[\[(.*?)\]\]",  # Wiki links
         r"(?:[Ss]ee|[Rr]efer to)\s+(?:[Ss]ection|[Cc]hapter|[Pp]age)\s+(\d+(?:\.\d+)*)",
@@ -38,16 +46,71 @@ class KnowledgeMapper:
         content_lines = [line.strip() for line in lines[1:] if line.strip() and not line.strip().startswith("#")]
         return " ".join(content_lines[:3])[:220]
 
-    def extract_knowledge_map(self, markdown_text: str) -> List[Dict[str, Any]]:
+    @classmethod
+    def _structural_title_level(cls, line: str) -> Optional[int]:
+        """
+        Level for a plain-text structural title, or None when the line is prose.
+        Chapter-like lines that PDF extraction left unmarked still organize the book.
+        """
+        raw = (line or "").strip()
+        if not raw or raw.startswith("#") or len(raw) > 120:
+            return None
+        # A single trailing period on a short label ("Chapter 1.") is still a title.
+        # Any other period means the line is a sentence.
+        if raw.endswith(".") and raw.count(".") == 1 and len(raw.split()) <= 4:
+            raw = raw[:-1].strip()
+        elif "." in raw:
+            return None
+        if len(raw.split()) > 14:
+            return None
+        match = cls._structural_line_re.match(raw)
+        if not match:
+            return None
+        kind = (match.group("kind") or match.group("front") or "").lower()
+        if kind in {"part", "book", "volume"}:
+            return 1
+        if kind == "section":
+            return 3
+        return 2
+
+    def _collect_headings(self, markdown_text: str) -> List[Dict[str, Any]]:
+        """ATX headings plus plain structural titles, in document order."""
         headings: List[Dict[str, Any]] = []
-        for match in self._heading_re.finditer(markdown_text):
-            headings.append(
-                {
-                    "level": len(match.group(1)),
-                    "title": match.group(2).strip(),
-                    "start_offset": match.start(),
-                }
-            )
+        offset = 0
+        in_fence = False
+        for line in (markdown_text or "").split("\n"):
+            stripped = line.strip()
+            if stripped.startswith("```"):
+                in_fence = not in_fence
+            elif not in_fence and stripped:
+                atx = self._atx_line_re.match(line)
+                if atx and atx.group(2).strip():
+                    headings.append(
+                        {
+                            "level": len(atx.group(1)),
+                            "title": atx.group(2).strip(),
+                            "start_offset": offset,
+                        }
+                    )
+                else:
+                    level = self._structural_title_level(stripped)
+                    if level is not None:
+                        headings.append(
+                            {
+                                "level": level,
+                                "title": stripped,
+                                "start_offset": offset,
+                            }
+                        )
+            offset += len(line) + 1
+        return headings
+
+    def heading_start_offsets(self, markdown_text: str) -> List[int]:
+        """Offsets where a section heading begins. Used to align reader page breaks."""
+        return [int(h["start_offset"]) for h in self._collect_headings(markdown_text or "")]
+
+    def extract_knowledge_map(self, markdown_text: str) -> List[Dict[str, Any]]:
+        headings = self._collect_headings(markdown_text or "")
         if not headings:
             return []
 

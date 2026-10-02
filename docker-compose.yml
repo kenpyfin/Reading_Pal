@@ -25,6 +25,11 @@ services:
       # Override host paths from .env with container-specific paths for the backend application
       IMAGES_PATH: /app/storage/images
       MARKDOWN_PATH: /app/storage/markdown
+      # Local/LAN login bypass. Public Host headers are still rejected.
+      # Set ALLOW_LOCAL_DEV_LOGIN=false in .env to turn it off.
+      ALLOW_LOCAL_DEV_LOGIN: ${ALLOW_LOCAL_DEV_LOGIN:-true}
+      # Existing account the tester button signs in as. Does not create a user.
+      LOCAL_DEV_LOGIN_EMAIL: ${LOCAL_DEV_LOGIN_EMAIL:-lgyhz1234@gmail.com}
     # Remove pdf_service dependency. Backend does not depend on frontend.
     # depends_on:
     #   - pdf_service
