@@ -7,7 +7,7 @@ Chronological log of meaningful implementation work: decisions, behavior changes
 - **What:** Production runs from git worktree `/home/ken/big_storage/projects/reading_pal_6-prod` on branch `prod` (Compose project `reading_pal_6-prod`, ports 3100 / 8501 / 8502 / 8503). This checkout is development (`reading_pal_6-dev`, ports 3200 / 8601 / 8602 / 8603). `deploy.sh` refuses `STACK_ROLE=dev`. `reload_dev.sh` and `redeploy_app.sh` refuse `STACK_ROLE=prod`. The dev checkout does not start the MinerU worker unless `ALLOW_DEV_PDF_WORKER=1`.
 - **Why:** `./reload_dev.sh` was rebuilding the same containers SWAG serves, so uncommitted work was production.
 - **Where:** `deploy.sh`, `reload_dev.sh`, `redeploy_app.sh`, `scripts/pdf_service_host.sh`, `docs/operations.md`, `docker-compose.yml`
-- **Notes:** Both checkouts share MongoDB and `PDF_STORAGE_PATH` / `MARKDOWN_PATH` / `IMAGES_PATH`. One GPU worker only, owned by production. `./deploy.sh --no-prune` skips the global Docker prune.
+- **Notes:** Both checkouts share MongoDB and `PDF_STORAGE_PATH` / `MARKDOWN_PATH` / `IMAGES_PATH`. One GPU worker only, owned by production. `./deploy.sh --no-prune` skips the global Docker prune. Docker frontend builds drop the `react-app/jest` ESLint extend; a clean `npm install` otherwise fails on an unknown `jest/globals` environment.
 
 ## 2026-10-01 — Prompt settings page and markdown section breaks
 
