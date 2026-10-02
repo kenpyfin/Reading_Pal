@@ -1,10 +1,37 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import ThemeToggle from './ThemeToggle';
 import { createScrollChromeController } from '../utils/mobileScrollChrome';
+import { matchesMobileLayout } from '../utils/mobileLayout';
 import './NavBar.css';
 
-const MOBILE_MAX_WIDTH = 768;
+function NavLinks({ isAdmin, onNavigate }) {
+  if (isAdmin) {
+    return (
+      <ul className="nav-links">
+        <li>
+          <Link to="/admin/user-management" className="nav-link" onClick={onNavigate}>User Management</Link>
+        </li>
+        <li>
+          <Link to="/settings/prompts" className="nav-link" onClick={onNavigate}>Guide prompts</Link>
+        </li>
+      </ul>
+    );
+  }
+  return (
+    <ul className="nav-links">
+      <li>
+        <Link to="/" className="nav-link" onClick={onNavigate}>Book List</Link>
+      </li>
+      <li>
+        <Link to="/upload" className="nav-link" onClick={onNavigate}>Upload Book</Link>
+      </li>
+      <li>
+        <Link to="/settings/prompts" className="nav-link" onClick={onNavigate}>Guide prompts</Link>
+      </li>
+    </ul>
+  );
+}
 
 function NavBar({
   onLogout,
@@ -21,22 +48,28 @@ function NavBar({
   onUseSystem,
 }) {
   const navigate = useNavigate();
+  const location = useLocation();
+  const navRef = useRef(null);
   const [mobileNavHidden, setMobileNavHidden] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const onChromeHiddenChangeRef = useRef(onChromeHiddenChange);
   onChromeHiddenChangeRef.current = onChromeHiddenChange;
 
-  const isMobileViewport = useCallback(
-    () => typeof window !== 'undefined' && window.innerWidth <= MOBILE_MAX_WIDTH,
-    [],
-  );
+  const isMobileViewport = useCallback(() => matchesMobileLayout(), []);
 
   const handleHiddenChange = useCallback((nextHidden) => {
     setMobileNavHidden(nextHidden);
     onChromeHiddenChangeRef.current?.(nextHidden);
   }, []);
 
+  const closeMenu = useCallback(() => setMenuOpen(false), []);
+
   useEffect(() => {
-    if (hidden || disableMobileScrollHide) {
+    setMenuOpen(false);
+  }, [location.pathname]);
+
+  useEffect(() => {
+    if (hidden || disableMobileScrollHide || menuOpen) {
       setMobileNavHidden(false);
       onChromeHiddenChangeRef.current?.(false);
       return undefined;
@@ -75,6 +108,7 @@ function NavBar({
     const onResize = () => {
       if (!isMobileViewport()) {
         controller.reset();
+        setMenuOpen(false);
       }
     };
 
@@ -87,6 +121,7 @@ function NavBar({
   }, [
     hidden,
     disableMobileScrollHide,
+    menuOpen,
     isMobileViewport,
     activeScrollContainerRef,
     activeScrollEpoch,
@@ -107,7 +142,27 @@ function NavBar({
     };
   }, [hidden, mobileNavHidden, isMobileViewport]);
 
+  useEffect(() => {
+    const el = navRef.current;
+    if (!el || hidden) {
+      document.documentElement.style.removeProperty('--app-nav-offset');
+      return undefined;
+    }
+    const apply = () => {
+      const height = Math.ceil(el.getBoundingClientRect().height);
+      document.documentElement.style.setProperty('--app-nav-offset', `${height}px`);
+    };
+    apply();
+    const observer = new ResizeObserver(apply);
+    observer.observe(el);
+    return () => {
+      observer.disconnect();
+      document.documentElement.style.removeProperty('--app-nav-offset');
+    };
+  }, [hidden, menuOpen, extra, mobileNavHidden]);
+
   const handleLogoutClick = () => {
+    closeMenu();
     if (onLogout) {
       onLogout();
     }
@@ -118,14 +173,26 @@ function NavBar({
     return null;
   }
 
-  const showMobileExtra = !!extra;
+  const themeToggle = onToggle ? (
+    <ThemeToggle
+      themeOverride={themeOverride}
+      effectiveTheme={effectiveTheme}
+      onToggle={onToggle}
+      onUseSystem={onUseSystem}
+    />
+  ) : null;
 
   return (
     <nav
-      className={`navbar${mobileNavHidden ? ' navbar-hidden' : ''}${extra ? ' navbar-has-extra' : ''}`}
+      ref={navRef}
+      className={`navbar${mobileNavHidden ? ' navbar-hidden' : ''}${extra ? ' navbar-has-extra' : ''}${menuOpen ? ' navbar-menu-open' : ''}`}
     >
-      <div className={`navbar-container${showMobileExtra ? ' navbar-container--mobile-extra' : ''}`}>
-        {!showMobileExtra && (isAdmin ? (
+      <div className="navbar-container">
+        {extra ? (
+          <div className="navbar-extra" aria-label="Reading guide">
+            {extra}
+          </div>
+        ) : (isAdmin ? (
           <Link to="/admin/user-management" className="navbar-brand">
             Admin Dashboard
           </Link>
@@ -134,52 +201,42 @@ function NavBar({
             Reading Pal
           </Link>
         ))}
-        {showMobileExtra && (
-          <div className="navbar-extra" aria-label="Reading guide">
-            {extra}
-          </div>
-        )}
-        {!isAdmin && (
-          <ul className="nav-links">
+        <div className="navbar-desktop">
+          <NavLinks isAdmin={isAdmin} />
+          <ul className="nav-links nav-links-right">
+            {themeToggle && (
+              <li className="nav-theme-toggle-item">
+                {themeToggle}
+              </li>
+            )}
             <li>
-              <Link to="/" className="nav-link">Book List</Link>
-            </li>
-            <li>
-              <Link to="/upload" className="nav-link">Upload Book</Link>
-            </li>
-            <li>
-              <Link to="/settings/prompts" className="nav-link">Guide prompts</Link>
+              <button type="button" onClick={handleLogoutClick} className="nav-link logout-button">
+                Logout
+              </button>
             </li>
           </ul>
-        )}
-        {isAdmin && (
-          <ul className="nav-links">
-            <li>
-              <Link to="/admin/user-management" className="nav-link">User Management</Link>
-            </li>
-            <li>
-              <Link to="/settings/prompts" className="nav-link">Guide prompts</Link>
-            </li>
-          </ul>
-        )}
-        <ul className="nav-links nav-links-right">
-          {onToggle && (
-            <li className="nav-theme-toggle-item">
-              <ThemeToggle
-                themeOverride={themeOverride}
-                effectiveTheme={effectiveTheme}
-                onToggle={onToggle}
-                onUseSystem={onUseSystem}
-              />
-            </li>
-          )}
-          <li>
+        </div>
+        <button
+          type="button"
+          className="navbar-menu-toggle"
+          aria-expanded={menuOpen}
+          aria-controls="navbar-menu-panel"
+          onClick={() => setMenuOpen((open) => !open)}
+        >
+          {menuOpen ? 'Close' : 'Menu'}
+        </button>
+      </div>
+      {menuOpen && (
+        <div id="navbar-menu-panel" className="navbar-menu-panel">
+          <NavLinks isAdmin={isAdmin} onNavigate={closeMenu} />
+          <div className="navbar-menu-footer">
+            {themeToggle}
             <button type="button" onClick={handleLogoutClick} className="nav-link logout-button">
               Logout
             </button>
-          </li>
-        </ul>
-      </div>
+          </div>
+        </div>
+      )}
     </nav>
   );
 }

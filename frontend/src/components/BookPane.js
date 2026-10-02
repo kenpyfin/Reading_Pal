@@ -40,6 +40,7 @@ const BookPane = forwardRef(({ markdownContent, imageUrls, onTextSelect, onHighl
 
     const range = selection.getRangeAt(0).cloneRange();
     const selectedText = range.toString();
+    const bounds = range.getBoundingClientRect();
 
     if (onTextSelect) {
       if (selectedText.length > 0) {
@@ -50,6 +51,12 @@ const BookPane = forwardRef(({ markdownContent, imageUrls, onTextSelect, onHighl
             startOffset: range.startOffset,
             endContainer: range.endContainer,
             endOffset: range.endOffset,
+          },
+          clientRect: {
+            top: bounds.top,
+            bottom: bounds.bottom,
+            left: bounds.left,
+            width: bounds.width,
           },
         });
       } else {
@@ -150,8 +157,11 @@ const BookPane = forwardRef(({ markdownContent, imageUrls, onTextSelect, onHighl
               return <img {...props} src={src} alt={props.alt || ''} style={{ maxWidth: '100%', height: 'auto' }} />;
             },
             table: ({ node, ...props }) => {
-              // Apply styles to prevent tables from being cut off across page breaks
-              return <table {...props} style={{ breakInside: 'avoid-page', pageBreakInside: 'avoid' }} />;
+              return (
+                <div className="markdown-table-scroll">
+                  <table {...props} style={{ breakInside: 'avoid-page', pageBreakInside: 'avoid' }} />
+                </div>
+              );
             },
           }}
         />

@@ -11,10 +11,17 @@
   color: var(--color-text);
 }
 
+.users-table-scroll {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin-top: 20px;
+}
+
 .users-table {
   width: 100%;
+  min-width: 980px;
   border-collapse: collapse;
-  margin-top: 20px;
   box-shadow: var(--shadow-md);
 }
 

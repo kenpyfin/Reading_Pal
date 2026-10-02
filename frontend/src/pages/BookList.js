@@ -28,8 +28,9 @@ function BookList() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
-  const [renamingId, setRenamingId] = useState(null); // New state for rename operation
-  const [hoveredBookId, setHoveredBookId] = useState(null); // New state for hover
+  const [renamingId, setRenamingId] = useState(null);
+  const [menuBookId, setMenuBookId] = useState(null);
+  const menuRef = useRef(null);
   
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
@@ -56,25 +57,23 @@ function BookList() {
     currentPageRef.current = currentPage;
   }, [currentPage]);
 
-  // --- Style definitions for buttons and actions container ---
-  const actionsContainerBaseStyle = {
-    position: 'absolute',
-    right: '10px',
-    top: '50%',
-    transform: 'translateY(-50%)',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    transition: 'opacity 0.2s ease-in-out, visibility 0.2s ease-in-out',
-    opacity: 0,
-    visibility: 'hidden',
-    zIndex: 1, // Ensure buttons are above other elements if any overlap
-  };
-
-  const actionsContainerVisibleStyle = {
-    opacity: 1,
-    visibility: 'visible',
-  };
+  useEffect(() => {
+    if (!menuBookId) return undefined;
+    const onPointerDown = (event) => {
+      if (menuRef.current && !menuRef.current.contains(event.target)) {
+        setMenuBookId(null);
+      }
+    };
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') setMenuBookId(null);
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [menuBookId]);
 
   const baseButtonStyle = {
     padding: '6px 10px',
@@ -89,27 +88,6 @@ function BookList() {
     boxShadow: 'var(--shadow-md)',
   };
 
-  const renameButtonStyle = {
-    ...baseButtonStyle,
-  };
-
-  const renameButtonHoverStyle = {
-    backgroundColor: 'var(--color-bg-hover)',
-    borderColor: 'var(--color-border)',
-    boxShadow: 'var(--shadow-md)',
-  };
-
-  const deleteButtonStyle = {
-    ...baseButtonStyle,
-    color: 'var(--color-danger)',
-    borderColor: 'var(--color-danger)',
-  };
-
-  const deleteButtonHoverStyle = {
-    backgroundColor: 'var(--color-error-bg)',
-    borderColor: 'var(--color-danger)',
-    boxShadow: 'var(--shadow-md)',
-  };
   // --- End of style definitions ---
 
   const applyOfflinePage = useCallback((page, allBooks) => {
@@ -463,19 +441,8 @@ function BookList() {
             // The backend /api/books/ endpoint maps _id to id.
             console.log("Rendering list item for book:", book, "ID:", book.id),
             <li
-              key={book.id} // Use book.id (which is the string representation of _id)
-              onMouseEnter={() => setHoveredBookId(book.id)}
-              onMouseLeave={() => setHoveredBookId(null)}
-              style={{
-                position: 'relative', // Needed for absolute positioning of actions
-                padding: '12px 15px',
-                borderBottom: '1px solid var(--color-border-light)',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                transition: 'background-color 0.2s ease',
-                backgroundColor: hoveredBookId === book.id ? 'var(--color-bg-hover)' : 'transparent',
-              }}
+              key={book.id}
+              className={menuBookId === book.id ? 'book-list-row book-list-row--menu-open' : 'book-list-row'}
             >
               <div className="book-list-item-main">
                 {book.status === 'completed' ? (
@@ -497,64 +464,63 @@ function BookList() {
               </div>
 
               <div
-                style={{
-                  ...actionsContainerBaseStyle,
-                  ...(hoveredBookId === book.id ? actionsContainerVisibleStyle : {}),
-                }}
+                className="book-list-row-actions"
+                ref={menuBookId === book.id ? menuRef : null}
               >
                 <button
-                  title="Rename Book"
-                  onClick={(e) => { e.stopPropagation(); handleRenameBook(book.id, book.title || book.original_filename);}}
-                  disabled={listActionsReadOnly || renamingId === book.id || deletingId === book.id || isInFlightStatus(book.status)}
-                  style={renamingId === book.id ? {...renameButtonStyle, backgroundColor: renameButtonHoverStyle.backgroundColor} : renameButtonStyle}
-                  onMouseEnter={(e) => {
-                    if (!(renamingId === book.id || deletingId === book.id || isInFlightStatus(book.status))) {
-                        e.currentTarget.style.backgroundColor = renameButtonHoverStyle.backgroundColor;
-                        e.currentTarget.style.borderColor = renameButtonHoverStyle.borderColor;
-                        e.currentTarget.style.boxShadow = renameButtonHoverStyle.boxShadow;
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    if (!(renamingId === book.id)) { // Keep active style if renaming
-                        e.currentTarget.style.backgroundColor = renameButtonStyle.backgroundColor;
-                        e.currentTarget.style.borderColor = renameButtonStyle.borderColor; 
-                        e.currentTarget.style.boxShadow = baseButtonStyle.boxShadow;
-                    }
-                  }}
-                >
-                  {renamingId === book.id ? 'Renaming...' : 'Rename'}
-                </button>
-                <button
-                  title={isInFlightStatus(book.status) ? 'Cancel processing' : 'Delete Book'}
+                  type="button"
+                  className="book-list-menu-trigger"
+                  aria-label={
+                    renamingId === book.id
+                      ? 'Renaming book'
+                      : deletingId === book.id
+                        ? (isInFlightStatus(book.status) ? 'Cancelling book' : 'Deleting book')
+                        : 'Book actions'
+                  }
+                  aria-haspopup="menu"
+                  aria-expanded={menuBookId === book.id}
+                  title="Book actions"
+                  disabled={listActionsReadOnly || renamingId === book.id || deletingId === book.id}
                   onClick={(e) => {
                     e.stopPropagation();
-                    handleDeleteBook(
-                      book.id,
-                      book.title || book.original_filename,
-                      isInFlightStatus(book.status)
-                    );
-                  }}
-                  disabled={listActionsReadOnly || deletingId === book.id || renamingId === book.id}
-                  style={deletingId === book.id ? {...deleteButtonStyle, backgroundColor: deleteButtonHoverStyle.backgroundColor} : deleteButtonStyle}
-                   onMouseEnter={(e) => {
-                    if (!(renamingId === book.id || deletingId === book.id)) {
-                        e.currentTarget.style.backgroundColor = deleteButtonHoverStyle.backgroundColor;
-                        e.currentTarget.style.borderColor = deleteButtonHoverStyle.borderColor;
-                        e.currentTarget.style.boxShadow = deleteButtonHoverStyle.boxShadow;
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                     if (!(deletingId === book.id)) {
-                        e.currentTarget.style.backgroundColor = deleteButtonStyle.backgroundColor;
-                        e.currentTarget.style.borderColor = deleteButtonStyle.borderColor; 
-                        e.currentTarget.style.boxShadow = baseButtonStyle.boxShadow;
-                    }
+                    setMenuBookId((openId) => (openId === book.id ? null : book.id));
                   }}
                 >
-                  {deletingId === book.id
-                    ? (isInFlightStatus(book.status) ? 'Cancelling...' : 'Deleting...')
-                    : (isInFlightStatus(book.status) ? 'Cancel' : 'Delete')}
+                  {renamingId === book.id || deletingId === book.id ? '…' : '⋯'}
                 </button>
+                {menuBookId === book.id && (
+                  <div className="book-list-menu" role="menu">
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="book-list-menu-item"
+                      disabled={isInFlightStatus(book.status)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setMenuBookId(null);
+                        handleRenameBook(book.id, book.title || book.original_filename);
+                      }}
+                    >
+                      Rename
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="book-list-menu-item book-list-menu-item--danger"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setMenuBookId(null);
+                        handleDeleteBook(
+                          book.id,
+                          book.title || book.original_filename,
+                          isInFlightStatus(book.status)
+                        );
+                      }}
+                    >
+                      {isInFlightStatus(book.status) ? 'Cancel processing' : 'Delete'}
+                    </button>
+                  </div>
+                )}
               </div>
             </li>
           ))}

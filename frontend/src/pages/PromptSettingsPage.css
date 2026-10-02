@@ -59,7 +59,7 @@
   border: 1px solid var(--color-border, rgba(0, 0, 0, 0.12));
   background: var(--color-bg);
   color: var(--color-text);
-  font: 14px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font: 16px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   resize: vertical;
 }
 
@@ -98,4 +98,17 @@
 
 .prompt-settings-saved {
   color: var(--color-text);
+}
+
+@media (max-width: 768px), (max-height: 500px) and (orientation: landscape) {
+  .prompt-settings-page {
+    padding: 16px 16px 48px;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+  }
+
+  .prompt-settings-text-button,
+  .prompt-settings-save {
+    min-height: 44px;
+  }
 }

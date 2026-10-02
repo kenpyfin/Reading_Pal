@@ -3,7 +3,31 @@ import { createPortal } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import PromptConfigPopover from './PromptConfigPopover';
+import { matchesMobileLayout, subscribeMobileLayout } from '../utils/mobileLayout';
 import './ReadingGuidePane.css';
+
+const markdownTableComponents = {
+  table: ({ node, ...props }) => (
+    <div className="markdown-table-scroll">
+      <table {...props} />
+    </div>
+  ),
+};
+
+function GuideMarkdown({ children }) {
+  if (!children) return null;
+  return (
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownTableComponents}>
+      {children}
+    </ReactMarkdown>
+  );
+}
+
+function useNarrowLayout() {
+  const [narrow, setNarrow] = useState(() => matchesMobileLayout());
+  useEffect(() => subscribeMobileLayout(setNarrow), []);
+  return narrow;
+}
 
 function countItems(items) {
   let count = 0;
@@ -209,7 +233,7 @@ function RoadmapCardChat({
                 >
                   <span className="roadmap-card-chat-role">{msg.role === 'user' ? 'You' : 'Guide'}</span>
                   <div className="roadmap-card-chat-content">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                    <GuideMarkdown>{msg.content}</GuideMarkdown>
                   </div>
                 </div>
               ))}
@@ -302,6 +326,7 @@ function RoadmapCard({
   const idStr = String(item.id);
   const mustExpand = mustExpandIds && mustExpandIds.has(idStr);
   const [expanded, setExpanded] = useState(() => depth < 2 || !!mustExpand);
+  const narrow = useNarrowLayout();
   const hasChildren = item.children && item.children.length > 0;
   const isCompleted = completedIds.includes(item.id);
   const isGraphLoading = !!graphLoadingById[item.id];
@@ -343,6 +368,85 @@ function RoadmapCard({
   };
 
   const showDetails = !isCompleted;
+
+  const graphAction = (
+    <button
+      className="guide-section-link secondary"
+      type="button"
+      disabled={isGraphLoading || roadmapBulkJob === 'graphs' || serverActionsDisabled}
+      onClick={() => onGenerateGraph(item.id)}
+    >
+      {isGraphLoading ? 'Generating graph...' : 'Generate Graph'}
+    </button>
+  );
+
+  const chatAction = (
+    <RoadmapCardChat
+      cardId={idStr}
+      cardTitle={title}
+      onSendCardChat={onSendCardChat}
+      onLoadCardChat={onLoadCardChat}
+      onClearCardChat={onClearCardChat}
+      serverActionsDisabled={serverActionsDisabled}
+    />
+  );
+
+  const secondaryDrawers = (
+    <div className="roadmap-secondary-drawers">
+      <details className="roadmap-alternative-reading roadmap-secondary-drawer">
+        <summary>{isAlternativeReadingLoading ? 'Generating author shortcut...' : 'Author Shortcut'}</summary>
+        <div className="roadmap-alternative-reading-content">
+          {hasShortcut && Number.isFinite(item.alternative_source_word_count) && Number.isFinite(item.alternative_word_count) && (
+            <p className="roadmap-alternative-reading-stats">
+              Reference words: {item.alternative_source_word_count} | Shortcut words: {item.alternative_word_count}
+            </p>
+          )}
+          {hasShortcut && (
+            <GuideMarkdown>{item.alternative_reading}</GuideMarkdown>
+          )}
+          <button
+            className="guide-section-link secondary"
+            type="button"
+            disabled={
+              isAlternativeReadingLoading ||
+              roadmapBulkJob === 'shortcuts' ||
+              serverActionsDisabled ||
+              !onGenerateAlternativeReading
+            }
+            onClick={() => onGenerateAlternativeReading && onGenerateAlternativeReading(item.id)}
+          >
+            {isAlternativeReadingLoading ? 'Generating author shortcut...' : hasShortcut ? 'Regenerate shortcut' : 'Generate shortcut'}
+          </button>
+        </div>
+      </details>
+      <details className="roadmap-outsider-guide roadmap-secondary-drawer">
+        <summary>{isOutsiderGuideLoading ? 'Generating outsider guide...' : 'Outsider Guide'}</summary>
+        <div className="roadmap-outsider-guide-content">
+          {hasOutsider && Number.isFinite(item.outsider_source_word_count) && Number.isFinite(item.outsider_word_count) && (
+            <p className="roadmap-outsider-guide-stats">
+              Reference words: {item.outsider_source_word_count} | Guide words: {item.outsider_word_count}
+            </p>
+          )}
+          {hasOutsider && (
+            <GuideMarkdown>{item.outsider_guide}</GuideMarkdown>
+          )}
+          <button
+            className="guide-section-link secondary"
+            type="button"
+            disabled={
+              isOutsiderGuideLoading ||
+              roadmapBulkJob === 'outsiders' ||
+              serverActionsDisabled ||
+              !onGenerateOutsiderGuide
+            }
+            onClick={() => onGenerateOutsiderGuide && onGenerateOutsiderGuide(item.id)}
+          >
+            {isOutsiderGuideLoading ? 'Generating outsider guide...' : hasOutsider ? 'Regenerate guide' : 'Generate guide'}
+          </button>
+        </div>
+      </details>
+    </div>
+  );
 
   return (
     <div
@@ -389,7 +493,7 @@ function RoadmapCard({
         <aside className="roadmap-takeaway-callout">
           <span className="roadmap-field-label">Carry forward</span>
           <div className="roadmap-takeaway-body">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.takeaway}</ReactMarkdown>
+            <GuideMarkdown>{item.takeaway}</GuideMarkdown>
           </div>
         </aside>
       )}
@@ -399,27 +503,29 @@ function RoadmapCard({
       )}
 
       {showDetails && (
-      <div className="roadmap-card-actions">
-        <button className="guide-section-link" type="button" onClick={handleViewOriginal}>
-          View in original text
-        </button>
-        <button
-          className="guide-section-link secondary"
-          type="button"
-          disabled={isGraphLoading || roadmapBulkJob === 'graphs' || serverActionsDisabled}
-          onClick={() => onGenerateGraph(item.id)}
-        >
-          {isGraphLoading ? 'Generating graph...' : 'Generate Graph'}
-        </button>
-        <RoadmapCardChat
-          cardId={idStr}
-          cardTitle={title}
-          onSendCardChat={onSendCardChat}
-          onLoadCardChat={onLoadCardChat}
-          onClearCardChat={onClearCardChat}
-          serverActionsDisabled={serverActionsDisabled}
-        />
-      </div>
+        narrow ? (
+          <div className="roadmap-card-actions roadmap-card-actions--compact">
+            <button className="guide-section-link roadmap-primary-action" type="button" onClick={handleViewOriginal}>
+              Read this section
+            </button>
+            <details className="roadmap-card-more">
+              <summary>More</summary>
+              <div className="roadmap-card-more-panel">
+                {graphAction}
+                {chatAction}
+                {secondaryDrawers}
+              </div>
+            </details>
+          </div>
+        ) : (
+          <div className="roadmap-card-actions">
+            <button className="guide-section-link" type="button" onClick={handleViewOriginal}>
+              View in original text
+            </button>
+            {graphAction}
+            {chatAction}
+          </div>
+        )
       )}
 
       {showDetails && item.graph_image_url && (
@@ -435,62 +541,7 @@ function RoadmapCard({
         </div>
       )}
 
-      {showDetails && (
-        <div className="roadmap-secondary-drawers">
-          <details className="roadmap-alternative-reading roadmap-secondary-drawer">
-            <summary>{isAlternativeReadingLoading ? 'Generating author shortcut...' : 'Author Shortcut'}</summary>
-            <div className="roadmap-alternative-reading-content">
-              {hasShortcut && Number.isFinite(item.alternative_source_word_count) && Number.isFinite(item.alternative_word_count) && (
-                <p className="roadmap-alternative-reading-stats">
-                  Reference words: {item.alternative_source_word_count} | Shortcut words: {item.alternative_word_count}
-                </p>
-              )}
-              {hasShortcut && (
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.alternative_reading}</ReactMarkdown>
-              )}
-              <button
-                className="guide-section-link secondary"
-                type="button"
-                disabled={
-                  isAlternativeReadingLoading ||
-                  roadmapBulkJob === 'shortcuts' ||
-                  serverActionsDisabled ||
-                  !onGenerateAlternativeReading
-                }
-                onClick={() => onGenerateAlternativeReading && onGenerateAlternativeReading(item.id)}
-              >
-                {isAlternativeReadingLoading ? 'Generating author shortcut...' : hasShortcut ? 'Regenerate shortcut' : 'Generate shortcut'}
-              </button>
-            </div>
-          </details>
-          <details className="roadmap-outsider-guide roadmap-secondary-drawer">
-            <summary>{isOutsiderGuideLoading ? 'Generating outsider guide...' : 'Outsider Guide'}</summary>
-            <div className="roadmap-outsider-guide-content">
-              {hasOutsider && Number.isFinite(item.outsider_source_word_count) && Number.isFinite(item.outsider_word_count) && (
-                <p className="roadmap-outsider-guide-stats">
-                  Reference words: {item.outsider_source_word_count} | Guide words: {item.outsider_word_count}
-                </p>
-              )}
-              {hasOutsider && (
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.outsider_guide}</ReactMarkdown>
-              )}
-              <button
-                className="guide-section-link secondary"
-                type="button"
-                disabled={
-                  isOutsiderGuideLoading ||
-                  roadmapBulkJob === 'outsiders' ||
-                  serverActionsDisabled ||
-                  !onGenerateOutsiderGuide
-                }
-                onClick={() => onGenerateOutsiderGuide && onGenerateOutsiderGuide(item.id)}
-              >
-                {isOutsiderGuideLoading ? 'Generating outsider guide...' : hasOutsider ? 'Regenerate guide' : 'Generate guide'}
-              </button>
-            </div>
-          </details>
-        </div>
-      )}
+      {showDetails && !narrow && secondaryDrawers}
 
       {hasChildren && expanded && showDetails && (
         <div className="roadmap-children">

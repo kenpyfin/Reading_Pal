@@ -350,7 +350,7 @@
 }
 
 /* Mobile specific adjustments if needed, can also be handled in BookView.css @media query */
-@media (max-width: 768px) {
+@media (max-width: 768px), (max-height: 500px) and (orientation: landscape) {
   .reading-guide-top-container {
     position: sticky;
     top: 0;
@@ -886,6 +886,95 @@
   height: 10px;
   background: var(--color-primary);
   border-color: var(--color-primary);
+}
+
+.markdown-table-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+  -webkit-overflow-scrolling: touch;
+  margin-bottom: 1em;
+}
+
+.markdown-table-scroll table {
+  width: max-content;
+  min-width: 100%;
+  margin-bottom: 0;
+}
+
+@media (max-width: 768px), (max-height: 500px) and (orientation: landscape) {
+  .reading-guide-jump-dot {
+    width: 44px;
+    height: 44px;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    position: relative;
+  }
+
+  .reading-guide-jump-dot::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    border: 1px solid var(--color-border);
+    background: transparent;
+    transform: translate(-50%, -50%);
+  }
+
+  .reading-guide-jump-dot.is-done::after {
+    background: var(--color-text-muted);
+    border-color: var(--color-text-muted);
+  }
+
+  .reading-guide-jump-dot.is-active {
+    width: 44px;
+    height: 44px;
+  }
+
+  .reading-guide-jump-dot.is-active::after {
+    width: 12px;
+    height: 12px;
+    background: var(--color-primary);
+    border-color: var(--color-primary);
+  }
+
+  .roadmap-card-actions--compact {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .roadmap-primary-action,
+  .roadmap-card-more > summary {
+    width: 100%;
+    min-height: 44px;
+    box-sizing: border-box;
+  }
+
+  .roadmap-card-more > summary {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    background: var(--color-bg-elevated);
+    color: var(--color-text);
+    font-weight: 600;
+  }
+
+  .roadmap-card-more-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-top: 8px;
+  }
+
+  .roadmap-card-more-panel .guide-section-link {
+    min-height: 44px;
+  }
 }
 
 .roadmap-card-actions {
@@ -1440,7 +1529,7 @@
 }
 
 /* Appended for mobile merged NavBar + guide (see apply_navbar_guide_merge.py) */
-@media (max-width: 768px) {
+@media (max-width: 768px), (max-height: 500px) and (orientation: landscape) {
   .reading-guide-actions--below-merged-nav {
     position: sticky;
     top: 0;

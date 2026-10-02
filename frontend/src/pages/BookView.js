@@ -9,6 +9,7 @@ import NoteDisplayModal from '../components/NoteDisplayModal';
 import { debounce } from 'lodash';
 import './BookView.css';
 import logger from '../utils/logger'; // Ensure logger is imported
+import { matchesMobileLayout, subscribeMobileLayout, matchesWideDesktop, subscribeWideDesktop } from '../utils/mobileLayout';
 import { getPageForOffset } from '../utils/textLinking'; // Import text linking utilities
 import {
   getStoredAuthToken,
@@ -535,6 +536,7 @@ function BookView({
   const [fullMarkdownContent, setFullMarkdownContent] = useState(''); // To store the full markdown as state
 
   const [selectedBookText, setSelectedBookText] = useState(null);
+  const [selectionAnchor, setSelectionAnchor] = useState(null);
   const [selectedScrollPercentage, setSelectedScrollPercentage] = useState(null);
   const [selectedGlobalCharOffset, setSelectedGlobalCharOffset] = useState(null);
 
@@ -579,7 +581,8 @@ function BookView({
 
   const [showManageBookmarksModal, setShowManageBookmarksModal] = useState(false);
   const [notesLLMPopupMode, setNotesLLMPopupMode] = useState(null); // null | 'note' | 'llm'
-  const [isMobileView, setIsMobileView] = useState(window.innerWidth <= 768);
+  const [isMobileView, setIsMobileView] = useState(() => matchesMobileLayout());
+  const [fontControlsOnBar, setFontControlsOnBar] = useState(() => matchesWideDesktop());
   const [isBookmarkMenuOpen, setIsBookmarkMenuOpen] = useState(false);
   const bookmarkMenuRef = useRef(null); // For detecting clicks outside
   const [initialScrollTop, setInitialScrollTop] = useState(null); // For restoring scroll position
@@ -901,10 +904,14 @@ function BookView({
       if (left + minW > window.innerWidth - margin) {
         left = Math.max(margin, window.innerWidth - minW - margin);
       }
-      const maxH = Math.max(120, window.innerHeight - r.bottom - gap - margin);
+      const spaceBelow = window.innerHeight - r.bottom - gap - margin;
+      const spaceAbove = r.top - gap - margin;
+      const openUp = spaceBelow < 240 && spaceAbove > spaceBelow;
+      const maxH = Math.max(120, openUp ? spaceAbove : spaceBelow);
       setBookViewMenuPopperStyle({
         position: 'fixed',
-        top: r.bottom + gap,
+        top: openUp ? 'auto' : r.bottom + gap,
+        bottom: openUp ? window.innerHeight - r.top + gap : 'auto',
         left,
         minWidth: minW,
         maxHeight: maxH,
@@ -2254,14 +2261,8 @@ function BookView({
       };
   }, []); // Empty dependency array as it refers to old handlers
 
-  useEffect(() => {
-    const checkMobileView = () => {
-      setIsMobileView(window.innerWidth <= 768);
-    };
-    // checkMobileView(); // Already initialized in useState
-    window.addEventListener('resize', checkMobileView);
-    return () => window.removeEventListener('resize', checkMobileView);
-  }, []);
+  useEffect(() => subscribeMobileLayout(setIsMobileView), []);
+  useEffect(() => subscribeWideDesktop(setFontControlsOnBar), []);
 
   useLayoutEffect(() => {
     if (!navBarActiveScrollRef || !bumpNavBarScrollSync) {
@@ -2764,7 +2765,15 @@ function BookView({
     }
   };
 
-  const handleTextSelect = ({ text: textFromBookPane, rangeDetails }) => { // MODIFIED SIGNATURE
+  const handleTextSelect = (payload) => {
+    if (!payload || typeof payload !== 'object') {
+      setSelectedBookText(null);
+      setSelectedGlobalCharOffset(null);
+      setSelectedScrollPercentage(null);
+      setSelectionAnchor(null);
+      return;
+    }
+    const { text: textFromBookPane, rangeDetails, clientRect } = payload;
     // const selection = window.getSelection(); // REMOVE THIS LINE
 
     // MODIFIED CONDITION: Use rangeDetails directly
@@ -2772,8 +2781,10 @@ function BookView({
       setSelectedBookText(null);
       setSelectedGlobalCharOffset(null);
       setSelectedScrollPercentage(null);
+      setSelectionAnchor(null);
       return;
     }
+    setSelectionAnchor(clientRect || null);
 
     // const range = selection.getRangeAt(0); // REMOVE THIS LINE
     const pageContainerElement = bookPaneContainerRef.current;
@@ -3046,6 +3057,7 @@ function BookView({
       setSelectedBookText(null);
       setSelectedGlobalCharOffset(null);
       setSelectedScrollPercentage(null);
+      setSelectionAnchor(null);
     } else {
         logger.warn("[BookView - handleNewNoteSaved] Received invalid newNote object or note without ID:", newNote);
     }
@@ -3779,6 +3791,7 @@ function BookView({
             // Clear selection after reformatting
             setSelectedBookText(null);
             setSelectedGlobalCharOffset(null);
+            setSelectionAnchor(null);
             
         } else {
             throw new Error("Reformat operation did not return new content.");
@@ -3794,6 +3807,7 @@ function BookView({
   };
 
   const isGuideMode = viewMode === 'guide';
+  const showTypeControlsInMenu = isMobileView || !fontControlsOnBar;
   const handleSwitchToOriginalFromGuide = useCallback(() => {
     if (guideScrollContainerRef.current) {
       setGuideScrollPositionByPage((prev) => ({
@@ -3812,20 +3826,13 @@ function BookView({
       setNavBarExtra(
         <div className="navbar-guide-extra">
           <h3 className="navbar-guide-extra-title">Reading Roadmap</h3>
-          <button
-            type="button"
-            className="navbar-guide-extra-switch"
-            onClick={handleSwitchToOriginalFromGuide}
-          >
-            Switch to Original Text
-          </button>
         </div>,
       );
       return () => setNavBarExtra(null);
     }
     setNavBarExtra(null);
     return undefined;
-  }, [setNavBarExtra, viewMode, isMobileView, handleSwitchToOriginalFromGuide]);
+  }, [setNavBarExtra, viewMode, isMobileView]);
 
   const toggleViewMode = () => {
     if (isGuideMode) {
@@ -3866,7 +3873,17 @@ function BookView({
   );
 
   const floatingToolbarStyle = useMemo(() => {
-    if (!bookPaneAreaFrame) return undefined;
+    if (!bookPaneAreaFrame && !isMobileView) return undefined;
+    if (isMobileView) {
+      return {
+        position: 'fixed',
+        top: 'auto',
+        bottom: 0,
+        left: 0,
+        width: '100%',
+        zIndex: 1200,
+      };
+    }
     return {
       position: 'fixed',
       top: FLOATING_TOOLBAR_TOP_PX,
@@ -3874,7 +3891,28 @@ function BookView({
       width: bookPaneAreaFrame.width,
       zIndex: 1200,
     };
-  }, [bookPaneAreaFrame]);
+  }, [bookPaneAreaFrame, isMobileView]);
+
+  useEffect(() => {
+    if (!isMobileView || !notesLLMPopupMode) {
+      document.documentElement.style.removeProperty('--keyboard-inset');
+      return undefined;
+    }
+    const viewport = window.visualViewport;
+    if (!viewport) return undefined;
+    const apply = () => {
+      const inset = Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop);
+      document.documentElement.style.setProperty('--keyboard-inset', `${Math.round(inset)}px`);
+    };
+    apply();
+    viewport.addEventListener('resize', apply);
+    viewport.addEventListener('scroll', apply);
+    return () => {
+      viewport.removeEventListener('resize', apply);
+      viewport.removeEventListener('scroll', apply);
+      document.documentElement.style.removeProperty('--keyboard-inset');
+    };
+  }, [isMobileView, notesLLMPopupMode]);
 
   const collapseBookToolbar = useCallback(() => {
     setBookControlsExpandedPersist(false);
@@ -3984,7 +4022,7 @@ function BookView({
 
   return (
     <div
-      className="book-view-container"
+      className={`book-view-container${isMobileView ? ' is-phone-reader' : ''}`}
       ref={bookViewContainerRef}
       style={{
         display: 'flex',
@@ -4049,13 +4087,14 @@ function BookView({
             <div
               className="book-pane-container"
             >
-              {floatingToolbarStyle && createPortal(
+              {(() => {
+                const readerChrome = (
                 <div
                   ref={bookToolbarWrapperRef}
-                  className="book-floating-toolbar-shell"
-                  style={floatingToolbarStyle}
+                  className={`book-floating-toolbar-shell${isMobileView ? ' is-phone-shell' : ' is-desktop-shell'}`}
+                  style={isMobileView ? floatingToolbarStyle : undefined}
                 >
-                  <div className={`book-floating-toolbar ${bookControlsExpanded ? 'is-expanded' : 'is-collapsed'}`}>
+                  <div className={`book-floating-toolbar ${isMobileView ? 'is-phone-bar' : 'is-desktop-bar'}`}>
                     <div className="book-floating-toolbar-panel">
                       <div className="book-pane-controls-header">
                         <div className="left-controls-group">
@@ -4121,6 +4160,36 @@ function BookView({
                                   </button>
                                   <button
                                     type="button"
+                                    onClick={() => { openAddBookmarkModal(); setIsBookViewMenuOpen(false); }}
+                                    className="dropdown-item control-button"
+                                  >
+                                    Add Bookmark
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => { setNotesLLMPopupMode('note'); setIsBookViewMenuOpen(false); }}
+                                    className="dropdown-item control-button"
+                                  >
+                                    Add note
+                                  </button>
+                                  {showTypeControlsInMenu && (
+                                    <div className="dropdown-font-controls">
+                                      <span className="dropdown-font-controls-label">Text size</span>
+                                      <div className="font-controls-group">
+                                        <button type="button" onClick={decreaseFontSize} className="font-control-btn" title="Decrease font size">A-</button>
+                                        <span className="font-controls-value">{fontSize}px</span>
+                                        <button type="button" onClick={increaseFontSize} className="font-control-btn" title="Increase font size">A+</button>
+                                      </div>
+                                      <span className="dropdown-font-controls-label">Line spacing</span>
+                                      <div className="font-controls-group">
+                                        <button type="button" onClick={decreaseLineHeight} className="font-control-btn" title="Decrease line spacing">LH-</button>
+                                        <span className="font-controls-value">{lineHeight.toFixed(1)}</span>
+                                        <button type="button" onClick={increaseLineHeight} className="font-control-btn" title="Increase line spacing">LH+</button>
+                                      </div>
+                                    </div>
+                                  )}
+                                  <button
+                                    type="button"
                                     onClick={() => { setNotesLLMPopupMode('llm'); setIsBookViewMenuOpen(false); }}
                                     className="dropdown-item control-button"
                                   >
@@ -4135,7 +4204,7 @@ function BookView({
                           <button
                             type="button"
                             onClick={openAddBookmarkModal}
-                            className="control-button"
+                            className="control-button reader-tool-inline"
                             title="Add a bookmark at current location"
                           >
                             Add Bookmark
@@ -4143,7 +4212,7 @@ function BookView({
                           <button
                             type="button"
                             onClick={() => setNotesLLMPopupMode('note')}
-                            className="control-button"
+                            className="control-button reader-tool-inline"
                             title="Add a note at current selection or location"
                           >
                             Add note
@@ -4152,10 +4221,10 @@ function BookView({
                         {totalPages > 1 && (
                           <div className="pagination-controls header-pagination">
                             <button type="button" onClick={handlePreviousPage} disabled={currentPage === 1} className="control-button">
-                              Previous
+                              <span className="page-nav-long">Previous</span>
+                              <span className="page-nav-short">Prev</span>
                             </button>
                             <form onSubmit={handleGoToPage} className="page-input-form">
-                              <span> Page </span>
                               <input
                                 type="number"
                                 value={pageInput}
@@ -4164,8 +4233,9 @@ function BookView({
                                 min="1"
                                 max={totalPages}
                                 className="page-input"
+                                aria-label={`Page ${currentPage} of ${totalPages}`}
                               />
-                              <span> of {totalPages} </span>
+                              <span className="page-nav-total">/ {totalPages}</span>
                             </form>
                             <button type="button" onClick={handleNextPage} disabled={currentPage === totalPages} className="control-button">
                               Next
@@ -4173,7 +4243,7 @@ function BookView({
                           </div>
                         )}
                         {totalPages <= 1 && <div className="pagination-controls-placeholder" />}
-                        <div className="right-controls-group">
+                        <div className="right-controls-group reader-tool-inline">
                           <div className="font-controls-group">
                             <button type="button" onClick={decreaseFontSize} className="font-control-btn" title="Decrease font size">A-</button>
                             <span className="font-controls-value">{fontSize}px</span>
@@ -4197,9 +4267,13 @@ function BookView({
                       {bookControlsExpanded ? '▶' : '◀'}
                     </button>
                   </div>
-                </div>,
-                document.body,
-              )}
+                </div>
+                );
+                if (isMobileView) {
+                  return floatingToolbarStyle ? createPortal(readerChrome, document.body) : null;
+                }
+                return readerChrome;
+              })()}
 
               <div
                 className={`book-pane-body${viewMode === 'guide' ? ' book-pane-body--guide-scroll' : ''}`}
@@ -4265,6 +4339,31 @@ function BookView({
               )}
               </div>
               {/* Floating "Back to Reading Guide" button when user navigated from guide */}
+              {viewMode === 'original' && selectionAnchor && !notesLLMPopupMode && typeof document !== 'undefined' && createPortal(
+                <div
+                  className="selection-action-bar"
+                  style={{
+                    top: selectionAnchor.top < 88 ? selectionAnchor.bottom + 8 : Math.max(8, selectionAnchor.top - 52),
+                    left: Math.min(Math.max(8, selectionAnchor.left), Math.max(8, window.innerWidth - 168)),
+                  }}
+                >
+                  <button
+                    type="button"
+                    onPointerDown={(event) => event.preventDefault()}
+                    onClick={() => setNotesLLMPopupMode('note')}
+                  >
+                    Note
+                  </button>
+                  <button
+                    type="button"
+                    onPointerDown={(event) => event.preventDefault()}
+                    onClick={() => setNotesLLMPopupMode('llm')}
+                  >
+                    Ask
+                  </button>
+                </div>,
+                document.body,
+              )}
               {viewMode === 'original' && showBackToGuide && (
                 <button
                   type="button"
@@ -4278,7 +4377,8 @@ function BookView({
                     setShowBackToGuide(false);
                   }}
                 >
-                  Back to Reading Guide
+                  <span className="back-to-guide-label-long">Back to Reading Guide</span>
+                  <span className="back-to-guide-label-short">Guide</span>
                 </button>
               )}
               {showScrollToTopButton &&
@@ -4305,7 +4405,7 @@ function BookView({
 
     {/* Note popup modal */}
     {notesLLMPopupMode === 'note' && (
-      <div className="modal-overlay" onClick={() => setNotesLLMPopupMode(null)}>
+      <div className={`modal-overlay${isMobileView ? ' modal-overlay--sheet' : ''}`} onClick={() => setNotesLLMPopupMode(null)}>
         <div className="modal-content note-llm-popup-modal" onClick={(e) => e.stopPropagation()}>
           <div className="modal-header">
             <h2>Add note</h2>
@@ -4333,7 +4433,7 @@ function BookView({
 
     {/* LLM popup modal */}
     {notesLLMPopupMode === 'llm' && (
-      <div className="modal-overlay" onClick={() => setNotesLLMPopupMode(null)}>
+      <div className={`modal-overlay${isMobileView ? ' modal-overlay--sheet' : ''}`} onClick={() => setNotesLLMPopupMode(null)}>
         <div className="modal-content note-llm-popup-modal" onClick={(e) => e.stopPropagation()}>
           <div className="modal-header">
             <h2>Ask LLM</h2>

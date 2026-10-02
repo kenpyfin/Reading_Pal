@@ -197,6 +197,7 @@ function UserManagementPage() {
       {users.length === 0 && !loadingUsers ? (
         <p>No users found.</p>
       ) : (
+        <div className="users-table-scroll">
         <table className="users-table">
           <thead>
             <tr>
@@ -242,6 +243,7 @@ function UserManagementPage() {
             ))}
           </tbody>
         </table>
+        </div>
       )}
     </div>
   );

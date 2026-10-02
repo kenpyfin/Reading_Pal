@@ -2,6 +2,41 @@
 
 Chronological log of meaningful implementation work: decisions, behavior changes, and where to look in the codebase. Agents and humans should **read relevant sections before** planning or changing related code, and **append an entry after** non-trivial work.
 
+## 2026-10-02 — Phone and desktop reader chrome promoted to production
+
+- **What:** The phone layout (library menu, reader bottom bar, guide cards, row actions, prompt fields, admin table, short landscape phones) and the in-flow desktop reader bar are on branch `prod`.
+- **Why:** The operator asked to deploy the reviewed dev build to the public site.
+- **Where:** `frontend/src/pages/BookView.js`, `frontend/src/pages/BookView.css`, `frontend/src/pages/BookList.js`, `frontend/src/utils/mobileLayout.js`, `frontend/src/components/NavBar.js`, `frontend/src/components/ReadingGuidePane.js`
+- **Notes:** Promote with a fast-forward of `feat/mobile-phone-ui` onto `prod` in `/home/ken/big_storage/projects/reading_pal_6-prod`, then `./deploy.sh --no-prune`. Public traffic stays on port 3100. Dev stays on 3200.
+
+## 2026-10-02 — Desktop reader bar in page flow
+
+- **What:** On a desktop-width reader the toolbar is a full-width strip at the top of the pane, and the guide or book starts below it. It stays on one row: Menu and Guide/Original on the left, page controls in the center. Add Bookmark and Add note are in Menu. Text size and line spacing stay on the bar from 1200px wide and move into Menu below that. The phone bottom bar is unchanged.
+- **Why:** The fixed toolbar covered the guide title and wrapped onto a second row on landscape desktop widths.
+- **Where:** `frontend/src/pages/BookView.js`, `frontend/src/pages/BookView.css`, `frontend/src/utils/mobileLayout.js`
+- **Notes:** Dev stack only. The 1200px cutoff matches `DESKTOP_FONT_ON_BAR_QUERY`.
+
+## 2026-10-02 — Phone layout follow-through: prompts, admin table, landscape
+
+- **What:** Guide prompt fields use 16px type so a phone does not zoom on focus, and the save and restore controls are 44px tall on a phone. The admin user table scrolls sideways inside its page. Phone chrome (collapsed nav, reader bottom bar, guide card layout) also applies when the screen is short and landscape, even if it is wider than 768px.
+- **Why:** Those three items were the remaining phone-layout gaps. A landscape phone is often wider than 768px, so width alone left the desktop chrome in place.
+- **Where:** `frontend/src/utils/mobileLayout.js`, `frontend/src/pages/PromptSettingsPage.css`, `frontend/src/pages/UserManagementPage.js`, `frontend/src/pages/UserManagementPage.css`, `frontend/src/index.css`, `frontend/src/components/NavBar.js`, `frontend/src/components/NavBar.css`, `frontend/src/pages/BookView.js`, `frontend/src/pages/BookView.css`, `frontend/src/components/ReadingGuidePane.js`, `frontend/src/components/ReadingGuidePane.css`
+- **Notes:** The shared query is `(max-width: 768px), (max-height: 500px) and (orientation: landscape)`. Dev stack only. Production is unchanged.
+
+## 2026-10-02 — Book list actions in a row menu
+
+- **What:** Rename and Delete (or Cancel processing) are no longer buttons on the book row. Each row has a ⋯ control that opens a menu with those actions. While a rename or delete is in flight, the control shows … and stays disabled.
+- **Why:** The always-visible actions, especially the full-width phone buttons, crowded the list.
+- **Where:** `frontend/src/pages/BookList.js`, `frontend/src/index.css`
+- **Notes:** Dev stack only. Offline and cached lists still disable the control.
+
+## 2026-10-02 — Phone layout for library, reader, and guide cards
+
+- **What:** Under 768px the nav collapses into a Menu that keeps Book List, Upload, Guide prompts, theme, and Logout on screen. Book rows show Rename and Delete without hover. The reader uses a bottom bar (Menu, page controls, Guide/Original) instead of the stacked top toolbar; bookmarks, notes, type size, line spacing, and reformat stay in Menu. Note and Ask open as bottom sheets. Guide cards keep Read this section full width and put graph, chat, shortcut, and outsider guide under More. Jump dots have a 44px target, and wide tables scroll sideways. Selecting text shows Note and Ask beside the selection.
+- **Why:** The desktop chrome did not fit a phone, and hover-only row actions and an expanded reader toolbar blocked the page.
+- **Where:** `frontend/public/index.html`, `frontend/src/components/NavBar.js`, `frontend/src/components/NavBar.css`, `frontend/src/index.css`, `frontend/src/pages/BookList.js`, `frontend/src/pages/BookView.js`, `frontend/src/pages/BookView.css`, `frontend/src/components/BookPane.js`, `frontend/src/components/ReadingGuidePane.js`, `frontend/src/components/ReadingGuidePane.css`
+- **Notes:** Dev stack only (`http://10.0.1.22:3200`). Production worktree is unchanged. Prompt-page layout, the admin user table, and short landscape phones wider than 768px are still open.
+
 ## 2026-10-02 — Separate production worktree from the working copy
 
 - **What:** Production runs from git worktree `/home/ken/big_storage/projects/reading_pal_6-prod` on branch `prod` (Compose project `reading_pal_6-prod`, ports 3100 / 8501 / 8502 / 8503). This checkout is development (`reading_pal_6-dev`, ports 3200 / 8601 / 8602 / 8603). `deploy.sh` refuses `STACK_ROLE=dev`. `reload_dev.sh` and `redeploy_app.sh` refuse `STACK_ROLE=prod`. The dev checkout does not start the MinerU worker unless `ALLOW_DEV_PDF_WORKER=1`.

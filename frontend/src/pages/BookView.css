@@ -830,44 +830,59 @@
   flex-wrap: wrap;
 }
 
-/* Medium widths: split controls into two rows to prevent overlap */
-@media (max-width: 1100px) and (min-width: 769px) {
-  .book-pane-controls-header {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    grid-template-areas:
-      "left right"
-      "pagination pagination";
-    row-gap: 8px;
-  }
+/* Desktop reader bar sits in page flow, one row. Bookmark and note live in Menu.
+   Type size stays on the bar from 1200px up (same cutoff as DESKTOP_FONT_ON_BAR_QUERY). */
+.book-floating-toolbar-shell.is-desktop-shell {
+  display: block;
+  width: 100%;
+  flex-shrink: 0;
+  pointer-events: auto;
+  position: relative;
+  z-index: 5;
+}
 
-  .left-controls-group {
-    grid-area: left;
-    justify-self: start;
-    width: 100%;
-  }
+.book-floating-toolbar.is-desktop-bar {
+  display: block;
+  width: 100%;
+  margin: 0;
+}
 
-  .right-controls-group {
-    grid-area: right;
-    justify-self: end;
-    width: 100%;
-  }
+.book-floating-toolbar.is-desktop-bar .book-floating-toolbar-panel {
+  max-width: none;
+  width: 100%;
+  opacity: 1;
+  transform: none;
+  overflow: visible;
+}
 
-  .right-controls-group .font-controls-group {
-    justify-content: flex-end;
-    flex-wrap: wrap;
-    row-gap: 4px;
-  }
+.book-floating-toolbar.is-desktop-bar .book-toolbar-toggle-btn--floating {
+  display: none;
+}
 
-  .pagination-controls.header-pagination,
-  .pagination-controls-placeholder {
-    grid-area: pagination;
-    justify-self: center;
-    width: 100%;
-  }
+.book-floating-toolbar.is-desktop-bar .book-pane-controls-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  width: 100%;
+  box-sizing: border-box;
+  border-bottom: 1px solid var(--color-border);
+  border-radius: 0;
+  box-shadow: none;
+}
 
-  .pagination-controls.header-pagination {
-    flex-wrap: wrap;
-    row-gap: 6px;
+.book-floating-toolbar.is-desktop-bar .left-controls-group,
+.book-floating-toolbar.is-desktop-bar .font-controls-group,
+.book-floating-toolbar.is-desktop-bar .pagination-controls.header-pagination {
+  flex-wrap: nowrap;
+}
+
+.book-floating-toolbar.is-desktop-bar .left-controls-group > .reader-tool-inline {
+  display: none;
+}
+
+@media (max-width: 1199px) {
+  .book-floating-toolbar.is-desktop-bar .right-controls-group {
+    display: none;
   }
 }
 
@@ -1089,7 +1104,7 @@
 
 
 /* --- Add Mobile Specific Styles at the end or in a dedicated @media block --- */
-@media (max-width: 768px) {
+@media (max-width: 768px), (max-height: 500px) and (orientation: landscape) {
   .book-view-container {
     /* flexDirection: column; is handled by inline style in BookView.js */
     /* height: calc(100vh - YOUR_HEADER_HEIGHT); is handled by parent or inline style */
@@ -1425,7 +1440,7 @@
   bottom: 86px;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 768px), (max-height: 500px) and (orientation: landscape) {
   .scroll-to-top-floating-btn {
     right: 16px;
     bottom: 16px;
@@ -1435,5 +1450,207 @@
 
   .scroll-to-top-floating-btn.with-back-guide-btn {
     bottom: 76px;
+  }
+}
+
+.back-to-guide-label-short {
+  display: none;
+}
+
+.page-nav-short {
+  display: none;
+}
+
+.selection-action-bar {
+  position: fixed;
+  z-index: 1300;
+  display: flex;
+  gap: 6px;
+  padding: 4px;
+  border-radius: 10px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+}
+
+.selection-action-bar button {
+  min-height: 44px;
+  min-width: 64px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 8px;
+  background: var(--color-primary);
+  color: var(--color-on-accent);
+  font: inherit;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.dropdown-font-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px 10px;
+}
+
+.dropdown-font-controls-label {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+
+.markdown-table-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+  -webkit-overflow-scrolling: touch;
+  margin-bottom: 1em;
+}
+
+.markdown-table-scroll table {
+  width: max-content;
+  min-width: 100%;
+  margin-bottom: 0;
+}
+
+@media (max-width: 768px), (max-height: 500px) and (orientation: landscape) {
+  .book-floating-toolbar-shell.is-phone-shell {
+    justify-content: stretch;
+    width: 100%;
+    pointer-events: auto;
+    background: var(--color-bg-elevated);
+    border-top: 1px solid var(--color-border);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+
+  .book-floating-toolbar.is-phone-bar {
+    width: 100%;
+    margin: 0;
+  }
+
+  .book-floating-toolbar.is-phone-bar .book-floating-toolbar-panel {
+    max-width: none;
+    width: 100%;
+    opacity: 1;
+    transform: none;
+    pointer-events: auto;
+  }
+
+  .book-floating-toolbar.is-phone-bar .book-toolbar-toggle-btn--floating {
+    display: none;
+  }
+
+  .book-floating-toolbar.is-phone-bar .book-pane-controls-header {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 8px;
+    box-sizing: border-box;
+  }
+
+  .book-floating-toolbar.is-phone-bar .left-controls-group {
+    display: contents;
+    width: auto;
+  }
+
+  .book-floating-toolbar.is-phone-bar .reader-tool-inline {
+    display: none;
+  }
+
+  .book-floating-toolbar.is-phone-bar .book-view-menu-container {
+    order: 1;
+  }
+
+  .book-floating-toolbar.is-phone-bar .pagination-controls.header-pagination,
+  .book-floating-toolbar.is-phone-bar .pagination-controls-placeholder {
+    order: 2;
+    flex: 1 1 auto;
+    min-width: 0;
+    justify-content: center;
+  }
+
+  .book-floating-toolbar.is-phone-bar .view-mode-switch {
+    order: 3;
+    min-width: 112px;
+    height: 44px;
+  }
+
+  .book-floating-toolbar.is-phone-bar .view-mode-switch-thumb {
+    height: 38px;
+  }
+
+  .book-floating-toolbar.is-phone-bar .control-button,
+  .book-floating-toolbar.is-phone-bar .page-input {
+    min-height: 44px;
+    height: 44px;
+    font-size: 16px;
+  }
+
+  .book-floating-toolbar.is-phone-bar .page-nav-long {
+    display: none;
+  }
+
+  .book-floating-toolbar.is-phone-bar .page-nav-short {
+    display: inline;
+  }
+
+  .book-floating-toolbar.is-phone-bar .page-input {
+    width: 52px;
+  }
+
+  .is-phone-reader .book-pane-body {
+    padding-bottom: calc(76px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .back-to-guide-floating-btn {
+    right: max(12px, env(safe-area-inset-right, 0px));
+    bottom: calc(84px + env(safe-area-inset-bottom, 0px));
+    min-height: 44px;
+    padding: 10px 14px;
+  }
+
+  .back-to-guide-label-long {
+    display: none;
+  }
+
+  .back-to-guide-label-short {
+    display: inline;
+  }
+
+  .scroll-to-top-floating-btn {
+    right: max(12px, env(safe-area-inset-right, 0px));
+    bottom: calc(84px + env(safe-area-inset-bottom, 0px));
+    width: 44px;
+    height: 44px;
+  }
+
+  .scroll-to-top-floating-btn.with-back-guide-btn {
+    bottom: calc(136px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .book-view-dropdown-menu .control-button.dropdown-item,
+  .dropdown-font-controls .font-control-btn {
+    min-height: 44px;
+    min-width: 44px;
+    font-size: 16px;
+  }
+
+  .modal-overlay--sheet {
+    align-items: flex-end;
+    padding-bottom: var(--keyboard-inset, 0px);
+  }
+
+  .modal-overlay--sheet .modal-content {
+    width: 100%;
+    max-width: 100%;
+    margin: 0;
+    border-radius: 16px 16px 0 0;
+    padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .modal-overlay--sheet .modal-body-scrollable {
+    max-height: min(60dvh, calc(100dvh - 160px - var(--keyboard-inset, 0px)));
   }
 }
