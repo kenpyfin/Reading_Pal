@@ -18,6 +18,7 @@ Usage: ./deploy.sh [options]
 Options:
   -h, --help           Show this help message.
   --purge-volumes      Also remove Docker volumes (destructive; opt-in).
+  --no-prune           Skip the global Docker prune. Use this on a host that runs other projects.
 
 Behavior:
   Reads PDF_SERVICE_RUNTIME from .env (default: host when PDF_EXTRACTION_BACKEND=mineru,
@@ -58,6 +59,7 @@ compose_services() {
 }
 
 PURGE_VOLUMES="false"
+SKIP_PRUNE="false"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -67,6 +69,10 @@ while [ $# -gt 0 ]; do
       ;;
     --purge-volumes)
       PURGE_VOLUMES="true"
+      shift
+      ;;
+    --no-prune)
+      SKIP_PRUNE="true"
       shift
       ;;
     *)
@@ -80,6 +86,8 @@ done
 trap cleanup SIGINT SIGTERM
 
 load_env
+assert_prod_checkout
+echo "INFO: Deploying ${STACK_ROLE:-unset} project ${COMPOSE_PROJECT_NAME:-<directory name>} (frontend ${FRONTEND_PORT:-3100}, backend ${BACKEND_PORT:-8501}, pdf ${PDF_SERVICE_PORT:-8502}, images ${IMAGE_SERVICE_PORT:-8503})"
 if host_runtime_selected; then
   echo "INFO: PDF service runtime=host (MinerU on host). Compose will skip pdf_service container."
 else
@@ -97,7 +105,11 @@ else
   docker compose down --remove-orphans || true
 fi
 
-purge_unused_docker_storage
+if [ "$SKIP_PRUNE" = "true" ]; then
+  echo "INFO: Skipping global Docker prune (--no-prune)."
+else
+  purge_unused_docker_storage
+fi
 
 export REACT_APP_BUILD_ID="${REACT_APP_BUILD_ID:-$(git rev-parse --short HEAD 2>/dev/null || date +%s)}"
 echo "INFO: Frontend build id: ${REACT_APP_BUILD_ID}"

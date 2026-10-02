@@ -33,6 +33,33 @@ resolve_python() {
   printf '%s' "$py"
 }
 
+assert_dev_checkout() {
+  load_env
+  if [[ "${STACK_ROLE:-}" == "prod" ]]; then
+    echo "ERROR: This checkout is STACK_ROLE=prod (${REPO_ROOT})." >&2
+    echo "Run ./deploy.sh here. Run ./reload_dev.sh only in the development checkout." >&2
+    exit 1
+  fi
+}
+
+assert_prod_checkout() {
+  load_env
+  if [[ "${STACK_ROLE:-}" == "dev" ]]; then
+    echo "ERROR: This checkout is STACK_ROLE=dev (${REPO_ROOT})." >&2
+    echo "Run ./reload_dev.sh here. Run ./deploy.sh only in the production worktree." >&2
+    exit 1
+  fi
+}
+
+refuse_dev_pdf_worker() {
+  load_env
+  if [[ "${STACK_ROLE:-}" == "dev" && "${ALLOW_DEV_PDF_WORKER:-}" != "1" ]]; then
+    echo "ERROR: The development checkout does not start the PDF worker." >&2
+    echo "Production owns the single GPU worker. Stop that worker, then set ALLOW_DEV_PDF_WORKER=1 to start one here." >&2
+    exit 1
+  fi
+}
+
 host_runtime_selected() {
   load_env
   local runtime="${PDF_SERVICE_RUNTIME:-}"
@@ -90,6 +117,7 @@ stop_host_pdf_service() {
 }
 
 start_host_pdf_service() {
+  refuse_dev_pdf_worker
   local py
   py="$(resolve_python)"
   if [[ ! -f "$APP_PATH" ]]; then

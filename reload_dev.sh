@@ -2,6 +2,10 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/pdf_service_host.sh
+source "${SCRIPT_DIR}/scripts/pdf_service_host.sh"
+
 # Fast reload helper for continuous development.
 # Default behavior:
 # - Detect changed files from git working tree
@@ -172,7 +176,29 @@ run_reload() {
   "${cmd[@]}"
 }
 
+strip_dev_pdf_service() {
+  load_env
+  if [[ "${STACK_ROLE:-}" != "dev" || "${ALLOW_DEV_PDF_WORKER:-}" == "1" ]]; then
+    return 0
+  fi
+  local -a kept=()
+  local svc
+  for svc in "${SELECTED_SERVICES[@]}"; do
+    if [[ "$svc" == "pdf_service" ]]; then
+      echo "INFO: Skipping pdf_service on the dev stack. Production owns the GPU worker."
+      continue
+    fi
+    kept+=("$svc")
+  done
+  if [[ ${#kept[@]} -eq 0 ]]; then
+    SELECTED_SERVICES=()
+  else
+    SELECTED_SERVICES=("${kept[@]}")
+  fi
+}
+
 main() {
+  assert_dev_checkout
   if ! command -v docker >/dev/null 2>&1; then
     echo "ERROR: docker is not installed or not in PATH." >&2
     exit 1
@@ -191,6 +217,13 @@ main() {
   fi
 
   validate_services
+  strip_dev_pdf_service
+  if [[ ${#SELECTED_SERVICES[@]} -eq 0 ]]; then
+    echo "INFO: Nothing left to reload."
+    return 0
+  fi
+  load_env
+  echo "INFO: Dev stack project=${COMPOSE_PROJECT_NAME:-<directory name>} frontend=${FRONTEND_PORT:-3100} backend=${BACKEND_PORT:-8501} pdf=${PDF_SERVICE_PORT:-8502} images=${IMAGE_SERVICE_PORT:-8503}"
   run_reload
 }
 

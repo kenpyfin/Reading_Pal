@@ -58,6 +58,10 @@ Default endpoints:
 - PDF service: `http://localhost:${PDF_SERVICE_PORT:-8502}`
 - Image server: `http://localhost:${IMAGE_SERVICE_PORT}`
 
+## Two checkouts
+
+Public traffic stays on the production worktree (`reading_pal_6-prod`, branch `prod`, `./deploy.sh`). Day-to-day edits stay in this directory (`STACK_ROLE=dev`, `./reload_dev.sh`, frontend port 3200). The two stacks share the database and the book files. See `docs/operations.md`.
+
 ## Alternative Dev Flows
 
 - Fast reload for changed services:

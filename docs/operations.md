@@ -105,6 +105,29 @@ When using split mode:
 - If you install a CUDA 12 Paddle wheel manually, Maxwell GPUs fall back to CPU unless those device vars force `gpu:0` (not recommended on M40).
 - **MinerU** is configured with `PDF_EXTRACTION_BACKEND=mineru`, not `PDF_SCAN_FIGURE_ENGINE`. The default Docker image does not include MinerU; use host conda (`start_services.sh`) or extend the image.
 
+## Production and development checkouts
+
+The public site and a working copy must not be the same Compose project. Use two checkouts of this repo. They share MongoDB (`DATABASE_NAME`) and the host storage paths (`PDF_STORAGE_PATH`, `MARKDOWN_PATH`, `IMAGES_PATH`). A reprocess or delete in development writes the live library.
+
+| | Production | Development |
+|---|---|---|
+| Directory | `/home/ken/big_storage/projects/reading_pal_6-prod` | `/home/ken/big_storage/projects/reading_pal_6` |
+| Git branch | `prod` | feature branches |
+| `STACK_ROLE` | `prod` | `dev` |
+| `COMPOSE_PROJECT_NAME` | `reading_pal_6-prod` | `reading_pal_6-dev` |
+| Frontend | `3100` (SWAG stays here) | `3200` |
+| Backend | `8501` | `8601` |
+| PDF worker | `8502`, always on | `8602`, do not start |
+| Image server | `8503` | `8603` |
+
+`./deploy.sh` runs only in the production worktree. It refuses `STACK_ROLE=dev`. `./reload_dev.sh` and `./redeploy_app.sh` run only in the development checkout. They refuse `STACK_ROLE=prod`.
+
+Only one MinerU worker may run. The development checkout will not start `pdf_service` unless `ALLOW_DEV_PDF_WORKER=1` and the production worker is already stopped.
+
+Promote a change by updating the `prod` branch in the production worktree, then run `./deploy.sh` there. `./reload_dev.sh` in this directory talks only to the development ports.
+
+`./deploy.sh --no-prune` skips `docker system prune`. Use it on a machine that runs other Compose projects.
+
 ## Scripts
 
 ## `redeploy_app.sh`

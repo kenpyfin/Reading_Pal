@@ -2,6 +2,13 @@
 
 Chronological log of meaningful implementation work: decisions, behavior changes, and where to look in the codebase. Agents and humans should **read relevant sections before** planning or changing related code, and **append an entry after** non-trivial work.
 
+## 2026-10-02 — Separate production worktree from the working copy
+
+- **What:** Production runs from git worktree `/home/ken/big_storage/projects/reading_pal_6-prod` on branch `prod` (Compose project `reading_pal_6-prod`, ports 3100 / 8501 / 8502 / 8503). This checkout is development (`reading_pal_6-dev`, ports 3200 / 8601 / 8602 / 8603). `deploy.sh` refuses `STACK_ROLE=dev`. `reload_dev.sh` and `redeploy_app.sh` refuse `STACK_ROLE=prod`. The dev checkout does not start the MinerU worker unless `ALLOW_DEV_PDF_WORKER=1`.
+- **Why:** `./reload_dev.sh` was rebuilding the same containers SWAG serves, so uncommitted work was production.
+- **Where:** `deploy.sh`, `reload_dev.sh`, `redeploy_app.sh`, `scripts/pdf_service_host.sh`, `docs/operations.md`, `docker-compose.yml`
+- **Notes:** Both checkouts share MongoDB and `PDF_STORAGE_PATH` / `MARKDOWN_PATH` / `IMAGES_PATH`. One GPU worker only, owned by production. `./deploy.sh --no-prune` skips the global Docker prune.
+
 ## 2026-10-01 — Prompt settings page and markdown section breaks
 
 - **What:** Added `/settings/prompts` so a signed-in user can read and replace the default reading-guide generation prompt and card format prompt. Overrides live on the user document and apply when a guide is created or regenerated. Reader page breaks and the knowledge map now also treat plain structural title lines (Chapter, Part, Section, front matter) as section starts. PDF and in-app reformat prompts promote those lines to ATX headings.

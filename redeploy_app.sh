@@ -315,6 +315,7 @@ main() {
   fi
 
   parse_args "$@"
+  assert_dev_checkout
   detect_services_if_needed
   validate_services
   run_redeploy
