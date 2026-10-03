@@ -148,7 +148,7 @@
   top: calc(100% + 4px);
   right: 0;
   z-index: 200;
-  min-width: 180px;
+  min-width: 220px;
   padding: 4px 0;
   border-radius: 8px;
   border: 1px solid var(--color-border-subtle);
@@ -821,7 +821,9 @@
 }
 
 .roadmap-secondary-drawer {
-  border-style: dashed;
+  border-style: solid;
+  border-color: var(--color-border);
+  background: var(--color-bg);
 }
 
 .roadmap-secondary-drawer .guide-section-link {
@@ -1039,10 +1041,10 @@
 
 .roadmap-alternative-reading {
   margin-top: 10px;
-  border: 1px solid var(--color-border-light);
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   padding: 8px 10px;
-  background: var(--color-bg-elevated);
+  background: var(--color-bg);
 }
 
 .roadmap-alternative-reading summary {
@@ -1068,10 +1070,10 @@
 
 .roadmap-outsider-guide {
   margin-top: 10px;
-  border: 1px solid var(--color-border-light);
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   padding: 8px 10px;
-  background: var(--color-bg-elevated);
+  background: var(--color-bg);
 }
 
 .roadmap-outsider-guide summary {
@@ -1324,10 +1326,16 @@
   background: var(--color-bg-hover);
 }
 
+.rt-PopoverContent.prompt-config-popover,
 .prompt-config-popover {
   width: min(340px, calc(100vw - 24px));
   max-height: min(70vh, 520px);
   overflow: auto;
+  background: var(--color-bg);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-lg);
 }
 
 .prompt-config-presets {

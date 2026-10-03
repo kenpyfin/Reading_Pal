@@ -2,6 +2,13 @@
 
 Chronological log of meaningful implementation work: decisions, behavior changes, and where to look in the codebase. Agents and humans should **read relevant sections before** planning or changing related code, and **append an entry after** non-trivial work.
 
+## 2026-10-02 — Reading guide labels and solid drawers
+
+- **What:** The empty-guide action is **Generate reading guide** (empty state and the ⋯ menu). The per-card Outsider Guide action is **Rewrite for a new reader**, and **Regenerate** once that rewrite exists. Author Shortcut and Outsider Guide drawers use a solid `--color-bg` fill and a solid border. The reading-angle popover uses the same opaque fill.
+- **Why:** “Generate roadmap” and “Generate guide” sounded like the same job. The drawers matched the card fill and used a dashed border, so they read as empty outlines, and the reading-angle popover had no fill of its own.
+- **Where:** `frontend/src/components/ReadingGuidePane.js`, `frontend/src/components/ReadingGuidePane.css`
+- **Notes:** Promoted to `prod` on 2026-10-03 from `feat/reading-guide-chrome`. **New guide…** is unchanged. EPUB image extraction is not in this deploy.
+
 ## 2026-10-02 — Phone and desktop reader chrome promoted to production
 
 - **What:** The phone layout (library menu, reader bottom bar, guide cards, row actions, prompt fields, admin table, short landscape phones) and the in-flow desktop reader bar are on branch `prod`.

@@ -420,7 +420,7 @@ function RoadmapCard({
         </div>
       </details>
       <details className="roadmap-outsider-guide roadmap-secondary-drawer">
-        <summary>{isOutsiderGuideLoading ? 'Generating outsider guide...' : 'Outsider Guide'}</summary>
+        <summary>{isOutsiderGuideLoading ? 'Rewriting…' : 'Outsider Guide'}</summary>
         <div className="roadmap-outsider-guide-content">
           {hasOutsider && Number.isFinite(item.outsider_source_word_count) && Number.isFinite(item.outsider_word_count) && (
             <p className="roadmap-outsider-guide-stats">
@@ -441,7 +441,7 @@ function RoadmapCard({
             }
             onClick={() => onGenerateOutsiderGuide && onGenerateOutsiderGuide(item.id)}
           >
-            {isOutsiderGuideLoading ? 'Generating outsider guide...' : hasOutsider ? 'Regenerate guide' : 'Generate guide'}
+            {isOutsiderGuideLoading ? 'Rewriting…' : hasOutsider ? 'Regenerate' : 'Rewrite for a new reader'}
           </button>
         </div>
       </details>
@@ -772,7 +772,7 @@ const ReadingGuidePane = ({
   };
 
   const showGenerateRoadmap = onGenerateRoadmap && !roadmap?.items?.length;
-  const generateRoadmapLabel = isGenerating ? 'Generating…' : 'Generate roadmap';
+  const generateRoadmapLabel = isGenerating ? 'Generating…' : 'Generate reading guide';
 
   const roadmapActionsInner = (
     <div className="reading-guide-toolbar">
