@@ -1,10 +1,7 @@
 /* frontend/src/components/NoteDisplayModal.css */
 
-/* Uses .modal-overlay and .modal-content from BookView.css */
-
 .note-display-modal {
   max-width: 500px;
-  min-width: 300px;
 }
 
 .note-display-modal .modal-header {

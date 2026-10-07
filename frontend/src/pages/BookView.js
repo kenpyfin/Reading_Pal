@@ -6,6 +6,9 @@ import NotePane from '../components/NotePane';
 import ReadingGuidePane from '../components/ReadingGuidePane'; // Import ReadingGuidePane
 import AllNotesModal from '../components/AllNotesModal';
 import NoteDisplayModal from '../components/NoteDisplayModal';
+import ReaderDialog from '../components/ReaderDialog';
+import ReaderSelectionBar from '../components/ReaderSelectionBar';
+import ReaderProgressRing from '../components/ReaderProgressRing';
 import { debounce } from 'lodash';
 import './BookView.css';
 import logger from '../utils/logger'; // Ensure logger is imported
@@ -576,9 +579,6 @@ function BookView({
   const bookViewContainerRef = useRef(null); // Ref for the main flex container
   const bookPaneAreaRef = useRef(null);      // Ref for the book-pane-area div
 
-  const isResizingGuideMainActive = useRef(false); // For Guide Pane vs Main Content Area
-  const dragStartX = useRef(0);
-
   const [showManageBookmarksModal, setShowManageBookmarksModal] = useState(false);
   const [notesLLMPopupMode, setNotesLLMPopupMode] = useState(null); // null | 'note' | 'llm'
   const [isMobileView, setIsMobileView] = useState(() => matchesMobileLayout());
@@ -748,9 +748,6 @@ function BookView({
   const guideSearchHighlightRef = useRef(null); // Ref for the highlighted element to scroll to
   // --- END State for Reading Guide Search/Highlight ---
 
-  // State and Refs for Reading Guide Pane Resizing
-  const [readingGuidePaneFlexBasis, setReadingGuidePaneFlexBasis] = useState('25%'); // Initial width
-
   // --- Font Control State (moved from BookPane) ---
   const [fontSize, setFontSize] = useState(18);
   const [lineHeight, setLineHeight] = useState(1.7);
@@ -830,11 +827,6 @@ function BookView({
   const handleRoadmapReturnFocusDone = useCallback(() => {
     setGuideReturnItemId(null);
   }, []);
-  const readingGuidePaneAreaRef = useRef(null); // Ref for the reading-guide-pane-area div
-  const initialReadingGuidePaneWidthPx = useRef(0);
-  // dragStartX is already defined and can be reused if we ensure no overlap in active resizing
-  // isResizing is also already defined, might need a separate one or careful management
-
   // --- NEW State for Content Reformatting ---
   const [isReformatting, setIsReformatting] = useState(false);
   const [reformatError, setReformatError] = useState(null);
@@ -2200,66 +2192,6 @@ function BookView({
   }, [viewMode, currentPage, bookScrollPositionByPage]);
 
   const mainContentAreaRef = useRef(null); // Ref for the main content area (book + view mode)
-
-  // Resizer Event Handlers
-  // Note: The existing handleDocumentMouseMove, handleDocumentMouseUp, handleMouseDownOnResizer
-  // were placeholders or part of an older/different resizer logic.
-  // We are adding specific handlers for each resizer.
-
-  // --- Reading Guide Pane Resizer Handlers ---
-  const handleGuideResizeMouseMove = useCallback((e) => {
-    if (!isResizingGuideMainActive.current || !bookViewContainerRef.current || !readingGuidePaneAreaRef.current) { // Use specific flag
-      return;
-    }
-    e.preventDefault();
-
-    const deltaX = e.clientX - dragStartX.current;
-    let newGuidePaneWidthPx = initialReadingGuidePaneWidthPx.current + deltaX;
-
-    const containerWidth = bookViewContainerRef.current.offsetWidth;
-    // Ensure main content area also has a minimum width
-    const minMainContentWidth = Math.max(200, containerWidth * 0.30); 
-    const minGuidePaneWidth = Math.max(150, containerWidth * 0.15); // Min width for guide
-    const maxGuidePaneWidth = containerWidth - minMainContentWidth; // Max width for guide
-
-    newGuidePaneWidthPx = Math.max(minGuidePaneWidth, Math.min(newGuidePaneWidthPx, maxGuidePaneWidth));
-    setReadingGuidePaneFlexBasis(`${newGuidePaneWidthPx}px`);
-  }, [isResizingGuideMainActive, dragStartX, initialReadingGuidePaneWidthPx, bookViewContainerRef, readingGuidePaneAreaRef]); // Dependencies: isResizingGuideMainActive, dragStartX, initialReadingGuidePaneWidthPx, bookViewContainerRef, readingGuidePaneAreaRef
-
-  const handleGuideResizeMouseUp = useCallback(() => {
-    if (!isResizingGuideMainActive.current) { // Use specific flag
-      return;
-    }
-    // Check which resizer was active if using a shared isResizing flag, or use separate flags.
-    // For now, assuming isResizing is general.
-    isResizingGuideMainActive.current = false; // Use specific flag
-    document.body.classList.remove('resizing-no-select');
-    document.removeEventListener('mousemove', handleGuideResizeMouseMove);
-    document.removeEventListener('mouseup', handleGuideResizeMouseUp);
-  }, [handleGuideResizeMouseMove]); // Dependency: handleGuideResizeMouseMove
-
-  const handleMouseDownOnGuideResizer = useCallback((e) => {
-    if (!readingGuidePaneAreaRef.current || !bookViewContainerRef.current) return;
-
-    isResizingGuideMainActive.current = true; // Use specific flag
-    dragStartX.current = e.clientX;
-    initialReadingGuidePaneWidthPx.current = readingGuidePaneAreaRef.current.offsetWidth;
-    e.preventDefault();
-
-    document.body.classList.add('resizing-no-select');
-    document.addEventListener('mousemove', handleGuideResizeMouseMove);
-    document.addEventListener('mouseup', handleGuideResizeMouseUp);
-  }, [handleGuideResizeMouseMove, handleGuideResizeMouseUp]); // Dependencies
-
-  // Cleanup useEffect for global event listeners (related to the old resizer)
-  useEffect(() => {
-      // This cleanup is for the old resizer. The new ones (handleBookNoteResizeMouseUp and handleGuideResizeMouseUp) handle their own.
-      return () => {
-          // Example: if an old global listener was set up based on a shared isResizing.current,
-          // it would be cleaned up here. Current setup doesn't require this specific cleanup
-          // as listeners are added/removed in the mousedown/mouseup handlers directly.
-      };
-  }, []); // Empty dependency array as it refers to old handlers
 
   useEffect(() => subscribeMobileLayout(setIsMobileView), []);
   useEffect(() => subscribeWideDesktop(setFontControlsOnBar), []);
@@ -3818,21 +3750,83 @@ function BookView({
     setViewMode('original');
   }, [currentPage]);
 
+  const [pageScrollFraction, setPageScrollFraction] = useState(0);
+  const [pageCanScroll, setPageCanScroll] = useState(false);
+
+  useEffect(() => {
+    let detach = () => {};
+    let raf = 0;
+    const bind = () => {
+      detach();
+      const el = viewMode === 'guide'
+        ? guideScrollContainerRef.current
+        : bookPaneContainerRef.current;
+      if (!el) return false;
+      const update = () => {
+        const denom = el.scrollHeight - el.clientHeight;
+        if (denom <= 0) {
+          setPageCanScroll(false);
+          setPageScrollFraction(0);
+          return;
+        }
+        setPageCanScroll(true);
+        setPageScrollFraction(Math.min(1, Math.max(0, el.scrollTop / denom)));
+      };
+      update();
+      el.addEventListener('scroll', update, { passive: true });
+      const observer = new ResizeObserver(update);
+      observer.observe(el);
+      detach = () => {
+        el.removeEventListener('scroll', update);
+        observer.disconnect();
+      };
+      return true;
+    };
+    const attempt = (left) => {
+      if (bind()) return;
+      if (left <= 0) return;
+      raf = requestAnimationFrame(() => attempt(left - 1));
+    };
+    attempt(8);
+    return () => {
+      cancelAnimationFrame(raf);
+      detach();
+    };
+  }, [viewMode, currentPage, isMobileView, guideLoading, readingRoadmap, currentPageContent]);
+
+  const safeTotalPages = Math.max(1, totalPages || 1);
+  const ringFull = safeTotalPages <= 1 && !pageCanScroll;
+  const progressFraction = ringFull
+    ? 1
+    : Math.min(1, Math.max(0, ((currentPage || 1) - 1 + pageScrollFraction) / safeTotalPages));
+  const bookTitle = bookData?.title || bookData?.original_filename || 'Book';
+
   useEffect(() => {
     if (!setNavBarExtra) {
       return undefined;
     }
-    if (viewMode === 'guide' && isMobileView) {
-      setNavBarExtra(
-        <div className="navbar-guide-extra">
-          <h3 className="navbar-guide-extra-title">Reading Roadmap</h3>
-        </div>,
-      );
-      return () => setNavBarExtra(null);
-    }
-    setNavBarExtra(null);
-    return undefined;
-  }, [setNavBarExtra, viewMode, isMobileView]);
+    setNavBarExtra(
+      <div className="reader-nav-chrome">
+        <div className="reader-crumb">
+          <Link to="/" className="reader-crumb-link">Book List</Link>
+          <span className="reader-crumb-sep" aria-hidden="true">/</span>
+          <span className="reader-crumb-title" title={bookTitle}>{bookTitle}</span>
+          {viewMode === 'guide' && (
+            <>
+              <span className="reader-crumb-sep" aria-hidden="true">/</span>
+              <span className="reader-crumb-guide">Guide</span>
+            </>
+          )}
+        </div>
+        <ReaderProgressRing
+          fraction={progressFraction}
+          caption={`${currentPage} / ${safeTotalPages}`}
+          accessibleName={`Page ${currentPage} of ${safeTotalPages}`}
+        />
+      </div>,
+    );
+    return () => setNavBarExtra(null);
+  }, [setNavBarExtra, viewMode, bookTitle, progressFraction, currentPage, safeTotalPages]);
 
   const toggleViewMode = () => {
     if (isGuideMode) {
@@ -4339,30 +4333,14 @@ function BookView({
               )}
               </div>
               {/* Floating "Back to Reading Guide" button when user navigated from guide */}
-              {viewMode === 'original' && selectionAnchor && !notesLLMPopupMode && typeof document !== 'undefined' && createPortal(
-                <div
-                  className="selection-action-bar"
-                  style={{
-                    top: selectionAnchor.top < 88 ? selectionAnchor.bottom + 8 : Math.max(8, selectionAnchor.top - 52),
-                    left: Math.min(Math.max(8, selectionAnchor.left), Math.max(8, window.innerWidth - 168)),
-                  }}
-                >
-                  <button
-                    type="button"
-                    onPointerDown={(event) => event.preventDefault()}
-                    onClick={() => setNotesLLMPopupMode('note')}
-                  >
-                    Note
-                  </button>
-                  <button
-                    type="button"
-                    onPointerDown={(event) => event.preventDefault()}
-                    onClick={() => setNotesLLMPopupMode('llm')}
-                  >
-                    Ask
-                  </button>
-                </div>,
-                document.body,
+              {viewMode === 'original' && selectionAnchor && !notesLLMPopupMode && (
+                <ReaderSelectionBar
+                  anchor={selectionAnchor}
+                  scrollerRef={bookPaneContainerRef}
+                  onNote={() => setNotesLLMPopupMode('note')}
+                  onAsk={() => setNotesLLMPopupMode('llm')}
+                  onDismiss={() => setSelectionAnchor(null)}
+                />
               )}
               {viewMode === 'original' && showBackToGuide && (
                 <button
@@ -4403,115 +4381,116 @@ function BookView({
 
     </div> {/* End of main-content-area */}
 
-    {/* Note popup modal */}
-    {notesLLMPopupMode === 'note' && (
-      <div className={`modal-overlay${isMobileView ? ' modal-overlay--sheet' : ''}`} onClick={() => setNotesLLMPopupMode(null)}>
-        <div className="modal-content note-llm-popup-modal" onClick={(e) => e.stopPropagation()}>
-          <div className="modal-header">
-            <h2>Add note</h2>
-            <button onClick={() => setNotesLLMPopupMode(null)} className="close-button" aria-label="Close">✕</button>
-          </div>
-          <div className="modal-body modal-body-scrollable">
-            <NotePane
-              bookId={bookId}
-              selectedBookText={selectedBookText}
-              selectedScrollPercentage={selectedScrollPercentage}
-              selectedGlobalCharOffset={selectedGlobalCharOffset}
-              currentPage={currentPage}
-              currentPageContent={currentPageContent}
-              onNewNoteSaved={handleNewNoteSaved}
-              offline={serverOffline}
-              onOfflineNoteSave={handleOfflineNoteSave}
-              mode="note"
-              embedInModal
-              onClose={() => setNotesLLMPopupMode(null)}
-            />
-          </div>
-        </div>
-      </div>
-    )}
+    <ReaderDialog
+      open={notesLLMPopupMode === 'note'}
+      onOpenChange={(next) => {
+        if (!next) setNotesLLMPopupMode(null);
+      }}
+      title="Add note"
+      size="content"
+      variant={isMobileView ? 'sheet' : 'center'}
+      className="note-llm-popup-modal"
+      bodyClassName="modal-body-scrollable"
+    >
+      <NotePane
+        bookId={bookId}
+        selectedBookText={selectedBookText}
+        selectedScrollPercentage={selectedScrollPercentage}
+        selectedGlobalCharOffset={selectedGlobalCharOffset}
+        currentPage={currentPage}
+        currentPageContent={currentPageContent}
+        onNewNoteSaved={handleNewNoteSaved}
+        offline={serverOffline}
+        onOfflineNoteSave={handleOfflineNoteSave}
+        mode="note"
+        embedInModal
+        onClose={() => setNotesLLMPopupMode(null)}
+      />
+    </ReaderDialog>
 
-    {/* LLM popup modal */}
-    {notesLLMPopupMode === 'llm' && (
-      <div className={`modal-overlay${isMobileView ? ' modal-overlay--sheet' : ''}`} onClick={() => setNotesLLMPopupMode(null)}>
-        <div className="modal-content note-llm-popup-modal" onClick={(e) => e.stopPropagation()}>
-          <div className="modal-header">
-            <h2>Ask LLM</h2>
-            <button onClick={() => setNotesLLMPopupMode(null)} className="close-button" aria-label="Close">✕</button>
-          </div>
-          <div className="modal-body modal-body-scrollable">
-            <NotePane
-              bookId={bookId}
-              selectedBookText={selectedBookText}
-              selectedScrollPercentage={selectedScrollPercentage}
-              selectedGlobalCharOffset={selectedGlobalCharOffset}
-              currentPage={currentPage}
-              currentPageContent={currentPageContent}
-              onNewNoteSaved={handleNewNoteSaved}
-              offline={serverOffline}
-              onOfflineNoteSave={handleOfflineNoteSave}
-              mode="llm"
-              embedInModal
-              onClose={() => setNotesLLMPopupMode(null)}
-            />
-          </div>
-        </div>
-      </div>
-    )}
+    <ReaderDialog
+      open={notesLLMPopupMode === 'llm'}
+      onOpenChange={(next) => {
+        if (!next) setNotesLLMPopupMode(null);
+      }}
+      title="Ask LLM"
+      size="content"
+      variant={isMobileView ? 'sheet' : 'center'}
+      className="note-llm-popup-modal"
+      bodyClassName="modal-body-scrollable"
+    >
+      <NotePane
+        bookId={bookId}
+        selectedBookText={selectedBookText}
+        selectedScrollPercentage={selectedScrollPercentage}
+        selectedGlobalCharOffset={selectedGlobalCharOffset}
+        currentPage={currentPage}
+        currentPageContent={currentPageContent}
+        onNewNoteSaved={handleNewNoteSaved}
+        offline={serverOffline}
+        onOfflineNoteSave={handleOfflineNoteSave}
+        mode="llm"
+        embedInModal
+        onClose={() => setNotesLLMPopupMode(null)}
+      />
+    </ReaderDialog>
 
-    {/* Add Bookmark Modal - Rendered conditionally (MOVED HERE) */}
-    {showAddBookmarkModal && (
-      <div className="modal-overlay">
-        <div className="modal-content">
-          <h2>Add Bookmark</h2>
-          <input
-            type="text"
-            value={newBookmarkName}
-            onChange={(e) => setNewBookmarkName(e.target.value)}
-            placeholder="Enter bookmark name (optional - default: Page X, Line Y)"
-            className="bookmark-name-input"
-            aria-label="Bookmark name"
-          />
-          {bookmarkError && <p className="error-message">{bookmarkError}</p>}
-          <div className="modal-actions">
-            <button onClick={handleSaveBookmark} className="button-primary">Save</button>
-            <button onClick={closeAddBookmarkModal} className="button-secondary">Cancel</button>
-          </div>
-        </div>
+    <ReaderDialog
+      open={showAddBookmarkModal}
+      onOpenChange={(next) => {
+        if (!next) closeAddBookmarkModal();
+      }}
+      title="Add Bookmark"
+      size="compact"
+    >
+      <input
+        type="text"
+        value={newBookmarkName}
+        onChange={(e) => setNewBookmarkName(e.target.value)}
+        placeholder="Enter bookmark name (optional - default: Page X, Line Y)"
+        className="bookmark-name-input"
+        aria-label="Bookmark name"
+      />
+      {bookmarkError && <p className="error-message">{bookmarkError}</p>}
+      <div className="modal-actions">
+        <button onClick={handleSaveBookmark} className="button-primary">Save</button>
+        <button onClick={closeAddBookmarkModal} className="button-secondary">Cancel</button>
       </div>
-    )}
+    </ReaderDialog>
 
-    {/* Manage Bookmarks Modal - (MOVED HERE) */}
-    {showManageBookmarksModal && (
-      <div className="modal-overlay">
-        <div className="modal-content manage-bookmarks-modal">
-          <h2>Manage Bookmarks</h2>
-          {bookmarks.length === 0 ? (
-            <p>No bookmarks to manage.</p>
-          ) : (
-            <ul className="manage-bookmarks-list">
-              {bookmarks.map(bookmark => (
-                <li key={bookmark.id} className="manage-bookmark-item">
-                  <span>
-                    {bookmark.name ? `${bookmark.name} (P${bookmark.page_number})` : `Page ${bookmark.page_number} (Unnamed)`}
-                  </span>
-                  <button
-                    onClick={() => handleDeleteBookmark(bookmark.id)}
-                    className="delete-button delete-bookmark-button"
-                    title="Delete this bookmark"
-                  >
-                    ✕
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-          <div className="modal-actions">
-            <button onClick={() => setShowManageBookmarksModal(false)} className="button-secondary">Close</button>
-          </div>
-        </div>
+    <ReaderDialog
+      open={showManageBookmarksModal}
+      onOpenChange={(next) => {
+        if (!next) setShowManageBookmarksModal(false);
+      }}
+      title="Manage Bookmarks"
+      size="content"
+      className="manage-bookmarks-modal"
+    >
+      {bookmarks.length === 0 ? (
+        <p>No bookmarks to manage.</p>
+      ) : (
+        <ul className="manage-bookmarks-list">
+          {bookmarks.map(bookmark => (
+            <li key={bookmark.id} className="manage-bookmark-item">
+              <span>
+                {bookmark.name ? `${bookmark.name} (P${bookmark.page_number})` : `Page ${bookmark.page_number} (Unnamed)`}
+              </span>
+              <button
+                onClick={() => handleDeleteBookmark(bookmark.id)}
+                className="delete-button delete-bookmark-button"
+                title="Delete this bookmark"
+              >
+                ✕
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="modal-actions">
+        <button onClick={() => setShowManageBookmarksModal(false)} className="button-secondary">Close</button>
       </div>
-    )}
+    </ReaderDialog>
 
     {showAllNotesModal && (
       <AllNotesModal

@@ -110,6 +110,64 @@
   text-overflow: ellipsis;
 }
 
+.reader-nav-chrome {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
+.reader-crumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  color: var(--color-nav-text);
+  font-size: 0.95rem;
+}
+
+.reader-crumb-link {
+  color: inherit;
+  text-decoration: none;
+  flex-shrink: 0;
+}
+
+.reader-crumb-link:hover {
+  color: var(--color-text-muted);
+}
+
+.reader-crumb-sep,
+.reader-crumb-guide {
+  flex-shrink: 0;
+}
+
+.reader-crumb-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.reader-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  color: var(--color-nav-text);
+  font-size: 0.9rem;
+}
+
+.reader-progress-track {
+  stroke: var(--color-border);
+}
+
+.reader-progress-arc {
+  stroke: var(--color-accent, var(--color-primary));
+}
+
 .navbar-guide-extra-switch {
   flex-shrink: 0;
   background-color: var(--color-text-subtle);

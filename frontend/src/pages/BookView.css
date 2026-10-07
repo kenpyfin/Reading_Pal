@@ -57,14 +57,6 @@
 }
 
 
-/* Styles for the mobile resizer handle (if not fully covered by inline styles) */
-.resizer-handle-mobile {
-  /* Inline styles are mostly covering this, but you can add more here */
-  /* For example, a subtle box-shadow or gradient */
-  box-shadow: 0px 1px 3px rgba(0,0,0,0.1) inset;
-  /* Ensure it's not affected by other resizer handle styles if names collide */
-}
-
 
 /* Guide search highlight styling */
 .guide-search-highlight {
@@ -187,39 +179,6 @@
   color: var(--color-text);
 }
 
-
-/* Resizer Handle Styles */
-.resizer-handle {
-  width: 10px;
-  background-color: var(--color-border-light); 
-  cursor: col-resize;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-left: 1px solid var(--color-border);
-  border-right: 1px solid var(--color-border);
-  z-index: 10;
-}
-
-.resizer-handle::before {
-  content: '•••';
-  display: block;
-  writing-mode: vertical-rl;
-  text-orientation: mixed;
-  font-size: 10px;
-  color: var(--color-text-muted);
-  line-height: 0.5;
-}
-
-/* Class added to body during resize */
-.resizing-no-select {
-  user-select: none;
-  -webkit-user-select: none;
-  -moz-user-select: none;
-  -ms-user-select: none;
-  cursor: col-resize !important; /* Force cursor globally during resize */
-}
 
 /* ... rest of your existing BookView.css styles ... */
 /* Ensure that .book-pane, .note-item, .new-note-form etc. are correctly styled within their scrolling containers */

@@ -189,7 +189,7 @@ function NavBar({
     >
       <div className="navbar-container">
         {extra ? (
-          <div className="navbar-extra" aria-label="Reading guide">
+          <div className="navbar-extra">
             {extra}
           </div>
         ) : (isAdmin ? (

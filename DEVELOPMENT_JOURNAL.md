@@ -2,6 +2,13 @@
 
 Chronological log of meaningful implementation work: decisions, behavior changes, and where to look in the codebase. Agents and humans should **read relevant sections before** planning or changing related code, and **append an entry after** non-trivial work.
 
+## 2026-10-06 — Reader chrome on feat/reader-chrome
+
+- **What:** On a book, the top bar shows Book List, the title, a Guide crumb in guide mode, and a page progress ring. Selecting original text opens a Note / Ask bar on the selection, kept above the phone bottom bar. Add note, Ask LLM, all notes, the highlight note, and both bookmark dialogs use one Radix dialog. Note and Ask stay bottom sheets on a phone. The unused guide/book resizer is gone. The guide header is the completion count and the thin bar; section dots and the Current jump button are not rendered.
+- **Why:** Phase 4 of the UI overhaul. The operator asked for this on its own branch so the previous reader can be restored by checking out `feat/reading-guide-chrome`.
+- **Where:** `frontend/src/components/ReaderDialog.js`, `ReaderSelectionBar.js`, `ReaderProgressRing.js`, `NavBar.js`, `frontend/src/pages/BookView.js`, `AllNotesModal.js`, `NoteDisplayModal.js`, `ReadingGuidePane.js`
+- **Notes:** Dev stack only. Production is unchanged. Unrelated uncommitted guide-chrome edits were left in `git stash` (`wip: guide chrome not part of reader chrome`) on the previous branch.
+
 ## 2026-10-02 — Reading guide labels and solid drawers
 
 - **What:** The empty-guide action is **Generate reading guide** (empty state and the ⋯ menu). The per-card Outsider Guide action is **Rewrite for a new reader**, and **Regenerate** once that rewrite exists. Author Shortcut and Outsider Guide drawers use a solid `--color-bg` fill and a solid border. The reading-angle popover uses the same opaque fill.

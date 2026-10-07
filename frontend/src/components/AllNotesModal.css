@@ -1,13 +1,7 @@
 /* frontend/src/components/AllNotesModal.css */
 
-/* Uses .modal-overlay and .modal-content from BookView.css */
-
 .all-notes-modal {
-  width: 90%;
-  max-width: 700px; /* Wider modal for list view */
-  max-height: 80vh; /* Limit height */
-  display: flex;
-  flex-direction: column;
+  max-height: 80vh;
 }
 
 .all-notes-modal .modal-header {

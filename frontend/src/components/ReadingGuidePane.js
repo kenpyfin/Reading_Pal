@@ -621,16 +621,6 @@ const ReadingGuidePane = ({
   const [activeJumpId, setActiveJumpId] = useState(null);
   const overflowRef = useRef(null);
 
-  const scrollToRoadmapItem = useCallback((itemId) => {
-    const container = scrollContainerRef?.current;
-    if (!container || itemId == null) return;
-    const el = container.querySelector(`[data-roadmap-item-id="${escapeRoadmapItemId(itemId)}"]`);
-    if (el && typeof el.scrollIntoView === 'function') {
-      el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-    }
-    setActiveJumpId(String(itemId));
-  }, [scrollContainerRef]);
-
   const canAddGuide = guidesList.length < maxGuides;
   const activeGuideSummary = guidesList.find((g) => g.guide_id === activeGuideId);
   const isBulkRoadmapRunning = !!roadmapBulkJob;
@@ -755,7 +745,6 @@ const ReadingGuidePane = ({
   const progressBarWidthPct = totalItems > 0 ? Math.min(100, Math.round((completedIds.length / totalItems) * 100)) : 0;
   const resumeId = firstIncompleteTopLevelId(roadmap?.items, completedIds);
   const displayActiveId = activeJumpId || resumeId || (roadmap?.items?.[0] ? String(roadmap.items[0].id) : null);
-  const completedIdSet = new Set((completedIds || []).map((id) => String(id)));
   const bulkRunningLabel =
     roadmapBulkJob === 'graphs'
       ? 'Generating all graphs...'
@@ -906,37 +895,6 @@ const ReadingGuidePane = ({
             <div className="progress-bar-fill" style={{ width: `${progressBarWidthPct}%` }} />
           </div>
         </div>
-          {roadmap?.items?.length > 0 && (
-            <div className="reading-guide-jump" role="navigation" aria-label="Jump to roadmap card">
-              {resumeId && (
-                <button
-                  type="button"
-                  className="reading-guide-jump-current"
-                  onClick={() => scrollToRoadmapItem(resumeId)}
-                >
-                  Current
-                </button>
-              )}
-              <div className="reading-guide-jump-dots">
-                {roadmap.items.map((item, index) => {
-                  const id = String(item.id);
-                  const done = completedIdSet.has(id);
-                  const active = displayActiveId === id;
-                  return (
-                    <button
-                      key={id}
-                      type="button"
-                      className={`reading-guide-jump-dot${done ? ' is-done' : ''}${active ? ' is-active' : ''}`}
-                      aria-label={`Section ${index + 1}: ${item.title || 'Untitled'}${done ? ', completed' : ''}`}
-                      aria-current={active ? 'true' : undefined}
-                      title={item.title || `Section ${index + 1}`}
-                      onClick={() => scrollToRoadmapItem(id)}
-                    />
-                  );
-                })}
-              </div>
-            </div>
-          )}
         </div>
       )}
     </div>
