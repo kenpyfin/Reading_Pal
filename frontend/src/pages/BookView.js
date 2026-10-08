@@ -748,7 +748,6 @@ function BookView({
   // --- State for Reading Guide Search/Highlight ---
   const [guideSearchText, setGuideSearchText] = useState(null); // Text to search and highlight from reading guide
   const [guideSearchGlobalOffset, setGuideSearchGlobalOffset] = useState(null); // Stable offset target for guide highlight fallback
-  const [guideSearchEndOffset, setGuideSearchEndOffset] = useState(null); // Stable end offset for exact quote highlight
   const [guideJumpSession, setGuideJumpSession] = useState(null); // Stored start/end that keeps the section-end marker
   const guideSearchHighlightRef = useRef(null); // Ref for the highlighted element to scroll to
   // --- END State for Reading Guide Search/Highlight ---
@@ -783,7 +782,6 @@ function BookView({
   const clearGuideHighlight = useCallback(() => {
     setGuideSearchText(null);
     setGuideSearchGlobalOffset(null);
-    setGuideSearchEndOffset(null);
     setPendingScrollOffsetInPage(null);
     setPendingScrollToPercentage(null);
     setScrollToGlobalOffset(null);
@@ -2085,7 +2083,6 @@ function BookView({
     setGuideSearchGlobalOffset(
       typeof navigationOffset === 'number' && !isNaN(navigationOffset) ? navigationOffset : null
     );
-    setGuideSearchEndOffset(null);
     const hasStoredSpan =
       typeof start_offset === 'number' &&
       !isNaN(start_offset) &&
@@ -3318,7 +3315,6 @@ function BookView({
     const cleanupTimer = setTimeout(() => {
       setGuideSearchText(null);
       setGuideSearchGlobalOffset(null);
-      setGuideSearchEndOffset(null);
     }, 8000);
     return () => clearTimeout(cleanupTimer);
   }, [guideSearchText, guideSearchGlobalOffset]);
