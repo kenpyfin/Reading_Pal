@@ -79,6 +79,18 @@
   }
 }
 
+.roadmap-section-end-notice {
+  margin: 0 auto 12px;
+  max-width: 72ch;
+  padding: 8px 12px;
+  border: 1px dashed var(--color-primary);
+  border-radius: 8px;
+  background-color: var(--color-info-bg);
+  color: var(--color-info-text);
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
 .roadmap-cutoff-indicator {
   display: inline-block;
   margin: 0 0.35rem;

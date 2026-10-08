@@ -15,6 +15,11 @@ import logger from '../utils/logger'; // Ensure logger is imported
 import { matchesMobileLayout, subscribeMobileLayout, matchesWideDesktop, subscribeWideDesktop } from '../utils/mobileLayout';
 import { getPageForOffset } from '../utils/textLinking'; // Import text linking utilities
 import {
+  markerOffsetInPageMarkdown,
+  resolveGuideHighlightOnPage,
+  resolveGuideNavigationOffset,
+} from '../utils/guideJump';
+import {
   getStoredAuthToken,
   getStoredReadingPosition,
   getStoredReadingViewMode,
@@ -744,7 +749,7 @@ function BookView({
   const [guideSearchText, setGuideSearchText] = useState(null); // Text to search and highlight from reading guide
   const [guideSearchGlobalOffset, setGuideSearchGlobalOffset] = useState(null); // Stable offset target for guide highlight fallback
   const [guideSearchEndOffset, setGuideSearchEndOffset] = useState(null); // Stable end offset for exact quote highlight
-  const [guideSegmentCutoffOffset, setGuideSegmentCutoffOffset] = useState(null); // Segment boundary marker in original text
+  const [guideJumpSession, setGuideJumpSession] = useState(null); // Stored start/end that keeps the section-end marker
   const guideSearchHighlightRef = useRef(null); // Ref for the highlighted element to scroll to
   // --- END State for Reading Guide Search/Highlight ---
 
@@ -775,11 +780,10 @@ function BookView({
   };
   // --- END Font Control State ---
 
-  const clearGuideDrivenScrollState = useCallback(() => {
+  const clearGuideHighlight = useCallback(() => {
     setGuideSearchText(null);
     setGuideSearchGlobalOffset(null);
     setGuideSearchEndOffset(null);
-    setGuideSegmentCutoffOffset(null);
     setPendingScrollOffsetInPage(null);
     setPendingScrollToPercentage(null);
     setScrollToGlobalOffset(null);
@@ -799,8 +803,31 @@ function BookView({
     setBookScrollPositionByPage((prev) => ({ ...prev, [targetPage]: 0 }));
     skipBookScrollRestoreOnPageChangeRef.current = true;
     navigatingFromGuideTextLinkRef.current = false;
-    clearGuideDrivenScrollState();
-  }, [clearGuideDrivenScrollState]);
+    clearGuideHighlight();
+    setGuideJumpSession((prev) => {
+      if (!prev) return null;
+      const bounds = pageBoundariesRef.current;
+      const startInfo = getPageForOffset(prev.startOffset, bounds);
+      const endInfo = getPageForOffset(prev.endOffset, bounds);
+      if (!startInfo || !endInfo) return null;
+      const lo = Math.min(startInfo.pageNumber, endInfo.pageNumber);
+      const hi = Math.max(startInfo.pageNumber, endInfo.pageNumber);
+      if (targetPage < lo || targetPage > hi) return null;
+      return prev;
+    });
+  }, [clearGuideHighlight]);
+
+  const guideSectionEndNotice = useMemo(() => {
+    if (viewMode !== 'original' || !guideJumpSession) return '';
+    const startInfo = getPageForOffset(guideJumpSession.startOffset, pageBoundaries);
+    const endInfo = getPageForOffset(guideJumpSession.endOffset, pageBoundaries);
+    if (!startInfo || !endInfo) return '';
+    if (currentPage === endInfo.pageNumber) return '';
+    if (currentPage >= startInfo.pageNumber && currentPage < endInfo.pageNumber) {
+      return `End of this section is on page ${endInfo.pageNumber}`;
+    }
+    return '';
+  }, [viewMode, guideJumpSession, pageBoundaries, currentPage]);
 
   // --- Dropdown Menu State ---
   const [isBookViewMenuOpen, setIsBookViewMenuOpen] = useState(false);
@@ -1174,6 +1201,10 @@ function BookView({
       setGuideError(null);
       setHasRoadmap(false);
       setCompletedRoadmapIds([]);
+      setGuideJumpSession(null);
+      setGuideSearchText(null);
+      setGuideSearchGlobalOffset(null);
+      setGuideSearchEndOffset(null);
     }
   }, [bookId]);
 
@@ -2041,56 +2072,27 @@ function BookView({
     }
 
     const { start_offset, end_offset, preview_text, key_quote } = textLink;
-    let navigationOffset = start_offset;
+    const navigationOffset = resolveGuideNavigationOffset(fullMarkdownContent || '', start_offset);
 
-    // Some guide ranges begin at a chunk boundary that can include trailing text
-    // from the previous sentence. Nudge navigation forward by one sentence when possible.
-    if (fullMarkdownContent && typeof start_offset === 'number' && start_offset >= 0 && start_offset < fullMarkdownContent.length) {
-      const lookahead = fullMarkdownContent.slice(start_offset, start_offset + 320);
-      const sentenceBoundary = lookahead.match(/[.!?]\s+/);
-      if (sentenceBoundary && typeof sentenceBoundary.index === 'number') {
-        const candidateOffset = start_offset + sentenceBoundary.index + sentenceBoundary[0].length;
-        if (candidateOffset > start_offset && candidateOffset < fullMarkdownContent.length) {
-          navigationOffset = candidateOffset;
-        }
-      }
-    }
-
-    // Prefer quote highlight text first, then infer from source offset, then fall back to preview.
-    let textToHighlight = key_quote ? String(key_quote).replace(/\s+/g, ' ').trim() : null;
-    if (!textToHighlight && fullMarkdownContent && start_offset >= 0 && start_offset < fullMarkdownContent.length) {
-      // Keep extraction bounded and normalize whitespace so regex search stays stable.
-      const fromOffset = fullMarkdownContent.slice(start_offset, start_offset + 500);
-      const firstSentenceMatch = fromOffset.match(/^[^.!?]*[.!?]?/);
-      textToHighlight = firstSentenceMatch ? firstSentenceMatch[0].trim() : null;
-      if (textToHighlight) {
-        textToHighlight = textToHighlight.replace(/\s+/g, ' ').trim();
-      }
-    }
-    if (!textToHighlight && preview_text) {
-      const m = preview_text.trim().match(/^[^.!?]*[.!?]?/);
-      textToHighlight = m ? m[0].trim() : preview_text.trim();
-      textToHighlight = textToHighlight.replace(/\s+/g, ' ').trim();
-    }
-    if (textToHighlight) setGuideSearchText(textToHighlight);
+    const normalizeQuote = (value) => {
+      const cleaned = value ? String(value).replace(/\s+/g, ' ').trim() : '';
+      if (!cleaned) return '';
+      const firstSentence = cleaned.match(/^[^.!?]*[.!?]?/);
+      return (firstSentence ? firstSentence[0] : cleaned).trim();
+    };
+    const textToHighlight = normalizeQuote(key_quote) || normalizeQuote(preview_text) || null;
+    setGuideSearchText(textToHighlight);
     setGuideSearchGlobalOffset(
       typeof navigationOffset === 'number' && !isNaN(navigationOffset) ? navigationOffset : null
     );
-    const hasUsableExactRange =
+    setGuideSearchEndOffset(null);
+    const hasStoredSpan =
       typeof start_offset === 'number' &&
       !isNaN(start_offset) &&
       typeof end_offset === 'number' &&
       !isNaN(end_offset) &&
-      end_offset > start_offset &&
-      (end_offset - start_offset) <= 600;
-    setGuideSearchEndOffset(hasUsableExactRange ? end_offset : null);
-    const hasUsableCutoff =
-      typeof end_offset === 'number' &&
-      !isNaN(end_offset) &&
-      typeof start_offset === 'number' &&
-      !isNaN(start_offset) &&
       end_offset > start_offset;
-    setGuideSegmentCutoffOffset(hasUsableCutoff ? end_offset : null);
+    setGuideJumpSession(hasStoredSpan ? { startOffset: start_offset, endOffset: end_offset } : null);
 
     logger.info(`[BookView - handleGuideTextLink] Navigating to offset ${navigationOffset} (raw: ${start_offset}) with preview: "${preview_text?.substring(0, 50)}..."`);
 
@@ -2170,6 +2172,9 @@ function BookView({
   useEffect(() => {
     if (viewMode === 'original' && guideScrollToRestoreOnBack != null) {
       setGuideScrollToRestoreOnBack(null);
+    }
+    if (viewMode !== 'original') {
+      setGuideJumpSession(null);
     }
   }, [viewMode]);
 
@@ -2400,99 +2405,24 @@ function BookView({
         }
       }
 
-      // Add guide search highlight if search text is provided
-      // Note: If the text is on a different page, scrollToGlobalOffset will handle navigation
-      // and this effect will re-run with the correct page content
-      if (
-        guideSearchGlobalOffset !== null &&
-        guideSearchGlobalOffset !== undefined &&
-        guideSearchEndOffset !== null &&
-        guideSearchEndOffset !== undefined &&
-        guideSearchEndOffset > guideSearchGlobalOffset
-      ) {
-        const exactStart = guideSearchGlobalOffset - pageStartGlobalOffset;
-        const exactEnd = guideSearchEndOffset - pageStartGlobalOffset;
-        if (exactStart >= 0 && exactStart < plainPageText.length) {
+      // Highlight the quote only inside the stored guide span. The yellow mark
+      // fades with guideSearchGlobalOffset; the end marker uses guideJumpSession.
+      if (guideJumpSession && guideSearchGlobalOffset !== null && guideSearchGlobalOffset !== undefined) {
+        const guideHighlight = resolveGuideHighlightOnPage({
+          pageMarkdown: plainPageText,
+          pageStartGlobal: pageStartGlobalOffset,
+          startOffset: guideJumpSession.startOffset,
+          endOffset: guideJumpSession.endOffset,
+          quote: guideSearchText,
+        });
+        if (guideHighlight) {
           highlights.push({
-            start: exactStart,
-            end: Math.min(exactEnd, plainPageText.length),
+            start: guideHighlight.rawStart,
+            end: guideHighlight.rawEnd,
             type: 'guide-search',
-            text: plainPageText.substring(exactStart, Math.min(exactEnd, plainPageText.length)),
+            text: plainPageText.substring(guideHighlight.rawStart, guideHighlight.rawEnd),
           });
-          logger.info(`[BookView - Page Content Effect] Applied exact guide highlight ${exactStart}-${Math.min(exactEnd, plainPageText.length)} on page ${validCurrentPage}`);
-        }
-      } else if (guideSearchText && guideSearchText.trim().length > 0) {
-        const cleanSearchText = guideSearchText.trim().replace(/\s+/g, ' ');
-        // Try to find the search text in the current page
-        // Use case-insensitive search and handle variations in whitespace
-        // Escape special regex characters but allow flexible whitespace matching
-        const escapedText = cleanSearchText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const searchRegex = new RegExp(escapedText.replace(/\s+/g, '\\s+'), 'gi');
-        let match;
-        const searchMatches = [];
-        
-        // Reset regex lastIndex to ensure we search from the beginning
-        searchRegex.lastIndex = 0;
-        while ((match = searchRegex.exec(plainPageText)) !== null) {
-          searchMatches.push({
-            start: match.index,
-            end: match.index + match[0].length,
-            type: 'guide-search',
-            text: match[0]
-          });
-        }
-
-        // If we found matches, add them to highlights (prefer first match or closest to expected offset)
-        if (searchMatches.length > 0) {
-          // If we have a global offset, try to find the match closest to it
-          let bestMatch = searchMatches[0];
-          const expectedGlobalOffset = (guideSearchGlobalOffset ?? scrollToGlobalOffset);
-          if (expectedGlobalOffset !== null && expectedGlobalOffset !== undefined) {
-            const expectedOffsetInPage = expectedGlobalOffset - pageStartGlobalOffset;
-            // Only consider matches that are reasonably close to the expected offset (within 500 chars)
-            const closeMatches = searchMatches.filter(m => Math.abs(m.start - expectedOffsetInPage) < 500);
-            if (closeMatches.length > 0) {
-              let minDistance = Math.abs(closeMatches[0].start - expectedOffsetInPage);
-              bestMatch = closeMatches[0];
-              for (const match of closeMatches) {
-                const distance = Math.abs(match.start - expectedOffsetInPage);
-                if (distance < minDistance) {
-                  minDistance = distance;
-                  bestMatch = match;
-                }
-              }
-            }
-          }
-          
-          highlights.push(bestMatch);
-          logger.info(`[BookView - Page Content Effect] Found guide search text at position ${bestMatch.start} in page ${validCurrentPage} (${searchMatches.length} total matches)`);
-        } else {
-          // If not found on current page, check if we're waiting for page navigation
-          const expectedGlobalOffset = (guideSearchGlobalOffset ?? scrollToGlobalOffset);
-          if (expectedGlobalOffset !== null && expectedGlobalOffset !== undefined) {
-            const expectedOffsetInPage = expectedGlobalOffset - pageStartGlobalOffset;
-            if (expectedOffsetInPage < 0 || expectedOffsetInPage >= plainPageText.length) {
-              logger.info(`[BookView - Page Content Effect] Guide search text not on current page ${validCurrentPage}, waiting for navigation to correct page`);
-            } else {
-              // Fallback: use expected offset to highlight the first sentence-sized chunk.
-              const safeStart = Math.max(0, Math.min(expectedOffsetInPage, plainPageText.length - 1));
-              const tail = plainPageText.slice(safeStart, safeStart + 240);
-              const sentenceEnd = tail.match(/[.!?](\s|$)/);
-              const fallbackLen = sentenceEnd && typeof sentenceEnd.index === 'number'
-                ? Math.max(20, sentenceEnd.index + 1)
-                : Math.max(20, Math.min(120, tail.length));
-              const safeEnd = Math.max(safeStart + 1, Math.min(plainPageText.length, safeStart + fallbackLen));
-              highlights.push({
-                start: safeStart,
-                end: safeEnd,
-                type: 'guide-search',
-                text: plainPageText.substring(safeStart, safeEnd)
-              });
-              logger.info(`[BookView - Page Content Effect] Guide-search text fallback highlight at ${safeStart}-${safeEnd} on page ${validCurrentPage}`);
-            }
-          } else {
-            logger.warn(`[BookView - Page Content Effect] Guide search text not found in page ${validCurrentPage}: "${cleanSearchText.substring(0, 50)}"`);
-          }
+          logger.info(`[BookView - Page Content Effect] Applied guide span highlight ${guideHighlight.rawStart}-${guideHighlight.rawEnd} on page ${validCurrentPage}`);
         }
       }
 
@@ -2504,14 +2434,10 @@ function BookView({
         return b.end - a.end; // Longer highlights first if same start
       });
 
-      const cutoffInPage =
-        guideSegmentCutoffOffset !== null &&
-        guideSegmentCutoffOffset !== undefined &&
-        guideSegmentCutoffOffset >= pageStartGlobalOffset &&
-        guideSegmentCutoffOffset <= pageEndGlobalOffset
-          ? Math.max(0, Math.min(plainPageText.length, guideSegmentCutoffOffset - pageStartGlobalOffset))
-          : null;
-      const cutoffMarkerHtml = '<span class="roadmap-cutoff-indicator" role="note" aria-label="Roadmap segment cutoff">Roadmap segment cutoff</span>';
+      const cutoffInPage = guideJumpSession
+        ? markerOffsetInPageMarkdown(plainPageText, pageStartGlobalOffset, guideJumpSession.endOffset)
+        : null;
+      const cutoffMarkerHtml = '<span class="roadmap-cutoff-indicator" role="note" aria-label="End of this section">End of this section</span>';
       const escapeHtml = (text) => String(text || '')
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
@@ -2653,7 +2579,7 @@ function BookView({
       setCurrentPageContent('');
       setHighlightedPageContent('');
     }
-  }, [fullMarkdownContent, currentPage, notes, pendingScrollOffsetInPage, pendingScrollToPercentage, guideSearchText, guideSearchGlobalOffset, guideSearchEndOffset, guideSegmentCutoffOffset, scrollToGlobalOffset, viewMode]);
+  }, [fullMarkdownContent, currentPage, notes, pendingScrollOffsetInPage, pendingScrollToPercentage, guideSearchText, guideSearchGlobalOffset, guideJumpSession, scrollToGlobalOffset, viewMode]);
 
 
   // Effect to apply initial scroll once content is ready
@@ -3386,17 +3312,16 @@ function BookView({
     }
   }, [guideSearchText, guideSearchGlobalOffset, highlightedPageContent]);
 
-  // Keep guide highlight around long enough to be visible, then clear it.
+  // Yellow start highlight fades. The section-end marker stays with guideJumpSession.
   useEffect(() => {
-    if (!guideSearchText && guideSearchGlobalOffset === null && guideSegmentCutoffOffset === null) return undefined;
+    if (!guideSearchText && guideSearchGlobalOffset === null) return undefined;
     const cleanupTimer = setTimeout(() => {
       setGuideSearchText(null);
       setGuideSearchGlobalOffset(null);
       setGuideSearchEndOffset(null);
-      setGuideSegmentCutoffOffset(null);
     }, 8000);
     return () => clearTimeout(cleanupTimer);
-  }, [guideSearchText, guideSearchGlobalOffset, guideSegmentCutoffOffset]);
+  }, [guideSearchText, guideSearchGlobalOffset]);
 
   useEffect(() => {
     // This effect applies scrolling when a pendingScrollToPercentage is set,
@@ -4322,6 +4247,12 @@ function BookView({
                   onRoadmapReturnFocusDone={handleRoadmapReturnFocusDone}
                 />
               ) : (
+                <>
+                {guideSectionEndNotice && (
+                  <p className="roadmap-section-end-notice" role="note">
+                    {guideSectionEndNotice}
+                  </p>
+                )}
                 <BookPane
                   markdownContent={highlightedPageContent}
                   imageUrls={bookData.image_urls}
@@ -4330,6 +4261,7 @@ function BookView({
                   fontSize={fontSize}
                   lineHeight={lineHeight}
                 />
+                </>
               )}
               </div>
               {/* Floating "Back to Reading Guide" button when user navigated from guide */}

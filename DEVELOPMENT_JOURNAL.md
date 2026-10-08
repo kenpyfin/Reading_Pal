@@ -2,6 +2,13 @@
 
 Chronological log of meaningful implementation work: decisions, behavior changes, and where to look in the codebase. Agents and humans should **read relevant sections before** planning or changing related code, and **append an entry after** non-trivial work.
 
+## 2026-10-08 — Reader follow-ups: measure, angle lens, section end
+
+- **What:** On a wide screen the guide cards sit in a centered 72-character measure with at least 48px on each side. The toolbar stays full width, and the phone layout is unchanged. The Angle control only shows the lens of the current guide. **New guide…** is the only control that creates a guide. Jump to original text lands on the stored start, and skips ahead only when that start is a mid-sentence fragment. The yellow highlight searches the card quote inside the stored span (or the opening sentence of that span). An **End of this section** marker stays until the reader leaves the original, jumps from another card, or pages outside the span. If the end is on a later page, the landing page names that page and the marker is drawn when the reader reaches it.
+- **Why:** The guide column ran edge to edge, Angle and New guide did the same create action, and Jump to original text sometimes skipped a clean opening or highlighted a repeated line.
+- **Where:** `frontend/src/utils/guideJump.js`, `frontend/src/pages/BookView.js`, `frontend/src/pages/BookView.css`, `frontend/src/components/ReadingGuidePane.js`, `frontend/src/components/ReadingGuidePane.css`, `frontend/src/components/PromptConfigPopover.js`, `frontend/scripts/check-guide-jump.cjs`
+- **Notes:** Branch `feat/reader-followups`, off `feat/reader-chrome`. Dev only. Check the jump helper with `node frontend/scripts/check-guide-jump.cjs`.
+
 ## 2026-10-06 — Reader chrome on feat/reader-chrome
 
 - **What:** On a book, the top bar shows Book List, the title, a Guide crumb in guide mode, and a page progress ring. Selecting original text opens a Note / Ask bar on the selection, kept above the phone bottom bar. Add note, Ask LLM, all notes, the highlight note, and both bookmark dialogs use one Radix dialog. Note and Ask stay bottom sheets on a phone. The unused guide/book resizer is gone. The guide header is the completion count and the thin bar; section dots and the Current jump button are not rendered.

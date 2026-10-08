@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { createPortal } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import PromptConfigPopover from './PromptConfigPopover';
+import { AngleLensPopover, NewGuideDialog } from './PromptConfigPopover';
 import { matchesMobileLayout, subscribeMobileLayout } from '../utils/mobileLayout';
 import './ReadingGuidePane.css';
 
@@ -793,15 +793,8 @@ const ReadingGuidePane = ({
             </select>
           </div>
         )}
-        {onCreateGuide && (
-          <PromptConfigPopover
-            open={promptOpen}
-            onOpenChange={setPromptOpen}
-            activeGuide={activeGuideSummary}
-            canCreate={canAddGuide}
-            disabled={actionsBusy || serverActionsDisabled}
-            onCreate={handleSubmitNewGuide}
-          />
+        {guidesList.length > 0 && (
+          <AngleLensPopover activeGuide={activeGuideSummary} />
         )}
         <div className="reading-guide-overflow" ref={overflowRef}>
           <button
@@ -1090,6 +1083,16 @@ const ReadingGuidePane = ({
             </div>
           </div>
         </div>
+      )}
+      {onCreateGuide && (
+        <NewGuideDialog
+          open={promptOpen}
+          onOpenChange={setPromptOpen}
+          activeGuide={activeGuideSummary}
+          canCreate={canAddGuide}
+          disabled={actionsBusy || serverActionsDisabled}
+          onCreate={handleSubmitNewGuide}
+        />
       )}
     </div>
   );

@@ -291,6 +291,17 @@
   padding: 10px 12px;
 }
 
+/* Wide screens: keep guide cards on the same measure as the book, with at least 48px on each side. */
+@media (min-width: 769px) {
+  .reading-guide-inner-content {
+    box-sizing: border-box;
+    width: min(72ch, calc(100% - 96px));
+    max-width: calc(100% - 96px);
+    margin-left: auto;
+    margin-right: auto;
+  }
+}
+
 .reading-guide-empty-state {
   display: flex;
   flex-direction: column;
@@ -368,6 +379,10 @@
   }
 
   .reading-guide-inner-content {
+    width: auto;
+    max-width: none;
+    margin-left: 0;
+    margin-right: 0;
     padding: 8px; /* Reduced from 15px */
     padding-top: 15px;
   }
