@@ -1202,7 +1202,6 @@ function BookView({
       setGuideJumpSession(null);
       setGuideSearchText(null);
       setGuideSearchGlobalOffset(null);
-      setGuideSearchEndOffset(null);
     }
   }, [bookId]);
 
