@@ -1,31 +1,12 @@
-const SENTENCE_LOOKAHEAD = 320;
-
-function isMidSentenceFragment(markdown, start) {
-  if (start <= 0) return false;
-  const before = markdown.slice(Math.max(0, start - 120), start);
-  if (/\n\s*$/.test(before)) return false;
-  const trimmed = before.replace(/\s+$/, '');
-  if (!trimmed) return false;
-  if (/[.!?]["')\]]*$/.test(trimmed)) return false;
-  return true;
-}
-
 /**
- * Land on the stored start. Skip forward only when the characters just
- * before that start are a mid-sentence fragment.
+ * Land on the stored start of the section. Do not skip ahead to a later
+ * sentence; that put the reader near the end of short sections.
  */
 export function resolveGuideNavigationOffset(markdown, startOffset) {
   if (typeof markdown !== 'string' || typeof startOffset !== 'number' || Number.isNaN(startOffset)) {
     return startOffset;
   }
-  const start = Math.max(0, Math.min(Math.floor(startOffset), markdown.length));
-  if (!isMidSentenceFragment(markdown, start)) return start;
-  const lookahead = markdown.slice(start, start + SENTENCE_LOOKAHEAD);
-  const boundary = lookahead.match(/[.!?]\s+/);
-  if (!boundary || typeof boundary.index !== 'number') return start;
-  const candidate = start + boundary.index + boundary[0].length;
-  if (candidate > start && candidate <= markdown.length) return candidate;
-  return start;
+  return Math.max(0, Math.min(Math.floor(startOffset), markdown.length));
 }
 
 /**
@@ -76,25 +57,6 @@ export function plainIndexForRaw(rawToPlain, rawIndex) {
   return rawToPlain[clamped];
 }
 
-function normalizeQuote(text) {
-  if (!text) return '';
-  return String(text).replace(/\s+/g, ' ').trim();
-}
-
-function findQuoteInPlain(plain, start, end, quote) {
-  const cleaned = normalizeQuote(quote);
-  if (!cleaned) return null;
-  const span = plain.slice(start, end);
-  if (!span) return null;
-  const escaped = cleaned.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '\\s+');
-  const match = span.match(new RegExp(escaped, 'i'));
-  if (!match || typeof match.index !== 'number') return null;
-  return {
-    start: start + match.index,
-    end: start + match.index + match[0].length,
-  };
-}
-
 function openingSentence(plain, start, end) {
   const span = plain.slice(start, end);
   if (!span.trim()) return null;
@@ -115,16 +77,14 @@ function rawRangeFromPlain(plainToRaw, plainLength, range) {
 }
 
 /**
- * Highlight the quote only inside the stored span, after heading and image
- * syntax are removed. If the quote is not in that span, highlight the opening
- * sentence on the page that contains the stored start.
+ * Highlight the opening sentence of the stored span on the page that contains
+ * the start. A later key quote must not become the scroll target.
  */
 export function resolveGuideHighlightOnPage({
   pageMarkdown,
   pageStartGlobal,
   startOffset,
   endOffset,
-  quote,
 }) {
   if (typeof pageMarkdown !== 'string') return null;
   if (typeof pageStartGlobal !== 'number' || typeof startOffset !== 'number' || typeof endOffset !== 'number') {
@@ -133,6 +93,9 @@ export function resolveGuideHighlightOnPage({
   if (!(endOffset > startOffset)) return null;
 
   const pageEndGlobal = pageStartGlobal + pageMarkdown.length;
+  const containsStart = startOffset >= pageStartGlobal && startOffset < pageEndGlobal;
+  if (!containsStart) return null;
+
   const overlapStart = Math.max(startOffset, pageStartGlobal);
   const overlapEnd = Math.min(endOffset, pageEndGlobal);
   if (overlapEnd <= overlapStart) return null;
@@ -142,11 +105,7 @@ export function resolveGuideHighlightOnPage({
   const plainEnd = plainIndexForRaw(rawToPlain, overlapEnd - pageStartGlobal);
   if (plainEnd <= plainStart) return null;
 
-  const containsStart = startOffset >= pageStartGlobal && startOffset < pageEndGlobal;
-  let range = findQuoteInPlain(plain, plainStart, plainEnd, quote);
-  if (!range && containsStart) {
-    range = openingSentence(plain, plainStart, plainEnd);
-  }
+  const range = openingSentence(plain, plainStart, plainEnd);
   return rawRangeFromPlain(plainToRaw, plain.length, range);
 }
 

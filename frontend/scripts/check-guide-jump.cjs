@@ -29,35 +29,34 @@ const betaAt = clean.indexOf('Beta');
 assert.strictEqual(
   resolveGuideNavigationOffset(clean, betaAt),
   betaAt,
-  'a clean opening after a finished sentence must not be skipped',
+  'a clean opening stays on the stored start',
 );
 
 const fragment = 'The claim continues past the chunk boundary. Next sentence follows.';
 const mid = fragment.indexOf('continues');
-const nextAt = fragment.indexOf('Next sentence');
 assert.strictEqual(
   resolveGuideNavigationOffset(fragment, mid),
-  nextAt,
-  'a mid-sentence fragment skips to the following sentence',
+  mid,
+  'a mid-sentence start stays put instead of skipping toward the end',
 );
 
 const paragraph = 'Previous paragraph.\n\nFresh start stays.';
 const freshAt = paragraph.indexOf('Fresh');
 assert.strictEqual(resolveGuideNavigationOffset(paragraph, freshAt), freshAt);
 
-const repeated = 'The same line appears early. Later the same line appears in the section itself.';
-const early = repeated.indexOf('the same line');
-const late = repeated.indexOf('the same line', early + 1);
-const highlight = resolveGuideHighlightOnPage({
-  pageMarkdown: repeated,
+const section = 'Opening of the section is here. The payoff quote sits at the end.';
+const opening = resolveGuideHighlightOnPage({
+  pageMarkdown: section,
   pageStartGlobal: 0,
-  startOffset: late,
-  endOffset: repeated.length,
-  quote: 'the same line',
+  startOffset: 0,
+  endOffset: section.length,
+  quote: 'The payoff quote sits at the end.',
 });
-assert.ok(highlight, 'quote inside the span is highlighted');
-assert.ok(highlight.rawStart >= late, 'an earlier copy of the quote is ignored');
-assert.strictEqual(repeated.slice(highlight.rawStart, highlight.rawEnd).toLowerCase(), 'the same line');
+assert.ok(opening, 'the opening sentence is highlighted');
+assert.ok(
+  section.slice(opening.rawStart, opening.rawEnd).startsWith('Opening of the section'),
+  'a later key quote is not the highlight',
+);
 
 const headed = '## Opening claim starts here. More follows after.';
 const claim = resolveGuideHighlightOnPage({

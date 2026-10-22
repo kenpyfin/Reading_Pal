@@ -53,7 +53,7 @@ Backend is the system-of-record service for user, book, note, bookmark, and read
   - Detect supported source format (`.pdf`, `.epub`, `.mobi`, `.azw`, `.azw3`, `.docx`, `.txt`, `.html`, `.htm`)
   - Route to format-specific extraction/conversion
   - Determine text PDF vs scanned PDF path for PDF uploads
-  - Extract text/images when available
+  - Extract text/images when available. EPUB, and MOBI/AZW after conversion to EPUB, resolve each `<img src>` inside the zip, write the bytes to `images/app` under a content hash, and rewrite that `src` to `/images/app/<hash>` before markdown conversion. The picture stays in the chapter. Those files use the same callback list as PDF images and are not appended a second time.
   - Produce markdown output
   - Optionally reformat markdown through configured LLM. The upload reformat prompt promotes plain structural titles (Chapter, Part, Section, and front/back matter) to ATX headings. The reader and roadmap also recognize those lines in markdown that was saved before that prompt change, so existing books do not need a reprocess for page breaks or guide sections.
   - Callback to backend with processing result payload

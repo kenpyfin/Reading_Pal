@@ -20,6 +20,10 @@ import {
   resolveGuideNavigationOffset,
 } from '../utils/guideJump';
 import {
+  MAX_PAGE_BUDGET as APPROX_CHARS_PER_PAGE,
+  calculatePageBoundaries,
+} from '../utils/pageBoundaries';
+import {
   getStoredAuthToken,
   getStoredReadingPosition,
   getStoredReadingViewMode,
@@ -54,8 +58,7 @@ import {
   reconcileGuideProgressState,
 } from '../utils/syncReconciler';
 
-// Virtual "pages" when splitting full markdown for reading (smaller = less text per page, more page numbers).
-const APPROX_CHARS_PER_PAGE = 8000;
+// Virtual pages: at most two screens (6,000 characters, or less when images are present).
 
 const BOOK_CONTROLS_EXPANDED_KEY = 'readingPal_bookControlsExpanded';
 const FLOATING_TOOLBAR_TOP_PX = 80;
@@ -359,174 +362,6 @@ function resolveNoteHighlightRange(plainPageText, anchorInPage, sourceText) {
   };
 }
 
-const STRUCTURAL_TITLE_LINE = /^(?:(Chapter|Part|Book|Volume|Section|Lesson|Step)\s+(?:\d+|[IVXLCDM]+)\b(.*)|(Preface|Introduction|Foreword|Prologue|Epilogue|Conclusion|Afterword|Appendix)\b(.*))$/i;
-
-function isStructuralTitleLine(line) {
-  let raw = String(line || '').trim();
-  if (!raw || raw.startsWith('#') || raw.length > 120) return false;
-  if (raw.endsWith('.') && (raw.match(/\./g) || []).length === 1 && raw.split(/\s+/).length <= 4) {
-    raw = raw.slice(0, -1).trim();
-  } else if (raw.includes('.')) {
-    return false;
-  }
-  if (raw.split(/\s+/).length > 14) return false;
-  return STRUCTURAL_TITLE_LINE.test(raw);
-}
-
-// Keep in sync with KnowledgeMapper.heading_start_offsets / books._snap_page_end_to_heading.
-function collectHeadingOffsets(markdown) {
-  const offsets = [];
-  let offset = 0;
-  let inFence = false;
-  const lines = markdown.split('\n');
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i];
-    const stripped = line.trim();
-    if (stripped.startsWith('```')) {
-      inFence = !inFence;
-    } else if (!inFence && stripped) {
-      if (/^#{1,6}\s+\S/.test(line) || isStructuralTitleLine(stripped)) {
-        offsets.push(offset);
-      }
-    }
-    offset += line.length + 1;
-  }
-  return offsets;
-}
-
-function snapPageEndToHeading(headingOffsets, pageStart, proposedEnd, targetCharsPerPage, totalLength) {
-  const windowLo = pageStart + Math.floor(targetCharsPerPage * 0.55);
-  const windowHi = Math.min(totalLength, pageStart + Math.floor(targetCharsPerPage * 1.35));
-  if (windowLo >= windowHi) return proposedEnd;
-  const candidates = headingOffsets.filter((h) => h > pageStart && h >= windowLo && h <= windowHi);
-  if (!candidates.length) return proposedEnd;
-  candidates.sort((a, b) => Math.abs(a - proposedEnd) - Math.abs(b - proposedEnd) || a - b);
-  return candidates[0];
-}
-
-// Helper function to calculate page boundaries respecting word breaks and section headings
-function calculatePageBoundaries(markdown, targetCharsPerPage) {
-  if (!markdown || typeof markdown !== 'string') { // Added type check for markdown
-    logger.warn("[calculatePageBoundaries] Markdown content is invalid or empty.");
-    return [];
-  }
-  const boundaries = [];
-  let currentOffset = 0;
-  const totalLength = markdown.length;
-  const headingOffsets = collectHeadingOffsets(markdown);
-  // Heuristic: Don't let pages become too small if a word break is found very early.
-  // This means a page might be slightly larger than targetCharsPerPage if it prevents a tiny next page.
-  const MIN_PAGE_CHARS = targetCharsPerPage * 0.5; // Page should be at least 50% of target
-
-  const adjustBoundarySafely = (pageStart, proposedEnd) => {
-    let safeEnd = proposedEnd;
-    const segment = markdown.substring(pageStart, safeEnd);
-
-    // Avoid splitting in the middle of fenced code blocks.
-    const fenceMatches = segment.match(/```/g);
-    const fenceCount = fenceMatches ? fenceMatches.length : 0;
-    if (fenceCount % 2 === 1) {
-      const nextFence = markdown.indexOf("```", safeEnd);
-      if (nextFence !== -1 && nextFence - safeEnd <= targetCharsPerPage * 0.6) {
-        const nextNewline = markdown.indexOf("\n", nextFence + 3);
-        safeEnd = nextNewline !== -1 ? nextNewline + 1 : Math.min(nextFence + 3, totalLength);
-      } else {
-        const lastFence = segment.lastIndexOf("```");
-        if (lastFence > 0) {
-          safeEnd = pageStart + lastFence;
-        }
-      }
-    }
-
-    // Avoid splitting within an HTML tag.
-    const tail = markdown.substring(pageStart, safeEnd);
-    const lastOpen = tail.lastIndexOf("<");
-    const lastClose = tail.lastIndexOf(">");
-    if (lastOpen > lastClose) {
-      safeEnd = pageStart + lastOpen;
-    }
-
-    // Keep the adjusted page from being too tiny.
-    if (safeEnd - pageStart < MIN_PAGE_CHARS && proposedEnd - pageStart >= MIN_PAGE_CHARS) {
-      safeEnd = proposedEnd;
-    }
-    return Math.max(pageStart + 1, Math.min(totalLength, safeEnd));
-  };
-
-  while (currentOffset < totalLength) {
-    const pageStart = currentOffset;
-    let potentialEnd = Math.min(pageStart + targetCharsPerPage, totalLength);
-    let actualEnd = potentialEnd;
-
-    if (potentialEnd < totalLength) { // If not the last character of the document
-      let boundaryFound = false;
-      // Search backwards from potentialEnd for a natural break (space)
-      for (let i = potentialEnd; i > pageStart; i--) {
-        if (/\s/.test(markdown[i-1])) { // Check character *before* potential cut point
-          actualEnd = i; // End *before* the space if cutting, or *at* the space if space is end of word
-          boundaryFound = true;
-          break;
-        }
-      }
-
-      if (!boundaryFound) {
-        // No space found searching backwards. This means pageStart to potentialEnd is one long token.
-        // Try to find the *next* space *after* potentialEnd, but not too far.
-        let nextSpaceSearchLimit = Math.min(potentialEnd + targetCharsPerPage * 0.25, totalLength); // Search forward a bit
-        let foundNextSpace = false;
-        for (let i = potentialEnd; i < nextSpaceSearchLimit; i++) {
-          if (/\s/.test(markdown[i])) {
-            actualEnd = i + 1; // End after this space
-            foundNextSpace = true;
-            break;
-          }
-        }
-        // If still no space found (very long word/URL), we have to take potentialEnd.
-        // This might break the word if it's longer than targetCharsPerPage.
-        if (!foundNextSpace) {
-          actualEnd = potentialEnd; 
-        }
-      }
-      
-      // If the found boundary makes the current page too short, and it's not the end of the document,
-      // prefer to take the original potentialEnd or even extend a bit if that helps the next page.
-      // This logic can get very complex. A simpler rule: if actualEnd is too close to pageStart,
-      // and we are not near the end of the document, just use potentialEnd.
-      if ((actualEnd - pageStart) < MIN_PAGE_CHARS && (totalLength - pageStart) > targetCharsPerPage) {
-         actualEnd = potentialEnd;
-      }
-
-      actualEnd = snapPageEndToHeading(
-        headingOffsets,
-        pageStart,
-        actualEnd,
-        targetCharsPerPage,
-        totalLength,
-      );
-    }
-    
-    // Prevent infinite loop if actualEnd doesn't advance
-    if (actualEnd <= pageStart && pageStart < totalLength) {
-        logger.warn(`[calculatePageBoundaries] actualEnd (${actualEnd}) did not advance from pageStart (${pageStart}). Forcing advance.`);
-        actualEnd = Math.min(pageStart + targetCharsPerPage, totalLength);
-    }
-    
-    // Ensure actualEnd does not exceed totalLength
-    actualEnd = Math.min(actualEnd, totalLength);
-
-    actualEnd = adjustBoundarySafely(pageStart, actualEnd);
-    boundaries.push({ start: pageStart, end: actualEnd });
-    currentOffset = actualEnd;
-
-    if (boundaries.length > 10000) { // Safety break for very large documents / potential infinite loops
-        logger.error("[calculatePageBoundaries] Exceeded 10000 page boundaries, breaking loop. Check content or logic.");
-        break;
-    }
-  }
-  logger.info(`[calculatePageBoundaries] Calculated ${boundaries.length} pages.`);
-  return boundaries;
-}
-
 function BookView({
   setNavBarExtra = null,
   navBarActiveScrollRef = null,
@@ -631,6 +466,7 @@ function BookView({
   const guideScrollContainerRef = useRef(null);
   const lastScrollToTopPageRef = useRef(null); // Only scroll book pane to top when page actually changed (not when only notes changed)
   const skipBookScrollRestoreOnPageChangeRef = useRef(false);
+  const guideJumpAnchorPendingRef = useRef(false);
   const explicitPaginationInFlightRef = useRef(false);
   const explicitPaginationTargetPageRef = useRef(null);
   /** Bumped on explicit pagination so delayed scroll helpers (e.g. guide highlight) do not run stale timeouts. */
@@ -857,6 +693,7 @@ function BookView({
   const [reformatError, setReformatError] = useState(null);
   // --- END NEW State for Content Reformatting ---
   const isInitialMount = useRef(true);
+  const lastSavedPageRef = useRef(null);
 
   useLayoutEffect(() => {
     if (!bookPaneAreaRef.current || loading || !bookData) {
@@ -958,10 +795,27 @@ function BookView({
       const savedPosition = getStoredReadingPosition(bookId);
       setCurrentPage((cp) => {
         let next = cp > numPages ? 1 : cp;
-        if (cp > numPages) {
-          logger.warn(`[BookView - applyBookPayload] Page ${cp} out of bounds (${numPages}). Resetting to 1.`);
+        let offsetInPage = null;
+        if (savedPosition && Number.isFinite(savedPosition.charOffset)) {
+          const info = getPageForOffset(savedPosition.charOffset, calculatedBoundaries);
+          if (info) {
+            next = info.pageNumber;
+            offsetInPage = info.offsetInPage;
+          }
         }
-        if (savedPosition && savedPosition.page === next && typeof savedPosition.scrollTop === 'number') {
+        if (next > numPages || next < 1) {
+          logger.warn(`[BookView - applyBookPayload] Page ${next} out of bounds (${numPages}). Resetting to 1.`);
+          next = 1;
+          offsetInPage = 0;
+        }
+        if (offsetInPage > 0) {
+          setPendingScrollOffsetInPage(offsetInPage);
+        } else if (
+          savedPosition &&
+          !Number.isFinite(savedPosition.charOffset) &&
+          savedPosition.page === next &&
+          typeof savedPosition.scrollTop === 'number'
+        ) {
           setInitialScrollTop(savedPosition.scrollTop);
         }
         return next;
@@ -2069,6 +1923,8 @@ function BookView({
     }
 
     const { start_offset, end_offset, preview_text, key_quote } = textLink;
+    guideJumpAnchorPendingRef.current = true;
+    skipBookScrollRestoreOnPageChangeRef.current = true;
     const navigationOffset = resolveGuideNavigationOffset(fullMarkdownContent || '', start_offset);
 
     const normalizeQuote = (value) => {
@@ -2178,6 +2034,7 @@ function BookView({
   useEffect(() => {
     if (viewMode !== 'original' || !bookPaneContainerRef.current) return;
     if (explicitPaginationInFlightRef.current) return;
+    if (guideJumpAnchorPendingRef.current) return;
     if (skipBookScrollRestoreOnPageChangeRef.current) {
       skipBookScrollRestoreOnPageChangeRef.current = false;
       return;
@@ -2401,15 +2258,14 @@ function BookView({
         }
       }
 
-      // Highlight the quote only inside the stored guide span. The yellow mark
-      // fades with guideSearchGlobalOffset; the end marker uses guideJumpSession.
+      // Yellow mark is the opening sentence at the stored start. A later key
+      // quote must not pull the viewport to the end of the section.
       if (guideJumpSession && guideSearchGlobalOffset !== null && guideSearchGlobalOffset !== undefined) {
         const guideHighlight = resolveGuideHighlightOnPage({
           pageMarkdown: plainPageText,
           pageStartGlobal: pageStartGlobalOffset,
           startOffset: guideJumpSession.startOffset,
           endOffset: guideJumpSession.endOffset,
-          quote: guideSearchText,
         });
         if (guideHighlight) {
           highlights.push({
@@ -2430,9 +2286,13 @@ function BookView({
         return b.end - a.end; // Longer highlights first if same start
       });
 
+      const sectionStartInPage = guideJumpSession
+        ? markerOffsetInPageMarkdown(plainPageText, pageStartGlobalOffset, guideJumpSession.startOffset)
+        : null;
       const cutoffInPage = guideJumpSession
         ? markerOffsetInPageMarkdown(plainPageText, pageStartGlobalOffset, guideJumpSession.endOffset)
         : null;
+      const startMarkerHtml = '<span class="guide-section-start" data-guide-section-start="1"></span>';
       const cutoffMarkerHtml = '<span class="roadmap-cutoff-indicator" role="note" aria-label="End of this section">End of this section</span>';
       const escapeHtml = (text) => String(text || '')
         .replace(/&/g, '&amp;')
@@ -2440,27 +2300,47 @@ function BookView({
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#039;');
-      let cutoffInserted = false;
+      const injections = [];
+      if (sectionStartInPage !== null) {
+        injections.push({ at: sectionStartInPage, html: startMarkerHtml, used: false });
+      }
+      if (cutoffInPage !== null) {
+        injections.push({ at: cutoffInPage, html: cutoffMarkerHtml, used: false });
+      }
       const buildSegmentText = (start, end, shouldEscape = false) => {
         if (end <= start) return '';
         const normalizedStart = Math.max(0, Math.min(start, plainPageText.length));
         const normalizedEnd = Math.max(normalizedStart, Math.min(end, plainPageText.length));
-        const hasCutoff =
-          cutoffInPage !== null &&
-          !cutoffInserted &&
-          cutoffInPage >= normalizedStart &&
-          cutoffInPage <= normalizedEnd;
-        if (!hasCutoff) {
+        const hits = injections
+          .filter((inj) => !inj.used && inj.at >= normalizedStart && inj.at <= normalizedEnd)
+          .sort((a, b) => a.at - b.at);
+        if (hits.length === 0) {
           const chunk = plainPageText.substring(normalizedStart, normalizedEnd);
           return shouldEscape ? escapeHtml(chunk) : chunk;
         }
-        const split = Math.max(normalizedStart, Math.min(cutoffInPage, normalizedEnd));
-        const before = plainPageText.substring(normalizedStart, split);
-        const after = plainPageText.substring(split, normalizedEnd);
-        cutoffInserted = true;
-        const left = shouldEscape ? escapeHtml(before) : before;
-        const right = shouldEscape ? escapeHtml(after) : after;
-        return `${left}${cutoffMarkerHtml}${right}`;
+        let cursor = normalizedStart;
+        let out = '';
+        hits.forEach((hit) => {
+          const split = Math.max(cursor, Math.min(hit.at, normalizedEnd));
+          const chunk = plainPageText.substring(cursor, split);
+          out += shouldEscape ? escapeHtml(chunk) : chunk;
+          out += hit.html;
+          hit.used = true;
+          cursor = split;
+        });
+        const tail = plainPageText.substring(cursor, normalizedEnd);
+        out += shouldEscape ? escapeHtml(tail) : tail;
+        return out;
+      };
+      const appendUnusedEdgeMarkers = (html) => {
+        let next = html;
+        injections.forEach((inj) => {
+          if (!inj.used && inj.at === plainPageText.length) {
+            next += inj.html;
+            inj.used = true;
+          }
+        });
+        return next;
       };
 
       // Apply highlights to text
@@ -2494,18 +2374,12 @@ function BookView({
 
         if (lastIndex < plainPageText.length) {
           highlightedText += buildSegmentText(lastIndex, plainPageText.length, false);
-        } else if (!cutoffInserted && cutoffInPage === plainPageText.length) {
-          highlightedText += cutoffMarkerHtml;
         }
 
-        setHighlightedPageContent(highlightedText);
+        setHighlightedPageContent(appendUnusedEdgeMarkers(highlightedText));
       } else {
-        const plainWithCutoff = buildSegmentText(0, plainPageText.length, false);
-        setHighlightedPageContent(
-          !cutoffInserted && cutoffInPage === plainPageText.length
-            ? `${plainWithCutoff}${cutoffMarkerHtml}`
-            : plainWithCutoff
-        );
+        const plainWithMarkers = buildSegmentText(0, plainPageText.length, false);
+        setHighlightedPageContent(appendUnusedEdgeMarkers(plainWithMarkers));
       }
       
       const pageActuallyChanged = lastScrollToTopPageRef.current !== currentPage;
@@ -2953,6 +2827,10 @@ function BookView({
 
   // Effect for scrolling to a note when scrollToGlobalOffset changes
   useEffect(() => {
+    if (guideJumpAnchorPendingRef.current && scrollToGlobalOffset !== null) {
+      setScrollToGlobalOffset(null);
+      return;
+    }
     if (viewMode !== 'original' || scrollToGlobalOffset === null || !fullMarkdownContent || pageBoundaries.length === 0) { // Check pageBoundaries
       if (scrollToGlobalOffset !== null) {
         logger.debug(`[ScrollToNoteEffect] Aborting: viewMode=${viewMode}, scrollToGlobalOffset=${scrollToGlobalOffset}, fullMarkdownContent=${!!fullMarkdownContent}, pageBoundaries.length=${pageBoundaries.length}`);
@@ -3177,6 +3055,10 @@ function BookView({
     if (viewMode !== 'original') {
       return;
     }
+    if (guideJumpAnchorPendingRef.current && pendingScrollOffsetInPage !== null) {
+      setPendingScrollOffsetInPage(null);
+      return;
+    }
     // This effect handles scrolling when a page changes due to a note click (scrollToGlobalOffset)
     // pendingScrollOffsetInPage is the RAW character offset within the NEWLY loaded currentPageContent
     if (pendingScrollOffsetInPage !== null && bookPaneContainerRef.current && (currentPageContent.length > 0 || pendingScrollOffsetInPage === 0) && pageBoundaries.length > 0) {
@@ -3280,33 +3162,44 @@ function BookView({
     }
   }, [currentPageContent, pendingScrollOffsetInPage, pageBoundaries, currentPage, viewMode]); // Added pageBoundaries, currentPage for setBookScrollPositionByPage
 
-  // Effect to scroll to guide search highlight after content is rendered
+  // Scroll the stored section start to the top of the book pane. Do not
+  // center a later quote; that landed the reader near the end of the section.
   useEffect(() => {
     if (explicitPaginationInFlightRef.current) {
       return undefined;
     }
-    if ((guideSearchText || guideSearchGlobalOffset !== null) && bookPaneContainerRef.current && highlightedPageContent) {
-      const epochAtSchedule = bookPaneScrollEpochRef.current;
-      // Small delay to ensure DOM is updated with highlighted content
-      const scrollTimeout = setTimeout(() => {
-        if (bookPaneScrollEpochRef.current !== epochAtSchedule) return;
-        if (explicitPaginationInFlightRef.current) return;
-        const highlightElement = bookPaneContainerRef.current?.querySelector('.guide-search-highlight');
-        if (highlightElement) {
-          logger.info(`[BookView - GuideSearchScroll] Scrolling to guide search highlight`);
-          // Use instant scroll so a later page change is not overridden by smooth scrolling.
-          highlightElement.scrollIntoView({ behavior: 'auto', block: 'center' });
-          // Store ref for potential future use
-          guideSearchHighlightRef.current = highlightElement;
-        } else {
-          const preview = typeof guideSearchText === 'string' ? guideSearchText.substring(0, 50) : '';
-          logger.warn(`[BookView - GuideSearchScroll] Guide search highlight element not found. Search text: "${preview}"`);
-        }
-      }, 200);
-      
-      return () => clearTimeout(scrollTimeout);
+    if (viewMode !== 'original' || guideSearchGlobalOffset === null || guideSearchGlobalOffset === undefined) {
+      return undefined;
     }
-  }, [guideSearchText, guideSearchGlobalOffset, highlightedPageContent]);
+    if (!bookPaneContainerRef.current || !highlightedPageContent) {
+      return undefined;
+    }
+    const epochAtSchedule = bookPaneScrollEpochRef.current;
+    const scrollTimeout = setTimeout(() => {
+      if (bookPaneScrollEpochRef.current !== epochAtSchedule) return;
+      if (explicitPaginationInFlightRef.current) return;
+      const pane = bookPaneContainerRef.current;
+      const startElement = pane?.querySelector('.guide-section-start');
+      if (!pane || !startElement) {
+        guideJumpAnchorPendingRef.current = false;
+        logger.warn('[BookView - GuideSearchScroll] Section start anchor was not on this page.');
+        return;
+      }
+      const paneRect = pane.getBoundingClientRect();
+      const startRect = startElement.getBoundingClientRect();
+      const nextTop = pane.scrollTop + (startRect.top - paneRect.top) - 16;
+      isProgrammaticScroll.current = true;
+      pane.scrollTop = Math.max(0, nextTop);
+      setBookScrollPositionByPage((prev) => ({ ...prev, [currentPage]: pane.scrollTop }));
+      guideJumpAnchorPendingRef.current = false;
+      logger.info('[BookView - GuideSearchScroll] Scrolled to the section start.');
+      setTimeout(() => {
+        isProgrammaticScroll.current = false;
+      }, 300);
+    }, 200);
+
+    return () => clearTimeout(scrollTimeout);
+  }, [guideSearchGlobalOffset, highlightedPageContent, viewMode, currentPage]);
 
   // Yellow start highlight fades. The section-end marker stays with guideJumpSession.
   useEffect(() => {
@@ -3358,13 +3251,30 @@ function BookView({
     }
   }, [currentPageContent, pendingScrollToPercentage, currentPage, viewMode]); // Dependencies remain the same
 
+  const readingPositionPayload = useCallback((page, scrollTop, scrollEl) => {
+    const position = { page, scrollTop };
+    const boundary = pageBoundariesRef.current[page - 1];
+    if (!boundary) return position;
+    let charOffset = boundary.start;
+    const useFraction = viewMode === 'original'
+      && scrollEl
+      && scrollTop > 0
+      && scrollEl.scrollHeight > scrollEl.clientHeight;
+    if (useFraction) {
+      const fraction = Math.min(1, scrollTop / (scrollEl.scrollHeight - scrollEl.clientHeight));
+      const span = Math.max(0, boundary.end - boundary.start - 1);
+      charOffset = boundary.start + Math.round(fraction * span);
+    }
+    position.charOffset = charOffset;
+    return position;
+  }, [viewMode]);
+
   // Debounced function to save reading position (primarily for scroll)
   const debouncedSaveReadingPosition = useCallback(
-    debounce((bookIdToSave, pageToSave, scrollTopToSave) => {
-      if (bookIdToSave && typeof pageToSave === 'number' && typeof scrollTopToSave === 'number') {
-        const position = { page: pageToSave, scrollTop: scrollTopToSave };
+    debounce((bookIdToSave, position) => {
+      if (bookIdToSave && position && typeof position.page === 'number' && typeof position.scrollTop === 'number') {
         setStoredReadingPosition(bookIdToSave, position);
-        logger.debug(`[BookView - SavePosition] Saved position for book ${bookIdToSave}: Page ${pageToSave}, ScrollTop ${scrollTopToSave}`);
+        logger.debug(`[BookView - SavePosition] Saved position for book ${bookIdToSave}: Page ${position.page}, ScrollTop ${position.scrollTop}, Offset ${position.charOffset}`);
       }
     }, 1000), // Debounce for 1 second
     []
@@ -3378,21 +3288,33 @@ function BookView({
     const handleScroll = () => {
       const state = getEffectiveScrollState();
       if (state?.active && !isProgrammaticScroll.current && bookId) {
-        debouncedSaveReadingPosition(bookId, currentPage, state.active.scrollTop);
+        debouncedSaveReadingPosition(
+          bookId,
+          readingPositionPayload(currentPage, state.active.scrollTop, state.active),
+        );
       }
     };
 
-    // On initial mount, we don't want to overwrite the saved scroll position.
-    // On subsequent runs of this effect (due to currentPage changing), it's a page turn,
-    // so we save the new page with scrollTop 0.
+    // On initial mount, keep the stored offset. A later page change records the new page.
     if (isInitialMount.current) {
       isInitialMount.current = false;
-    } else {
-      if (bookId && currentPage) {
-          const position = { page: currentPage, scrollTop: 0 };
-          setStoredReadingPosition(bookId, position);
-          logger.debug(`[BookView - PageChange] Saved page ${currentPage} with scrollTop 0 for book ${bookId}`);
+      lastSavedPageRef.current = currentPage;
+    } else if (bookId && currentPage && lastSavedPageRef.current !== currentPage) {
+      lastSavedPageRef.current = currentPage;
+      const boundary = pageBoundariesRef.current[currentPage - 1];
+      const existing = getStoredReadingPosition(bookId);
+      const position = readingPositionPayload(currentPage, 0, null);
+      if (
+        boundary &&
+        existing &&
+        Number.isFinite(existing.charOffset) &&
+        existing.charOffset >= boundary.start &&
+        existing.charOffset < boundary.end
+      ) {
+        position.charOffset = existing.charOffset;
       }
+      setStoredReadingPosition(bookId, position);
+      logger.debug(`[BookView - PageChange] Saved page ${currentPage} offset ${position.charOffset} for book ${bookId}`);
     }
 
     trackedElements.forEach((el) => el.addEventListener('scroll', handleScroll, { passive: true }));
@@ -3401,7 +3323,7 @@ function BookView({
       trackedElements.forEach((el) => el.removeEventListener('scroll', handleScroll));
       debouncedSaveReadingPosition.cancel();
     };
-  }, [bookId, currentPage, debouncedSaveReadingPosition, getEffectiveScrollState, viewMode, readingRoadmap]);
+  }, [bookId, currentPage, debouncedSaveReadingPosition, getEffectiveScrollState, readingPositionPayload, viewMode, readingRoadmap]);
 
 
   const handleBookmarkSelect = (event) => {

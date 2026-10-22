@@ -2,6 +2,20 @@
 
 Chronological log of meaningful implementation work: decisions, behavior changes, and where to look in the codebase. Agents and humans should **read relevant sections before** planning or changing related code, and **append an entry after** non-trivial work.
 
+## 2026-10-21 — EPUB images stay in the chapter, and a page is one scroll
+
+- **What:** EPUB and converted MOBI/AZW images are written to `images/app` under a SHA-256 name and the chapter `<img>` is rewritten to `/images/app/<hash>` before markdown conversion. The merge step does not append those pictures again. Reader pages use a hard two-screen budget: 6,000 characters of text, one screen of text plus one image, or two images. A heading, code fence, or long word can move the break earlier and cannot push past the cap. The same budget is in `pageBoundaries.js` and `books.py`. Saved reading positions now include the character offset, and reopening uses that offset.
+- **Why:** EPUB markdown pointed at zip-relative image paths and the files were never saved, so every picture 404ed. An 8,000-character page was three or four screens, and an image tag was barely counted.
+- **Where:** `pdf_service/parsers/document_parsers.py`, `pdf_service/app.py`, `frontend/src/utils/pageBoundaries.js`, `frontend/src/pages/BookView.js`, `backend/api/books.py`, `tests/test_epub_images.py`, `tests/test_knowledge_mapping.py`, `frontend/scripts/check-page-boundaries.cjs`, `docs/architecture.md`
+- **Notes:** Promoted to production on 2026-10-21 from branch `feat/epub-images-page-cap`. On 2026-10-21 the Colin Bryar *Working Backwards* markdown was rewritten in place: 26 pictures now point at `/images/app/<sha256>`, 12 files are on disk, and that guide's start/end offsets were shifted with the longer links. `../images/9781250267603.jpg` is not in the EPUB, so that one link is unchanged. The Bill Carr raw markdown was rewritten the same way; it has no book row. Other EPUB books whose source files are gone need a re-upload. This deploy restarts the production PDF worker, so new EPUB uploads extract images.
+
+## 2026-10-08 — Wider reading column and jump lands on the section start
+
+- **What:** The guide and the original text share one centered column, `min(1200px, calc(100% - 96px))`, so a wide screen keeps side space without the old 72-character measure. Jump to original text scrolls the stored section start to the top of the book pane. The yellow mark is the opening sentence at that start. A later key quote is no longer the scroll target. The **End of this section** marker is unchanged.
+- **Why:** The 72-character column was too narrow for the whole page. The jump was centering the card quote, which often sits near the end of the section.
+- **Where:** `frontend/src/pages/BookView.css`, `frontend/src/components/ReadingGuidePane.css`, `frontend/src/pages/BookView.js`, `frontend/src/utils/guideJump.js`, `frontend/scripts/check-guide-jump.cjs`
+- **Notes:** Included in the 2026-10-21 production promote from `feat/epub-images-page-cap`. `node frontend/scripts/check-guide-jump.cjs`.
+
 ## 2026-10-08 — Reader follow-ups: measure, angle lens, section end
 
 - **What:** On a wide screen the guide cards sit in a centered 72-character measure with at least 48px on each side. The toolbar stays full width, and the phone layout is unchanged. The Angle control only shows the lens of the current guide. **New guide…** is the only control that creates a guide. Jump to original text lands on the stored start, and skips ahead only when that start is a mid-sentence fragment. The yellow highlight searches the card quote inside the stored span (or the opening sentence of that span). An **End of this section** marker stays until the reader leaves the original, jumps from another card, or pages outside the span. If the end is on a later page, the landing page names that page and the marker is drawn when the reader reaches it.

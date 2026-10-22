@@ -177,10 +177,14 @@ def test_plain_chapter_lines_become_sections():
 
 
 def test_page_boundary_starts_on_chapter_line():
-    body = "word " * 1600
-    markdown = body + "\nChapter 2\n" + ("tail " * 200)
+    from backend.services.page_boundaries import _calculate_page_boundaries
+
+    body = "word " * 1000
+    markdown = body + "\nChapter 2\n" + ("tail " * 400)
     chapter_at = markdown.index("Chapter 2")
-    boundaries = books_api._calculate_page_boundaries(markdown, 8000)
+    boundaries = _calculate_page_boundaries(markdown, 6000)
+    assert boundaries[0]["start"] == 0
+    assert boundaries[-1]["end"] == len(markdown)
     assert any(boundary["start"] == chapter_at for boundary in boundaries)
 
 

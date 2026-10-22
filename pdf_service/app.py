@@ -23,6 +23,7 @@ from parsers.document_parsers import (
     docx_bytes_to_markdown,
     epub_bytes_to_markdown,
     html_bytes_to_markdown,
+    images_are_already_inline,
     mobi_or_azw_to_epub_bytes,
     txt_bytes_to_markdown,
 )
@@ -899,10 +900,12 @@ def process_document_bytes(
     if ext == ".pdf":
         return process_pdf_bytes(source_bytes, sanitized_title)
     if ext == ".epub":
-        return epub_bytes_to_markdown(source_bytes), []
+        markdown, names = epub_bytes_to_markdown(source_bytes, images_dir=APP_IMAGES_PATH)
+        return markdown, [names] if names else []
     if ext in {".mobi", ".azw", ".azw3"}:
         epub_bytes = mobi_or_azw_to_epub_bytes(source_bytes, ext)
-        return epub_bytes_to_markdown(epub_bytes), []
+        markdown, names = epub_bytes_to_markdown(epub_bytes, images_dir=APP_IMAGES_PATH)
+        return markdown, [names] if names else []
     if ext == ".docx":
         return docx_bytes_to_markdown(source_bytes), []
     if ext in {".html", ".htm"}:
@@ -1048,12 +1051,19 @@ def _extract_and_merge_document_sync(
     total_images = sum(len(imgs) for imgs in images_per_page)
     if total_images > 0:
         logger.info("Job %s: Extracted %s images from source document.", job_id, total_images)
-        raw_md_text_from_pipe = inject_image_links_into_markdown(
-            raw_md_text_from_pipe,
-            images_per_page,
-            web_image_base_path="/images/app",
-            page_separator="\n\n---\n\n",
-        )
+        inline_names = [name for page in images_per_page for name in page if name]
+        if images_are_already_inline(raw_md_text_from_pipe, inline_names):
+            logger.info(
+                "Job %s: Image links already sit in the chapter; not appending a second copy.",
+                job_id,
+            )
+        else:
+            raw_md_text_from_pipe = inject_image_links_into_markdown(
+                raw_md_text_from_pipe,
+                images_per_page,
+                web_image_base_path="/images/app",
+                page_separator="\n\n---\n\n",
+            )
         callback_images = [
             {"filename": name, "path": f"/images/app/{name}"}
             for page_images in images_per_page

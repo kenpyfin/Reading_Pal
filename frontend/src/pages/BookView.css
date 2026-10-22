@@ -8,6 +8,8 @@
   height: 100%; /* Fill App shell below NavBar; avoid 100vh + NavBar double-scroll */
   width: 100%;
   overflow: hidden;
+  /* Widescreen reading column for the guide and the original text. */
+  --reader-column: min(1200px, calc(100% - 96px));
 }
 
 /* New styles for the resizable areas */
@@ -81,7 +83,7 @@
 
 .roadmap-section-end-notice {
   margin: 0 auto 12px;
-  max-width: 72ch;
+  max-width: 100%;
   padding: 8px 12px;
   border: 1px dashed var(--color-primary);
   border-radius: 8px;
@@ -89,6 +91,10 @@
   color: var(--color-info-text);
   font-size: 0.9rem;
   line-height: 1.4;
+}
+
+.guide-section-start {
+  display: inline;
 }
 
 .roadmap-cutoff-indicator {
@@ -296,9 +302,17 @@
 
 /* Long-form reading measure & typography standards */
 .book-pane-content {
-  max-width: 72ch;
+  max-width: 100%;
   margin: 0 auto;
   width: 100%;
+  box-sizing: border-box;
+}
+
+@media (min-width: 769px) {
+  .book-pane-content,
+  .roadmap-section-end-notice {
+    max-width: var(--reader-column, min(1200px, calc(100% - 96px)));
+  }
 }
 
 .book-pane-content h1 {

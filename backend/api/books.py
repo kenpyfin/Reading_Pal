@@ -33,6 +33,10 @@ from backend.db.mongodb import (
 )
 from backend.auth.auth_handler import auth_handler_instance # For decoding JWT
 from backend.services.llm_service import llm_service # For Reading Guide (Import instance)
+from backend.services.page_boundaries import (
+    APPROX_CHARS_PER_PAGE_FOR_GUIDE,
+    _calculate_page_boundaries,
+)
 from backend.services.pdf_client import process_document_with_service
 import json # For parsing LLM response for Reading Guide
 
@@ -656,95 +660,6 @@ class ReadingGuideGenerateBody(BaseModel):
     """Optional body for POST reading-guide; guide_type controls brevity."""
     guide_type: Optional[str] = Field(default="summary", description="summary, comprehensive, or quick_reference")
 
-
-# Define APPROX_CHARS_PER_PAGE, must match frontend's BookView.js (APPROX_CHARS_PER_PAGE)
-# This is crucial for consistency.
-APPROX_CHARS_PER_PAGE_FOR_GUIDE = 8000
-
-def _snap_page_end_to_heading(
-    heading_offsets: List[int],
-    page_start: int,
-    proposed_end: int,
-    target_chars_per_page: int,
-    total_length: int,
-) -> int:
-    """Prefer ending a page at the next section heading when one sits near the target length."""
-    window_lo = page_start + int(target_chars_per_page * 0.55)
-    window_hi = min(total_length, page_start + int(target_chars_per_page * 1.35))
-    if window_lo >= window_hi:
-        return proposed_end
-    candidates = [h for h in heading_offsets if page_start < h <= window_hi and h >= window_lo]
-    if not candidates:
-        return proposed_end
-    return min(candidates, key=lambda h: (abs(h - proposed_end), h))
-
-
-def _calculate_page_boundaries(markdown: str, target_chars_per_page: int) -> List[Dict[str, int]]:
-    """
-    Calculates page boundaries respecting word breaks, mirroring frontend logic.
-    When a markdown or plain structural heading falls near the target length, the page
-    ends at that heading so the next page starts on the section.
-    """
-    if not markdown:
-        logger.warning("[_calculate_page_boundaries] Markdown content is invalid or empty.")
-        return []
-
-    from backend.services.knowledge_mapper import KnowledgeMapper
-
-    heading_offsets = KnowledgeMapper().heading_start_offsets(markdown)
-    boundaries = []
-    current_offset = 0
-    total_length = len(markdown)
-    min_page_chars = target_chars_per_page * 0.5
-
-    while current_offset < total_length:
-        page_start = current_offset
-        potential_end = min(page_start + target_chars_per_page, total_length)
-        actual_end = potential_end
-
-        if potential_end < total_length:
-            boundary_found = False
-            # Search backwards from potential_end for a natural break (space)
-            for i in range(potential_end, int(page_start), -1):
-                if markdown[i-1].isspace():
-                    actual_end = i
-                    boundary_found = True
-                    break
-            
-            if not boundary_found:
-                # No space found searching backwards. Try to find the *next* space *after* potential_end
-                next_space_search_limit = min(potential_end + int(target_chars_per_page * 0.25), total_length)
-                found_next_space = False
-                for i in range(potential_end, next_space_search_limit):
-                    if markdown[i].isspace():
-                        actual_end = i + 1
-                        found_next_space = True
-                        break
-                if not found_next_space:
-                    actual_end = potential_end
-
-            if (actual_end - page_start) < min_page_chars and (total_length - page_start) > target_chars_per_page:
-                actual_end = potential_end
-
-            actual_end = _snap_page_end_to_heading(
-                heading_offsets, page_start, actual_end, target_chars_per_page, total_length
-            )
-
-        if actual_end <= page_start and page_start < total_length:
-            logger.warning(f"[_calculate_page_boundaries] actual_end ({actual_end}) did not advance from page_start ({page_start}). Forcing advance.")
-            actual_end = min(page_start + target_chars_per_page, total_length)
-
-        actual_end = min(actual_end, total_length)
-        
-        boundaries.append({"start": page_start, "end": actual_end})
-        current_offset = actual_end
-
-        if len(boundaries) > 10000:
-            logger.error("[_calculate_page_boundaries] Exceeded 10000 page boundaries, breaking loop.")
-            break
-            
-    logger.info(f"[_calculate_page_boundaries] Calculated {len(boundaries)} pages.")
-    return boundaries
 
 
 def _extract_heading_sections(markdown: str, page_start: int, page_end: int) -> List[Dict[str, Any]]:
