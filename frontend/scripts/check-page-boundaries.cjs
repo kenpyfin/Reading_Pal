@@ -12,7 +12,8 @@ const run = new Function('module', 'exports', wrapped);
 run(mod, mod.exports);
 
 const { calculatePageBoundaries, MAX_PAGE_BUDGET } = mod.exports;
-assert.strictEqual(MAX_PAGE_BUDGET, 6000);
+assert.strictEqual(MAX_PAGE_BUDGET, 2000);
+assert.strictEqual(mod.exports.SCREEN_CHARS, 1000);
 
 function covers(markdown, boundaries) {
   assert.strictEqual(boundaries[0].start, 0);

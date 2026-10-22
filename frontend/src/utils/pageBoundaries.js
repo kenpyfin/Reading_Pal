@@ -1,10 +1,10 @@
-// Keep in sync with backend/api/books.py `_calculate_page_boundaries`.
-// One screen is 3,000 characters. A page is at most two screens: 6,000
-// characters of text, one screen of text plus one image, or two images.
-// A heading, a code fence, or a long word may move the break earlier.
-// It may not push the page past that cap.
+// Keep in sync with backend/services/page_boundaries.py.
+// A page is one third of the previous two-screen cap: 2,000 characters of
+// text, 1,000 characters plus one image, or two images. A heading, a code
+// fence, or a long word may move the break earlier. It may not push past
+// that cap.
 
-export const SCREEN_CHARS = 3000;
+export const SCREEN_CHARS = 1000;
 export const MAX_PAGE_BUDGET = SCREEN_CHARS * 2;
 
 const STRUCTURAL_TITLE_LINE = /^(?:(Chapter|Part|Book|Volume|Section|Lesson|Step)\s+(?:\d+|[IVXLCDM]+)\b(.*)|(Preface|Introduction|Foreword|Prologue|Epilogue|Conclusion|Afterword|Appendix)\b(.*))$/i;

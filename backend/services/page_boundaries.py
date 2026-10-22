@@ -6,9 +6,10 @@ from typing import Dict, List
 
 logger = logging.getLogger(__name__)
 
-# One screen is 3,000 characters. A page is at most two screens. Must match
-# frontend/src/utils/pageBoundaries.js (MAX_PAGE_BUDGET).
-PAGE_SCREEN_CHARS = 3000
+# A page is one third of the previous two-screen cap (6,000 characters).
+# Text budget is 2,000 characters. An image costs half of that.
+# Must match frontend/src/utils/pageBoundaries.js (MAX_PAGE_BUDGET).
+PAGE_SCREEN_CHARS = 1000
 PAGE_BUDGET_CHARS = PAGE_SCREEN_CHARS * 2
 APPROX_CHARS_PER_PAGE_FOR_GUIDE = PAGE_BUDGET_CHARS
 _MARKDOWN_IMAGE_RE = re.compile(r"!\[[^\]]*\]\([^)\n]+\)")
@@ -24,7 +25,7 @@ def _hard_page_end(
     image_cost: int,
     spans: List[tuple],
 ) -> int:
-    """Exclusive end that stays within two screens. An image costs one screen."""
+    """Exclusive end that stays within the page budget. An image costs half of it."""
     total = len(markdown)
     budget = 0
     index = page_start
@@ -115,11 +116,11 @@ def _leave_image_span(page_start: int, proposed_end: int, hard_end: int, spans: 
 
 def _calculate_page_boundaries(markdown: str, target_chars_per_page: int) -> List[Dict[str, int]]:
     """
-    Split markdown into pages of at most two screens.
+    Split markdown into pages of at most 2,000 characters.
 
-    target_chars_per_page is the hard text budget (6,000 in the reader). Each
-    markdown image costs half of that, one screen. A heading, code fence, or
-    long word may move the break earlier and must not push past the budget.
+    target_chars_per_page is the hard text budget (2,000 in the reader). Each
+    markdown image costs half of that. A heading, code fence, or long word may
+    move the break earlier and must not push past the budget.
     Mirrors frontend/src/utils/pageBoundaries.js.
     """
     if not markdown:

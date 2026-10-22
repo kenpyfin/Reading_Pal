@@ -58,7 +58,7 @@ import {
   reconcileGuideProgressState,
 } from '../utils/syncReconciler';
 
-// Virtual pages: at most two screens (6,000 characters, or less when images are present).
+// Virtual pages: at most 2,000 characters, one third of the previous cap.
 
 const BOOK_CONTROLS_EXPANDED_KEY = 'readingPal_bookControlsExpanded';
 const FLOATING_TOOLBAR_TOP_PX = 80;

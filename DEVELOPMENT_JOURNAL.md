@@ -2,6 +2,13 @@
 
 Chronological log of meaningful implementation work: decisions, behavior changes, and where to look in the codebase. Agents and humans should **read relevant sections before** planning or changing related code, and **append an entry after** non-trivial work.
 
+## 2026-10-21 — Reader page cut to one third
+
+- **What:** The reader page budget dropped from 6,000 characters to 2,000. An image still costs half the budget, so a page holds 2,000 characters of text, 1,000 characters plus one image, or two images. Heading, fence, and long-word breaks still cannot pass the cap. Saved places still reopen by character offset.
+- **Why:** After the two-screen cap shipped, a single page still took too much scrolling. The operator asked for one third of that length.
+- **Where:** `frontend/src/utils/pageBoundaries.js`, `frontend/src/pages/BookView.js`, `backend/services/page_boundaries.py`, `frontend/scripts/check-page-boundaries.cjs`, `tests/test_page_boundaries.py`
+- **Notes:** Promoted to production on 2026-10-21 from branch `feat/shorter-reader-page` (off `feat/epub-images-page-cap`). `./deploy.sh --no-prune` in the production worktree. Public traffic stays on port 3100.
+
 ## 2026-10-21 — EPUB images stay in the chapter, and a page is one scroll
 
 - **What:** EPUB and converted MOBI/AZW images are written to `images/app` under a SHA-256 name and the chapter `<img>` is rewritten to `/images/app/<hash>` before markdown conversion. The merge step does not append those pictures again. Reader pages use a hard two-screen budget: 6,000 characters of text, one screen of text plus one image, or two images. A heading, code fence, or long word can move the break earlier and cannot push past the cap. The same budget is in `pageBoundaries.js` and `books.py`. Saved reading positions now include the character offset, and reopening uses that offset.

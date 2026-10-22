@@ -17,6 +17,11 @@ def _page_screen_cost(markdown, start, end):
     return text, len(images)
 
 
+def test_reader_page_budget_is_one_third_of_the_previous_cap():
+    assert page_boundaries.PAGE_SCREEN_CHARS == 1000
+    assert page_boundaries.PAGE_BUDGET_CHARS == 2000
+
+
 def test_page_boundary_starts_on_chapter_line():
     body = "word " * 1000
     markdown = body + "\nChapter 2\n" + ("tail " * 400)
