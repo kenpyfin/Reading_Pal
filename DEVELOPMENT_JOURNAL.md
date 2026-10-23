@@ -2,6 +2,13 @@
 
 Chronological log of meaningful implementation work: decisions, behavior changes, and where to look in the codebase. Agents and humans should **read relevant sections before** planning or changing related code, and **append an entry after** non-trivial work.
 
+## 2026-10-22 — Admin drops guide prompts; new Google accounts are capped
+
+- **What:** The admin nav and admin route no longer open Guide prompts. Signed-in readers still edit their own prompts at `/settings/prompts`, and built-in defaults still run when they have not saved an override. A Google account created from scratch is limited to 5 library books and 2 successful whole-book guide generations. Existing accounts, including an email match that only gets a Google id attached, stay unlimited.
+- **Why:** The admin dashboard is user management and stats. New accounts should not upload or generate without a cap, and accounts already in use should not pick up that cap on the next login.
+- **Where:** `frontend/src/App.js`, `frontend/src/components/NavBar.js`, `backend/services/account_limits.py`, `backend/db/mongodb.py`, `backend/api/books.py`, `tests/test_account_limits.py`, `docs/architecture.md`
+- **Notes:** The book cap counts books currently in the library (`status` not `failed`); deleting one frees a slot. The generation cap counts each successful whole-book create or regenerate and is not refunded when a guide is deleted. A failed generation returns the reserved slot. Section cards, graphs, Author Shortcut, and Outsider Guide do not count. The admin password login has no user document, so it is not capped. Not merged; dev reload is the way to try a new Google account.
+
 ## 2026-10-22 — README leads with the reading lens
 
 - **What:** The README opening now presents Reading Pal as a lens-based reading roadmap. Custom guides follow the reader’s angle. Original text and figures stay beside the guide, with one-tap passage jumps, notes, and Q&A. Setup and service layout are unchanged.

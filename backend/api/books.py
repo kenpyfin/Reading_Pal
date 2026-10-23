@@ -33,6 +33,11 @@ from backend.db.mongodb import (
 )
 from backend.auth.auth_handler import auth_handler_instance # For decoding JWT
 from backend.services.llm_service import llm_service # For Reading Guide (Import instance)
+from backend.services.account_limits import (
+    BOOK_LIMIT_DETAIL,
+    GUIDE_GENERATION_LIMIT_DETAIL,
+    book_upload_allowed,
+)
 from backend.services.page_boundaries import (
     APPROX_CHARS_PER_PAGE_FOR_GUIDE,
     _calculate_page_boundaries,
@@ -71,6 +76,9 @@ from backend.db.mongodb import (
     get_card_chat_messages,
     save_card_chat_messages,
     clear_card_chat,
+    get_user_by_id,
+    try_consume_guide_generation,
+    release_guide_generation,
 )
 import uuid
 
@@ -135,6 +143,42 @@ async def get_current_user_id(request: Request) -> str:
     
     logger.debug(f"get_current_user_id: Successfully obtained user_id: {user_id}")
     return user_id
+
+
+async def _enforce_book_upload_limit(user_id: str) -> None:
+    """Refuse a new library book when this account was created with a cap.
+
+    The count matches the book list: failed rows are not in the library, and
+    deleting a book frees a slot. Accounts with no ``book_limit`` are unlimited.
+    """
+    user = await get_user_by_id(user_id)
+    library_count = await count_books({"user_id": user_id, "status": {"$ne": "failed"}})
+    if book_upload_allowed(user, library_count):
+        return
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=BOOK_LIMIT_DETAIL)
+
+
+async def _acquire_guide_generation(user_id: str) -> bool:
+    """Reserve one whole-book generation.
+
+    Returns True only when a limited account consumed a slot that must be
+    returned if the generation does not succeed. Unlimited accounts return False.
+    """
+    outcome = await try_consume_guide_generation(user_id)
+    if outcome == "denied":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=GUIDE_GENERATION_LIMIT_DETAIL,
+        )
+    return outcome == "consumed"
+
+
+async def _release_guide_generation_quietly(user_id: str) -> None:
+    try:
+        await release_guide_generation(user_id)
+    except Exception:
+        logger.exception("Failed to release a guide generation for user %s", user_id)
+
 
 # Define container paths (matching docker-compose volumes)
 # Ensure these match the paths where markdown and images are stored *within the backend container*
@@ -224,6 +268,8 @@ async def upload_document(
                     "Cancel or delete it first, or choose a different title."
                 ),
             )
+
+        await _enforce_book_upload_limit(current_user_id)
 
         processed_data = await call_document_service_upload(file, title)
 
@@ -1573,35 +1619,42 @@ async def create_book_reading_guide(
             detail=f"Maximum of {MAX_READING_GUIDES_PER_BOOK} reading guides per book.",
         )
 
-    custom_requirements = _sanitize_custom_requirements(
-        body.custom_requirements if body else None
-    )
-    prompt_depth = body.prompt_depth if body else None
-    prompt_emphasis = body.prompt_emphasis if body else None
-    name = (body.name.strip() if body and body.name and body.name.strip() else None) or _default_guide_name(existing)
-    full_markdown = await _load_book_markdown(book)
-    items = await _generate_roadmap_items(
-        full_markdown,
-        custom_requirements=custom_requirements,
-        prompt_depth=prompt_depth,
-        prompt_emphasis=prompt_emphasis,
-        user_id=current_user_id,
-    )
+    consumed = False
+    try:
+        consumed = await _acquire_guide_generation(current_user_id)
+        custom_requirements = _sanitize_custom_requirements(
+            body.custom_requirements if body else None
+        )
+        prompt_depth = body.prompt_depth if body else None
+        prompt_emphasis = body.prompt_emphasis if body else None
+        name = (body.name.strip() if body and body.name and body.name.strip() else None) or _default_guide_name(existing)
+        full_markdown = await _load_book_markdown(book)
+        items = await _generate_roadmap_items(
+            full_markdown,
+            custom_requirements=custom_requirements,
+            prompt_depth=prompt_depth,
+            prompt_emphasis=prompt_emphasis,
+            user_id=current_user_id,
+        )
 
-    guide_id = str(uuid.uuid4())
-    db_guide = await create_reading_guide(
-        book_id=book_id,
-        user_id=current_user_id,
-        guide_id=guide_id,
-        name=name,
-        items=items,
-        custom_requirements=custom_requirements,
-        prompt_depth=prompt_depth,
-        prompt_emphasis=prompt_emphasis,
-    )
-    if not db_guide:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to save reading roadmap.")
-    return _guide_to_response_dict(db_guide)
+        guide_id = str(uuid.uuid4())
+        db_guide = await create_reading_guide(
+            book_id=book_id,
+            user_id=current_user_id,
+            guide_id=guide_id,
+            name=name,
+            items=items,
+            custom_requirements=custom_requirements,
+            prompt_depth=prompt_depth,
+            prompt_emphasis=prompt_emphasis,
+        )
+        if not db_guide:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to save reading roadmap.")
+        return _guide_to_response_dict(db_guide)
+    except Exception:
+        if consumed:
+            await _release_guide_generation_quietly(current_user_id)
+        raise
 
 
 @router.get("/{book_id}/reading-guides/{guide_id}", response_model=Optional[ReadingGuideInDB], response_model_by_alias=False)
@@ -1640,22 +1693,29 @@ async def regenerate_book_reading_guide(
 ):
     """Regenerate roadmap items for an existing guide; clears card chats for that guide."""
     guide = await _get_guide_or_404(book_id, current_user_id, guide_id)
-    book = await _load_book_for_roadmap(book_id, current_user_id)
-    full_markdown = await _load_book_markdown(book)
-    items = await _generate_roadmap_items(
-        full_markdown,
-        custom_requirements=guide.custom_requirements,
-        prompt_depth=guide.prompt_depth,
-        prompt_emphasis=guide.prompt_emphasis,
-        user_id=current_user_id,
-    )
-    await delete_all_card_chats_for_guide(book_id, current_user_id, guide_id)
-    updated = await update_reading_guide_metadata(
-        book_id, current_user_id, guide_id, items=items
-    )
-    if not updated:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to save reading roadmap.")
-    return _guide_to_response_dict(updated)
+    consumed = False
+    try:
+        consumed = await _acquire_guide_generation(current_user_id)
+        book = await _load_book_for_roadmap(book_id, current_user_id)
+        full_markdown = await _load_book_markdown(book)
+        items = await _generate_roadmap_items(
+            full_markdown,
+            custom_requirements=guide.custom_requirements,
+            prompt_depth=guide.prompt_depth,
+            prompt_emphasis=guide.prompt_emphasis,
+            user_id=current_user_id,
+        )
+        await delete_all_card_chats_for_guide(book_id, current_user_id, guide_id)
+        updated = await update_reading_guide_metadata(
+            book_id, current_user_id, guide_id, items=items
+        )
+        if not updated:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to save reading roadmap.")
+        return _guide_to_response_dict(updated)
+    except Exception:
+        if consumed:
+            await _release_guide_generation_quietly(current_user_id)
+        raise
 
 
 @router.get("/{book_id}/reading-guides/{guide_id}/progress")
@@ -1954,22 +2014,29 @@ async def generate_whole_book_reading_guide(
     if existing:
         return await regenerate_book_reading_guide(book_id, LEGACY_GUIDE_ID, current_user_id)
 
-    book = await _load_book_for_roadmap(book_id, current_user_id)
-    full_markdown = await _load_book_markdown(book)
-    items = await _generate_roadmap_items(
-        full_markdown, custom_requirements=None, user_id=current_user_id
-    )
-    db_guide = await create_reading_guide(
-        book_id=book_id,
-        user_id=current_user_id,
-        guide_id=LEGACY_GUIDE_ID,
-        name="Reading Roadmap",
-        items=items,
-        custom_requirements=None,
-    )
-    if not db_guide:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to save reading roadmap.")
-    return _guide_to_response_dict(db_guide)
+    consumed = False
+    try:
+        consumed = await _acquire_guide_generation(current_user_id)
+        book = await _load_book_for_roadmap(book_id, current_user_id)
+        full_markdown = await _load_book_markdown(book)
+        items = await _generate_roadmap_items(
+            full_markdown, custom_requirements=None, user_id=current_user_id
+        )
+        db_guide = await create_reading_guide(
+            book_id=book_id,
+            user_id=current_user_id,
+            guide_id=LEGACY_GUIDE_ID,
+            name="Reading Roadmap",
+            items=items,
+            custom_requirements=None,
+        )
+        if not db_guide:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to save reading roadmap.")
+        return _guide_to_response_dict(db_guide)
+    except Exception:
+        if consumed:
+            await _release_guide_generation_quietly(current_user_id)
+        raise
 
 
 @router.get("/{book_id}/reading-guide", response_model=Optional[ReadingGuideInDB], response_model_by_alias=False)

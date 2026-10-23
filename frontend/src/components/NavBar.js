@@ -12,9 +12,6 @@ function NavLinks({ isAdmin, onNavigate }) {
         <li>
           <Link to="/admin/user-management" className="nav-link" onClick={onNavigate}>User Management</Link>
         </li>
-        <li>
-          <Link to="/settings/prompts" className="nav-link" onClick={onNavigate}>Guide prompts</Link>
-        </li>
       </ul>
     );
   }

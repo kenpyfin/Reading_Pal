@@ -11,6 +11,10 @@ from pymongo.errors import DuplicateKeyError
 
 # Import UserCreate for type hinting
 from backend.models.user import UserCreate
+from backend.services.account_limits import (
+    guide_generation_decision,
+    new_google_account_limits,
+)
 
 if TYPE_CHECKING:
     from backend.models.reading_guide import ReadingGuidePageInDB, ReadingGuideInDB
@@ -294,6 +298,54 @@ async def get_user_by_id(user_id: str) -> Optional[Dict[str, Any]]:
         logger.error(f"Error fetching user by ID {user_id}: {e}", exc_info=True)
         return None
 
+async def try_consume_guide_generation(user_id: str) -> str:
+    """Reserve one whole-book guide generation.
+
+    Returns ``unlimited`` (counter untouched), ``consumed``, or ``denied``.
+    The compare-and-increment is atomic, so two overlapping requests cannot
+    both pass a cap of two. Caller releases the reservation if generation fails.
+    """
+    database = get_database()
+    if database is None:
+        logger.error("Database not initialized for try_consume_guide_generation.")
+        return "unlimited"
+    user = await get_user_by_id(user_id)
+    decision = guide_generation_decision(user)
+    if decision != "allow":
+        return decision
+    limit = int(user["guide_generation_limit"])
+    updated = await database.users.find_one_and_update(
+        {
+            "_id": user["_id"],
+            "$expr": {
+                "$lt": [
+                    {"$ifNull": ["$guide_generations_used", 0]},
+                    limit,
+                ]
+            },
+        },
+        {"$inc": {"guide_generations_used": 1}},
+    )
+    if updated is None:
+        return "denied"
+    return "consumed"
+
+
+async def release_guide_generation(user_id: str) -> None:
+    """Give back a reservation when whole-book generation does not succeed."""
+    database = get_database()
+    if database is None:
+        logger.error("Database not initialized for release_guide_generation.")
+        return
+    user = await get_user_by_id(user_id)
+    if not user or user.get("guide_generation_limit") is None:
+        return
+    await database.users.update_one(
+        {"_id": user["_id"], "guide_generations_used": {"$gt": 0}},
+        {"$inc": {"guide_generations_used": -1}},
+    )
+
+
 async def get_user_prompt_overrides(user_id: str) -> Dict[str, Optional[str]]:
     """Per-user reading-guide prompt overrides. Missing fields mean the built-in default."""
     user_doc = await get_user_by_id(user_id)
@@ -435,6 +487,9 @@ async def create_or_update_user_from_google(user_data: 'UserCreate') -> Optional
             "is_superuser": False,
             "created_at": now,
             "updated_at": now,
+            # Caps apply only to a brand-new Google account. Updates and
+            # email links leave existing documents unlimited.
+            **new_google_account_limits(),
         }
         result = await database.users.insert_one(new_user_doc_data)
         logger.info(f"Created new user {email} (Google ID: {google_id}) with DB ID: {result.inserted_id}")
