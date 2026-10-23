@@ -173,7 +173,6 @@ function App() {
                   <Route path="/admin/user-management" element={<UserManagementPage />} />
                   {/* Decide if admins should access these or be redirected */}
                   <Route path="/upload" element={<PdfUploadForm />} />
-                  <Route path="/settings/prompts" element={<PromptSettingsPage />} />
                   <Route path="/book/:bookId" element={(
                       <BookView
                         setNavBarExtra={setNavBarExtra}

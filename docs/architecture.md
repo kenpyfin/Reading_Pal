@@ -16,7 +16,7 @@ This document describes the current architecture as implemented in the codebase.
   - `frontend/src/pages/AuthCallbackPage.js`
   - `frontend/src/pages/AdminLoginPage.js`
   - `frontend/src/pages/UserManagementPage.js`
-  - `frontend/src/pages/PromptSettingsPage.js` (`/settings/prompts`)
+  - `frontend/src/pages/PromptSettingsPage.js` (`/settings/prompts`, signed-in readers only; the admin shell does not link or route here)
 
 Frontend calls backend endpoints under `/api/*` and renders book markdown with image URLs that are rewritten to backend app-image routes.
 
@@ -43,7 +43,8 @@ Backend is the system-of-record service for user, book, note, bookmark, and read
 - Per-card LLM chat threads in `reading_guide_card_chats` (`book_id`, `user_id`, `guide_id`, `card_id`).
 - API routes under `/api/books/{book_id}/reading-guides/...` (legacy `/reading-guide` aliases default guide `guide_id=default`).
 - `POST /reading-guides` accepts optional `custom_requirements`, `prompt_depth` (`compact` | `standard` | `high_fidelity`), and `prompt_emphasis` (`balanced` | `author_craft` | `takeaways`). Omitted depth and emphasis keep the existing high-granularity mentor prompts. `high_fidelity` does not cap pillar count. Compact asks segmentation for 4–6 pillars. Stored values are reused on regenerate.
-- `GET` and `PUT /api/auth/prompt-config` store optional per-user overrides of the reading-guide generation prompt and card format prompt on the user document (`guide_generation_prompt`, `guide_format_prompt`). Blank or unchanged text clears the override. Toolbar angle, depth, and emphasis are still appended when a guide is generated.
+- `GET` and `PUT /api/auth/prompt-config` store optional per-user overrides of the reading-guide generation prompt and card format prompt on the user document (`guide_generation_prompt`, `guide_format_prompt`). Blank or unchanged text clears the override. Toolbar angle, depth, and emphasis are still appended when a guide is generated. Readers open this at `/settings/prompts`. The admin dashboard does not.
+- A Google account receives `book_limit: 5`, `guide_generation_limit: 2`, and `guide_generations_used: 0` only on first insert. An existing document, including one found by email and then linked to a Google id, has no limit fields and stays unlimited. Upload counts library books (`status` not `failed`); deleting one frees a slot. `POST /reading-guides`, `POST /reading-guides/{guide_id}/generate`, and the legacy `POST /reading-guide` create-or-regenerate path each consume one generation when they succeed, and give the slot back when they fail. Deleting a guide does not return a generation. Page cards, graphs, Author Shortcut, and Outsider Guide do not count. The admin password login is not a Google user and is not capped.
 
 ## Document Service (`pdf_service/`)
 
