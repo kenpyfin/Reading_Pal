@@ -2,6 +2,13 @@
 
 Chronological log of meaningful implementation work: decisions, behavior changes, and where to look in the codebase. Agents and humans should **read relevant sections before** planning or changing related code, and **append an entry after** non-trivial work.
 
+## 2026-10-22 — README leads with the reading lens
+
+- **What:** The README opening now presents Reading Pal as a lens-based reading roadmap. Custom guides follow the reader’s angle. Original text and figures stay beside the guide, with one-tap passage jumps, notes, and Q&A. Setup and service layout are unchanged.
+- **Why:** The showcase should say what the product does that a generic summary does not: it keeps the author’s thought process and the source text.
+- **Where:** `README.md`
+- **Notes:** The requested line began “I reading tools”; the README says “AI reading tools.”
+
 ## 2026-10-21 — Reader page cut to one third
 
 - **What:** The reader page budget dropped from 6,000 characters to 2,000. An image still costs half the budget, so a page holds 2,000 characters of text, 1,000 characters plus one image, or two images. Heading, fence, and long-word breaks still cannot pass the cap. Saved places still reopen by character offset.
