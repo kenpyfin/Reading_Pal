@@ -2,6 +2,13 @@
 
 Chronological log of meaningful implementation work: decisions, behavior changes, and where to look in the codebase. Agents and humans should **read relevant sections before** planning or changing related code, and **append an entry after** non-trivial work.
 
+## 2026-10-22 — EPUB spine with a missing contents id still converts
+
+- **What:** Before an EPUB is opened, a spine contents id that is not in the package is removed, and the package is read again. Chapters are emitted in the remaining spine order. A contents file that is not in the zip is dropped. A chapter that cannot be read is skipped, and the rest of the book continues.
+- **Why:** `7.epub` reached the production worker and died inside ebooklib 0.20. The spine `toc` id is not in the manifest, so `get_item_with_id` returns nothing and `get_name()` raises. The chapter files were never read. The same crash happens when the contents file is listed and then missing from the zip.
+- **Where:** `pdf_service/parsers/document_parsers.py`, `tests/test_epub_spine.py`, `docs/architecture.md`
+- **Notes:** This is the document worker, which production owns. Dev reload does not restart it. Accounts and guide prompts are unchanged.
+
 ## 2026-10-22 — README leads with the reading lens
 
 - **What:** The README opening now presents Reading Pal as a lens-based reading roadmap. Custom guides follow the reader’s angle. Original text and figures stay beside the guide, with one-tap passage jumps, notes, and Q&A. Setup and service layout are unchanged.
