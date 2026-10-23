@@ -82,6 +82,8 @@ class UserInDBBase(UserBase):
 
 # Model for returning user data from API (what the client sees)
 class User(UserInDBBase):
+    book_count: Optional[int] = None
+    note_count: Optional[int] = None
     pass
 
 # Model representing a user document as stored in MongoDB (can include sensitive fields)

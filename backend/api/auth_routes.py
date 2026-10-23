@@ -4,11 +4,32 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from authlib.integrations.starlette_client import OAuth # Will be needed for OAuth
 from authlib.integrations.base_client import OAuthError # Import OAuthError
-from starlette.responses import RedirectResponse # Will be needed for OAuth
+from starlette.responses import RedirectResponse, JSONResponse # Will be needed for OAuth & JSONResponse
+from pydantic import BaseModel # Import BaseModel for request body
+from typing import List, Dict, Any # Import List for response model
 
-from backend.auth.auth_handler import auth_handler_instance, ACCESS_TOKEN_EXPIRE_MINUTES # For JWT creation/validation
-from backend.db.mongodb import get_user_by_google_id, create_or_update_user_from_google # Example db functions
-from backend.models.user import UserCreate, User # Example models
+from backend.auth.auth_handler import auth_handler_instance, ACCESS_TOKEN_EXPIRE_MINUTES, get_current_admin_user # For JWT creation/validation and admin check
+from backend.auth.local_dev import (
+    is_local_browser_host,
+    is_trusted_dev_peer,
+    local_dev_login_email,
+    local_dev_login_enabled,
+)
+from backend.db.mongodb import (
+    get_user_by_google_id, create_or_update_user_from_google,
+    get_all_users, delete_user_by_google_id, update_user_active_status, # Added update_user_active_status
+    get_total_books_count, get_total_notes_count,
+    get_book_count_for_user, get_note_count_for_user, get_user_by_id, # Import get_user_by_id
+    get_user_by_email,
+    get_user_prompt_overrides,
+    save_user_prompt_overrides,
+)
+from backend.models.user import UserCreate, User # Pydantic models
+from backend.services.prompt_defaults import (
+    DEFAULT_GUIDE_FORMAT_PROMPT,
+    DEFAULT_GUIDE_GENERATION_PROMPT,
+    stored_prompt_value,
+)
 # from backend.core.config import settings # If you re-introduce settings
 
 logger = logging.getLogger(__name__)
@@ -56,8 +77,95 @@ class ConfigWrapper:
 #     logger.info(f"Login attempt for {form_data.username} - placeholder")
 #     raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Login endpoint not implemented")
 
+# --- Admin Login ---
+class AdminLoginRequest(BaseModel):
+    username: str
+    password: str
 
-# Google OAuth login
+@router.post("/admin/login", summary="Admin login with username and password")
+async def admin_login(form_data: AdminLoginRequest):
+    admin_username_env = os.getenv("ADMIN_USERNAME")
+    admin_password_env = os.getenv("ADMIN_PASSWORD")
+
+    if not admin_username_env or not admin_password_env:
+        logger.error("Admin credentials (ADMIN_USERNAME, ADMIN_PASSWORD) not set in .env file.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Admin authentication is not configured on the server.",
+        )
+
+    if form_data.username == admin_username_env and form_data.password == admin_password_env:
+        # Credentials are correct, create an admin token
+        # The 'sub' can be the admin username or a generic admin identifier
+        # Add an 'is_admin': True claim to distinguish this token
+        token_data = {"sub": form_data.username, "is_admin": True}
+        access_token = auth_handler_instance.create_access_token(data=token_data)
+        logger.info(f"Admin user '{form_data.username}' logged in successfully.")
+        return {"access_token": access_token, "token_type": "bearer"}
+    else:
+        logger.warning(f"Failed admin login attempt for username: {form_data.username}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect admin username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+@router.post("/dev/login", summary="Local and private-LAN login bypass for development")
+async def local_dev_login(request: Request):
+    """Issue a normal user JWT for the configured existing account, without Google.
+
+    Refuses unless all of these hold:
+    - ALLOW_LOCAL_DEV_LOGIN=true
+    - browser Host is localhost, 127.0.0.1, or a private LAN address
+      (this server is reached at 10.0.1.22)
+    - TCP peer is loopback or the Docker bridge (the frontend proxy)
+    Public hosts get 404 so the route is not advertised.
+
+    Looks up LOCAL_DEV_LOGIN_EMAIL (default lgyhz1234@gmail.com). Does not create
+    a user and does not change that account's Google id.
+    """
+    host_header = request.headers.get("host", "")
+    forwarded_host = request.headers.get("x-forwarded-host")
+    client_host = request.client.host if request.client else None
+    if not is_local_browser_host(host_header, forwarded_host) or not is_trusted_dev_peer(client_host):
+        logger.info(
+            "Rejected local dev login. host=%s forwarded=%s peer=%s",
+            host_header,
+            forwarded_host,
+            client_host,
+        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+
+    if not local_dev_login_enabled():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Local dev login is disabled. Set ALLOW_LOCAL_DEV_LOGIN=true.",
+        )
+
+    email = local_dev_login_email()
+    user_document = await get_user_by_email(email)
+    if not user_document:
+        logger.error("Local dev login: no user found for the configured email.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="The local testing account was not found.",
+        )
+    if not user_document.get("is_active", True):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="The local testing account is inactive.",
+        )
+
+    db_user_id_str = str(user_document["_id"])
+    display_name = user_document.get("full_name") or email
+    app_token = auth_handler_instance.create_access_token(
+        data={"sub": user_document.get("email") or email, "user_id": db_user_id_str, "name": display_name}
+    )
+    logger.info("Local dev login issued a token for %s (DB ID %s).", email, db_user_id_str)
+    return {"access_token": app_token, "token_type": "bearer"}
+
+
+# --- Google OAuth login ---
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI") # This should match the one in your Google Cloud Console
@@ -144,16 +252,32 @@ async def auth_via_google(request: Request):
     
     # create_or_update_user_from_google will find by google_id, or by email (and link google_id),
     # or create a new user. It also updates details if the user is found.
-    user_id = await create_or_update_user_from_google(user_data_from_google)
+    # This function returns the MongoDB _id string of the user.
+    db_user_id_str = await create_or_update_user_from_google(user_data_from_google)
     
-    if not user_id:
+    if not db_user_id_str:
         logger.error(f"Failed to create or update user in database. DB function returned no user_id. Data attempted: {user_data_from_google.model_dump_json(indent=2)}")
         raise HTTPException(status_code=500, detail="Could not create or update user.")
     
-    logger.info(f"User processed successfully (found/created/updated). DB User ID: {user_id}. Proceeding to login.")
+    # After user is created/updated, fetch their full document to check is_active status
+    user_document = await get_user_by_id(db_user_id_str) # Fetch by MongoDB _id string
+    if not user_document:
+        logger.error(f"Failed to retrieve user document for ID {db_user_id_str} after create/update.")
+        raise HTTPException(status_code=500, detail="User processed but could not be retrieved for status check.")
+
+    # The 'is_active' field should exist due to UserCreate model and DB logic. Default to True if somehow missing.
+    if not user_document.get("is_active", True): 
+        logger.warning(f"Login attempt by inactive user: {user_info.email} (Google ID: {user_info.get('sub')}).")
+        frontend_url_for_error = os.getenv("FRONTEND_URL", "http://localhost:3100")
+        # Redirect to login page with an error query parameter
+        error_redirect_url = f"{frontend_url_for_error}/login?error=inactive_user"
+        return RedirectResponse(url=error_redirect_url)
+        
+    logger.info(f"User {user_info.email} (DB ID: {db_user_id_str}) is active. Proceeding to login.")
 
     # Create application token
-    app_token_data = {"sub": user_info.email, "user_id": str(user_id), "name": user_info.get("name")}
+    # Ensure the user_id in the token is the MongoDB _id string
+    app_token_data = {"sub": user_info.email, "user_id": db_user_id_str, "name": user_info.get("name")}
     app_token = auth_handler_instance.create_access_token(data=app_token_data)
     
     # Redirect to frontend with the token
@@ -175,4 +299,179 @@ async def auth_via_google(request: Request):
     # )
     return response
 
-# Add more authentication routes here (e.g., register, logout, password reset)
+
+# --- Admin User Management Endpoints ---
+
+class UserStatusUpdatePayload(BaseModel):
+    is_active: bool
+
+class AdminStats(BaseModel):
+    total_users: int
+    total_books: int
+    total_notes: int
+
+@router.get("/admin/stats", response_model=AdminStats, summary="Get application statistics (Admin only)")
+async def get_admin_stats(current_admin: Dict[str, Any] = Depends(get_current_admin_user)):
+    """
+    Retrieves overall statistics like total users, books, and notes.
+    Requires admin privileges.
+    """
+    logger.info(f"Admin user '{current_admin.get('sub')}' requesting application stats.")
+    
+    # Fetching all users to get the count.
+    # If performance becomes an issue for many users, add a dedicated count function for users.
+    users_data = await get_all_users() 
+    total_users = len(users_data)
+    
+    total_books = await get_total_books_count()
+    total_notes = await get_total_notes_count()
+    
+    return AdminStats(
+        total_users=total_users,
+        total_books=total_books,
+        total_notes=total_notes
+    )
+
+@router.get("/admin/users", response_model=List[User], summary="List all users (Admin only)")
+async def list_users_admin(current_admin: Dict[str, Any] = Depends(get_current_admin_user)):
+    """
+    Retrieves a list of all users. Requires admin privileges.
+    """
+    logger.info(f"Admin user '{current_admin.get('sub')}' requesting to list all users.")
+    users_db_data = await get_all_users()
+    
+    users_with_counts = []
+    for user_doc in users_db_data:
+        user_id_str = str(user_doc["_id"]) # User's MongoDB ObjectId as string
+        
+        book_count = await get_book_count_for_user(user_id_str)
+        note_count = await get_note_count_for_user(user_id_str)
+        
+        # Add counts to the user document before validation
+        user_doc_with_counts = {**user_doc, "book_count": book_count, "note_count": note_count}
+        users_with_counts.append(User.model_validate(user_doc_with_counts))
+        
+    return users_with_counts
+
+
+@router.put("/admin/users/{google_id}/status", response_model=User, summary="Update user active status (Admin only)")
+async def update_user_status_admin(google_id: str, payload: UserStatusUpdatePayload, current_admin: Dict[str, Any] = Depends(get_current_admin_user)):
+    """
+    Updates the 'is_active' status of a user by their Google ID.
+    Requires admin privileges.
+    """
+    logger.info(f"Admin user '{current_admin.get('sub')}' attempting to set active status for user with Google ID {google_id} to {payload.is_active}.")
+
+    # Optional: Prevent admin from deactivating their own account if it's a Google-linked admin
+    # This check assumes the admin's JWT 'sub' or a 'user_id' claim matches the user_id in the DB.
+    # If admin logs in with username/password and isn't a regular user, this check might not apply directly.
+    # For now, we'll assume admin might be a regular user with an admin flag.
+    # A more robust check would be to ensure the admin user from .env isn't deleted if it has a DB entry.
+    admin_google_id_claim = current_admin.get("user_id") # Assuming user_id claim in admin token holds their google_id if admin is a google user
+    if admin_google_id_claim == google_id and not payload.is_active:
+         logger.warning(f"Admin user '{current_admin.get('sub')}' attempted to deactivate their own Google-linked account.")
+         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Admin cannot deactivate their own account.")
+
+    updated_successfully = await update_user_active_status(google_id, payload.is_active)
+    if not updated_successfully:
+        # This could mean user not found or DB error
+        logger.warning(f"Failed to update active status for user with Google ID {google_id}.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"User with Google ID {google_id} not found or status could not be updated.")
+
+    # Fetch the updated user to return, including their new status and counts
+    updated_user_doc = await get_user_by_google_id(google_id)
+    if not updated_user_doc:
+        logger.error(f"Failed to retrieve user {google_id} after status update, though update reported success.")
+        # This case should be rare if update_user_active_status returned True and matched_count was > 0
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="User status updated, but failed to retrieve updated user details.")
+
+    user_id_str = str(updated_user_doc["_id"])
+    book_count = await get_book_count_for_user(user_id_str)
+    note_count = await get_note_count_for_user(user_id_str)
+    
+    user_doc_with_counts = {**updated_user_doc, "book_count": book_count, "note_count": note_count}
+    
+    logger.info(f"Active status for user with Google ID {google_id} updated to {payload.is_active} by admin '{current_admin.get('sub')}'.")
+    return User.model_validate(user_doc_with_counts)
+
+
+@router.delete("/admin/users/{google_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete a user by Google ID (Admin only)")
+async def delete_user_admin(google_id: str, current_admin: Dict[str, Any] = Depends(get_current_admin_user)):
+    """
+    Deletes a user by their Google ID. Requires admin privileges.
+    """
+    logger.info(f"Admin user '{current_admin.get('sub')}' attempting to delete user with Google ID: {google_id}.")
+    
+    # Optional: Add a check to prevent the admin from deleting a user account
+    # associated with their own admin login if the admin user is also a regular Google user.
+    # This would require comparing `google_id` with a claim in `current_admin` if it exists.
+    # For example, if admin's own google_id is stored in their JWT:
+    # if current_admin.get("google_id_claim") == google_id:
+    #     logger.warning(f"Admin user '{current_admin.get('sub')}' attempted to delete their own Google-linked account.")
+    #     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Admin cannot delete their own Google-linked account via this endpoint.")
+
+    deleted = await delete_user_by_google_id(google_id)
+    if not deleted:
+        logger.warning(f"Failed to delete user with Google ID {google_id}. User not found or delete operation failed.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"User with Google ID {google_id} not found or could not be deleted.")
+    
+    logger.info(f"User with Google ID {google_id} deleted successfully by admin '{current_admin.get('sub')}'.")
+    return None # Returns 204 No Content on success
+
+class PromptConfigUpdate(BaseModel):
+    generation_prompt: str = ""
+    format_prompt: str = ""
+
+
+class PromptConfigResponse(BaseModel):
+    generation_prompt: str
+    format_prompt: str
+    generation_is_custom: bool
+    format_is_custom: bool
+    default_generation_prompt: str
+    default_format_prompt: str
+
+
+def _prompt_config_payload(overrides: Dict[str, Any]) -> PromptConfigResponse:
+    generation = overrides.get("generation_prompt") or DEFAULT_GUIDE_GENERATION_PROMPT
+    formatting = overrides.get("format_prompt") or DEFAULT_GUIDE_FORMAT_PROMPT
+    return PromptConfigResponse(
+        generation_prompt=generation,
+        format_prompt=formatting,
+        generation_is_custom=bool(overrides.get("generation_prompt")),
+        format_is_custom=bool(overrides.get("format_prompt")),
+        default_generation_prompt=DEFAULT_GUIDE_GENERATION_PROMPT,
+        default_format_prompt=DEFAULT_GUIDE_FORMAT_PROMPT,
+    )
+
+
+@router.get("/prompt-config", response_model=PromptConfigResponse, summary="Current user's reading guide prompts")
+async def get_prompt_config(request: Request):
+    """Return the effective generation and format prompts, plus the built-in defaults."""
+    from backend.api.books import get_current_user_id
+
+    user_id = await get_current_user_id(request)
+    overrides = await get_user_prompt_overrides(user_id)
+    return _prompt_config_payload(overrides)
+
+
+@router.put("/prompt-config", response_model=PromptConfigResponse, summary="Update reading guide prompts")
+async def update_prompt_config(body: PromptConfigUpdate, request: Request):
+    """
+    Save per-user overrides. A blank value, or text identical to the built-in prompt, clears the override.
+    Toolbar angle, depth, and emphasis are still appended at generation time.
+    """
+    from backend.api.books import get_current_user_id
+
+    user_id = await get_current_user_id(request)
+    try:
+        generation = stored_prompt_value(body.generation_prompt, DEFAULT_GUIDE_GENERATION_PROMPT)
+        formatting = stored_prompt_value(body.format_prompt, DEFAULT_GUIDE_FORMAT_PROMPT)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    saved = await save_user_prompt_overrides(user_id, generation, formatting)
+    if not saved:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
+    return _prompt_config_payload(
+        {"generation_prompt": generation, "format_prompt": formatting}
+    )

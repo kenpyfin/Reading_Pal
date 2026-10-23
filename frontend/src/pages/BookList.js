@@ -1,6 +1,15 @@
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { getAuthHeaders } from '../utils/authRequest';
+import {
+  putBookListSnapshot,
+  getBookListSnapshot,
+  getBookSummariesFromMeta,
+  mergeBookListSources,
+  isRecoverableListFetchError,
+  removeBookFromListSnapshot,
+} from '../utils/offlineBookCache';
 
 // --- ADD THIS LINE ---
 console.log("[BookList.js SRC MODULE LEVEL] BookList.js module loaded"); 
@@ -8,123 +17,141 @@ console.log("[BookList.js SRC MODULE LEVEL] BookList.js module loaded");
 
 const POLLING_INTERVAL = 5000;
 
+const isInFlightStatus = (status) => status === 'processing' || status === 'pending';
+
 function BookList() {
   // ... rest of the component ...
   console.log("[BookList.js SRC FUNCTION LEVEL] BookList component function executed (rendered or re-rendered)");
 
   const [books, setBooks] = useState([]);
+  const booksRef = useRef(books);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
-  const [renamingId, setRenamingId] = useState(null); // New state for rename operation
-  const [hoveredBookId, setHoveredBookId] = useState(null); // New state for hover
+  const [renamingId, setRenamingId] = useState(null);
+  const [menuBookId, setMenuBookId] = useState(null);
+  const menuRef = useRef(null);
+  
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalBooks, setTotalBooks] = useState(0);
+  const PAGE_SIZE = 10;
 
-  // --- Style definitions for buttons and actions container ---
-  const actionsContainerBaseStyle = {
-    position: 'absolute',
-    right: '10px',
-    top: '50%',
-    transform: 'translateY(-50%)',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    transition: 'opacity 0.2s ease-in-out, visibility 0.2s ease-in-out',
-    opacity: 0,
-    visibility: 'hidden',
-    zIndex: 1, // Ensure buttons are above other elements if any overlap
-  };
+  const [netOnline, setNetOnline] = useState(
+    typeof navigator !== 'undefined' ? navigator.onLine : true
+  );
+  const [fromOfflineCache, setFromOfflineCache] = useState(false);
+  const [cachedBookCount, setCachedBookCount] = useState(0);
+  const cachedAllBooksRef = useRef([]);
+  const currentPageRef = useRef(currentPage);
 
-  const actionsContainerVisibleStyle = {
-    opacity: 1,
-    visibility: 'visible',
-  };
+  const listActionsReadOnly = !netOnline || fromOfflineCache;
+  const offlinePaging = !netOnline || fromOfflineCache;
+  const pagingTotal = offlinePaging ? cachedBookCount : totalBooks;
+
+  useEffect(() => {
+    booksRef.current = books;
+  }, [books]);
+
+  useEffect(() => {
+    currentPageRef.current = currentPage;
+  }, [currentPage]);
+
+  useEffect(() => {
+    if (!menuBookId) return undefined;
+    const onPointerDown = (event) => {
+      if (menuRef.current && !menuRef.current.contains(event.target)) {
+        setMenuBookId(null);
+      }
+    };
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') setMenuBookId(null);
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [menuBookId]);
 
   const baseButtonStyle = {
     padding: '6px 10px',
     fontSize: '13px',
-    border: '1px solid #d9d9d9',
+    border: '1px solid var(--color-border-light)',
     borderRadius: '4px',
     cursor: 'pointer',
-    backgroundColor: '#ffffff',
+    backgroundColor: 'var(--color-bg-elevated)',
+    color: 'var(--color-text)',
     transition: 'background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease',
     lineHeight: '1.5',
-    boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
-  };
-  
-  const renameButtonStyle = {
-    ...baseButtonStyle,
-    color: '#333',
-  };
-  
-  const renameButtonHoverStyle = { // Specific hover style for rename button
-    backgroundColor: '#f0f0f0', // Lighter grey
-    borderColor: '#c0c0c0',
-    boxShadow: '0 2px 4px rgba(0,0,0,0.07)',
+    boxShadow: 'var(--shadow-md)',
   };
 
-  const deleteButtonStyle = {
-    ...baseButtonStyle,
-    color: '#ff4d4f',
-    borderColor: '#ff7875',
-  };
-
-  const deleteButtonHoverStyle = { // Specific hover style for delete button
-    backgroundColor: '#fff1f0',
-    borderColor: '#ff4d4f',
-    boxShadow: '0 2px 4px rgba(0,0,0,0.07)',
-  };
   // --- End of style definitions ---
 
-  // Function to fetch the list of books from the backend
-  const fetchBooks = async () => {
-      console.log("[BookList.js SRC CONSOLE.LOG] Fetching books list from backend...");
-      const rawToken = localStorage.getItem('authToken'); // Retrieve the token
+  const applyOfflinePage = useCallback((page, allBooks) => {
+    cachedAllBooksRef.current = allBooks;
+    setCachedBookCount(allBooks.length);
+    const skip = (page - 1) * PAGE_SIZE;
+    setBooks(allBooks.slice(skip, skip + PAGE_SIZE));
+  }, []);
 
-      if (!rawToken) {
+  const loadOfflineBooks = useCallback(async (page) => {
+    const snap = await getBookListSnapshot();
+    const metaRows = await getBookSummariesFromMeta();
+    const merged = mergeBookListSources(snap, metaRows);
+    if (merged.length === 0) return false;
+    const validPage = Math.max(1, Math.min(page, Math.ceil(merged.length / PAGE_SIZE) || 1));
+    if (validPage !== page) {
+      setCurrentPage(validPage);
+    }
+    applyOfflinePage(validPage, merged);
+    setFromOfflineCache(true);
+    setError(null);
+    return true;
+  }, [applyOfflinePage]);
+
+  const fetchBooks = useCallback(async () => {
+      console.log("[BookList.js SRC CONSOLE.LOG] Fetching books list from backend...");
+      const authHeaders = getAuthHeaders();
+      if (!authHeaders) {
           console.error("[BookList.js SRC CONSOLE.ERROR] No auth token found (rawToken is falsy). User might not be logged in.");
           setError("Authentication token not found. Please log in.");
-          setLoading(false); // Stop loading as we can't proceed
-          // Optionally, redirect to login page here
-          // navigate('/login'); 
-          return;
-      }
-
-      // Sanitize token: remove potential leading/trailing whitespace and newlines
-      // which might cause issues with header formation or parsing.
-      let token = rawToken.trim().replace(/(\r\n|\n|\r)/gm, "");
-
-      // Explicitly check for string "null" or "undefined" which might be stored in localStorage
-      if (!token || token === "null" || token === "undefined") {
-          console.error(`[BookList.js SRC CONSOLE.ERROR] Auth token is invalid after sanitization or is a problematic string. Sanitized token value: '${token}'. User might not be logged in or token is invalid.`);
-          setError("Authentication token is invalid. Please log in again.");
           setLoading(false);
           return;
       }
-      
-      console.log(`[BookList.js SRC CONSOLE.LOG] Attempting to use sanitized auth token (first 20 chars): '${token.substring(0, 20)}...'`);
+
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        if (cachedAllBooksRef.current.length > 0) {
+          applyOfflinePage(currentPage, cachedAllBooksRef.current);
+          setFromOfflineCache(true);
+          setError(null);
+          setLoading(false);
+          return;
+        }
+        const ok = await loadOfflineBooks(currentPage);
+        if (!ok) {
+          setError('Offline and no cached book list found. Reconnect once to load your library.');
+        }
+        setLoading(false);
+        return;
+      }
 
       const requestHeaders = {
-          'Content-Type': 'application/json'
-          // Authorization header will be added below
+          'Content-Type': 'application/json',
+          ...authHeaders,
       };
-
-      if (token) {
-          requestHeaders['Authorization'] = `Bearer ${token}`;
-      } else {
-          console.error("[BookList.js SRC CONSOLE.ERROR] Critical error: Token became null or empty just before setting Authorization header. Aborting fetch.");
-          setError("Authentication error. Please log in again.");
-          setLoading(false);
-          return;
-      }
 
       console.log("[BookList.js SRC CONSOLE.LOG] Request headers being sent to /api/books/:", JSON.stringify(requestHeaders));
 
       try {
-          const response = await fetch('/api/books/', {
+          const skip = (currentPage - 1) * PAGE_SIZE;
+          const response = await fetch(`/api/books/?skip=${skip}&limit=${PAGE_SIZE}`, {
               headers: requestHeaders
           });
           if (!response.ok) {
-              const errorText = await response.text(); 
+              const errorText = await response.text();
               console.error(`[BookList.js SRC CONSOLE.ERROR] HTTP error fetching books: ${response.status} - ${errorText}`);
               let detail = errorText;
               try {
@@ -135,19 +162,53 @@ function BookList() {
               }
               throw new Error(`HTTP error! status: ${response.status} - ${detail}`);
           }
+
+          const totalCount = response.headers.get('X-Total-Count');
+          let nextTotal = 0;
+          if (totalCount !== null) {
+              nextTotal = parseInt(totalCount, 10);
+              setTotalBooks(nextTotal);
+          }
+
           const data = await response.json();
           console.log(`[BookList.js SRC CONSOLE.LOG] Successfully fetched ${data.length} books.`);
           const activeBooks = data.filter(book => book.status !== 'failed');
           setBooks(activeBooks);
-          setError(null); // Clear any previous error on successful fetch
+          setFromOfflineCache(false);
+          setError(null);
+          const snapshotTotal =
+            nextTotal > 0 ? nextTotal : (currentPage - 1) * PAGE_SIZE + activeBooks.length;
+          if (totalCount === null && snapshotTotal > 0) {
+            setTotalBooks(snapshotTotal);
+          }
+          try {
+            await putBookListSnapshot({
+              books: activeBooks,
+              totalBooks: snapshotTotal,
+              currentPage,
+            });
+          } catch (snapErr) {
+            console.warn('[BookList] Failed to persist list snapshot:', snapErr);
+          }
       } catch (error) {
           console.error("[BookList.js SRC CONSOLE.ERROR] Error fetching books:", error);
-          setError(error.message || "Failed to load books. Please try again later.");
-          // Do not set books to [] here, allow existing books to be displayed if any
+          if (isRecoverableListFetchError(error)) {
+            try {
+              const ok = await loadOfflineBooks(currentPage);
+              if (!ok) {
+                setError(error.message || "Failed to load books. Please try again later.");
+              }
+            } catch (cacheErr) {
+              console.error('[BookList] Offline cache load failed:', cacheErr);
+              setError(error.message || "Failed to load books. Please try again later.");
+            }
+          } else {
+            setError(error.message || "Failed to load books. Please try again later.");
+          }
       } finally {
           setLoading(false);
       }
-  };
+  }, [currentPage, applyOfflinePage, loadOfflineBooks]);
 
   const checkBookStatus = async (bookId, jobId) => {
       if (!jobId) return null;
@@ -168,24 +229,57 @@ function BookList() {
   };
 
   useEffect(() => {
-    setLoading(true); // Set loading true only on initial mount fetch
+    setLoading(true);
     setError(null);
     fetchBooks();
-  }, []);
+  }, [currentPage, fetchBooks]);
 
   useEffect(() => {
-      const pollableBooks = books.filter(book =>
-          (book.status === 'processing' || book.status === 'pending') && book.job_id
+    const syncOnline = () => setNetOnline(navigator.onLine);
+    const onOnline = () => {
+      syncOnline();
+      if (getAuthHeaders()) {
+        setLoading(true);
+        fetchBooks();
+      }
+    };
+    const onOffline = () => {
+      syncOnline();
+      loadOfflineBooks(currentPageRef.current).catch((err) => {
+        console.warn('[BookList] Failed to load offline books on disconnect:', err);
+      });
+    };
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
+    };
+  }, [fetchBooks, loadOfflineBooks]);
+
+  useEffect(() => {
+      if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+      if (fromOfflineCache) return;
+
+      const hasPollable = books.some(
+          (book) => isInFlightStatus(book.status) && book.job_id
       );
-      if (pollableBooks.length === 0) {
+      if (!hasPollable) {
           console.log("No books pending or processing, stopping polling.");
           return;
       }
-      console.log(`Found ${pollableBooks.length} books pending/processing. Starting polling...`);
+
+      console.log("Starting polling for pending/processing books...");
       const intervalId = setInterval(async () => {
+          const pollableBooks = booksRef.current.filter(
+              (book) => isInFlightStatus(book.status) && book.job_id
+          );
+          if (pollableBooks.length === 0) {
+              return;
+          }
           console.log("Polling for book status updates...");
           const statusUpdates = await Promise.all(
-              pollableBooks.map(book => checkBookStatus(book.id, book.job_id)) // Use book.id (which is _id string)
+              pollableBooks.map((book) => checkBookStatus(book.id, book.job_id))
           );
           const updatesByJobId = new Map();
           statusUpdates.filter(update => update && update.job_id).forEach(update => {
@@ -215,26 +309,25 @@ function BookList() {
           console.log("Clearing polling interval.");
           clearInterval(intervalId);
       };
-  }, [books]);
+  }, [books, fromOfflineCache]);
 
-  const handleDeleteBook = async (bookId, bookTitle) => {
-    if (!window.confirm(`Are you sure you want to delete the book "${bookTitle}"? This action cannot be undone.`)) {
+  const handleDeleteBook = async (bookId, bookTitle, inFlight = false) => {
+    if (listActionsReadOnly) {
+      return;
+    }
+    const confirmMessage = inFlight
+      ? `Stop processing and remove "${bookTitle}" from your library? Conversion may continue in the background, but the book will not appear here.`
+      : `Are you sure you want to delete the book "${bookTitle}"? This action cannot be undone.`;
+    if (!window.confirm(confirmMessage)) {
         return;
     }
     setDeletingId(bookId);
-    setError(null); // Clear previous errors
+    setError(null);
 
-    const rawToken = localStorage.getItem('authToken');
-    if (!rawToken) {
+    const authHeaders = getAuthHeaders();
+    if (!authHeaders) {
         console.error("[BookList.js SRC CONSOLE.ERROR] No auth token found for delete operation.");
         setError("Authentication token not found. Please log in.");
-        setDeletingId(null);
-        return;
-    }
-    const token = rawToken.trim().replace(/(\r\n|\n|\r)/gm, "");
-    if (!token || token === "null" || token === "undefined") {
-        console.error(`[BookList.js SRC CONSOLE.ERROR] Invalid auth token for delete operation. Sanitized token: '${token}'`);
-        setError("Authentication token is invalid. Please log in again.");
         setDeletingId(null);
         return;
     }
@@ -242,29 +335,36 @@ function BookList() {
     try {
         const response = await fetch(`/api/books/${bookId}`, {
             method: 'DELETE',
-            headers: {
-                'Authorization': `Bearer ${token}`,
-            },
+            headers: authHeaders,
         });
-        if (response.status === 204) { // Successfully deleted
+        if (response.status === 204) {
             setBooks(prevBooks => prevBooks.filter(book => book.id !== bookId));
+            setTotalBooks((t) => Math.max(0, t - 1));
+            try {
+              await removeBookFromListSnapshot(bookId);
+            } catch (snapErr) {
+              console.warn('[BookList] Failed to update list snapshot after delete:', snapErr);
+            }
             console.log(`Book "${bookTitle}" (ID: ${bookId}) deleted successfully.`);
         } else if (!response.ok) {
             const errorData = await response.json().catch(() => ({ detail: 'Failed to delete book and parse error response.' }));
             throw new Error(`HTTP error! status: ${response.status} - ${errorData.detail || 'Unknown error'}`);
         } else {
              console.warn(`Unexpected response status after delete: ${response.status}`);
-             setBooks(prevBooks => prevBooks.filter(book => book.id !== bookId)); // Fallback
         }
     } catch (err) {
         console.error(`Failed to delete book ${bookId}:`, err);
-        setError(`Failed to delete book "${bookTitle}": ${err.message}`);
+        const action = inFlight ? 'cancel' : 'delete';
+        setError(`Failed to ${action} book "${bookTitle}": ${err.message}`);
     } finally {
         setDeletingId(null);
     }
   };
 
   const handleRenameBook = async (bookId, currentTitle) => {
+    if (listActionsReadOnly) {
+      return;
+    }
     const newTitle = window.prompt("Enter the new title for the book:", currentTitle);
     if (newTitle === null || newTitle.trim() === "" || newTitle.trim() === currentTitle) {
         if (newTitle !== null && newTitle.trim() !== "" && newTitle.trim() === currentTitle) {
@@ -278,17 +378,10 @@ function BookList() {
     setRenamingId(bookId);
     setError(null); // Clear previous errors
 
-    const rawToken = localStorage.getItem('authToken');
-    if (!rawToken) {
+    const authHeaders = getAuthHeaders();
+    if (!authHeaders) {
         console.error("[BookList.js SRC CONSOLE.ERROR] No auth token found for rename operation.");
         setError("Authentication token not found. Please log in.");
-        setRenamingId(null);
-        return;
-    }
-    const token = rawToken.trim().replace(/(\r\n|\n|\r)/gm, "");
-    if (!token || token === "null" || token === "undefined") {
-        console.error(`[BookList.js SRC CONSOLE.ERROR] Invalid auth token for rename operation. Sanitized token: '${token}'`);
-        setError("Authentication token is invalid. Please log in again.");
         setRenamingId(null);
         return;
     }
@@ -298,7 +391,7 @@ function BookList() {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`,
+                ...authHeaders,
             },
             body: JSON.stringify({ new_title: newTitle.trim() }),
         });
@@ -326,16 +419,21 @@ function BookList() {
 
   // Display error message, but still render the book list if books are available
   if (error && books.length === 0) { // Only show full page error if no books can be displayed
-    return <div style={{ padding: '20px', color: 'red' }}>Error: {error}</div>;
+    return <div className="theme-error-text" style={{ padding: '20px' }}>Error: {error}</div>;
   }
 
 
   return (
-    <div className="book-list-container" style={{ fontFamily: 'Arial, sans-serif', padding: '20px' }}>
-      <h2 style={{ marginBottom: '20px', color: '#333' }}>Available Books</h2>
-      {error && <p style={{ color: 'red', marginBottom: '15px' }}>Error: {error}</p>} {/* Display error message above list */}
+    <div className="book-list-container">
+      <h2>Available Books</h2>
+      {listActionsReadOnly && books.length > 0 && (
+        <p className="theme-offline-banner">
+          Offline — showing cached books. Rename and delete need a connection; use Previous/Next to browse cached pages.
+        </p>
+      )}
+      {error && <p className="theme-error-text" style={{ marginBottom: '15px' }}>Error: {error}</p>}
       {books.length === 0 && !loading ? (
-        <p>No books found. <Link to="/upload" style={{ color: '#007bff' }}>Upload a PDF</Link> to get started!</p>
+        <p>No books found. <Link to="/upload">Upload a book</Link> to get started!</p>
       ) : (
         <ul style={{ listStyleType: 'none', paddingLeft: '0' }}>
           {books.map(book => (
@@ -343,101 +441,132 @@ function BookList() {
             // The backend /api/books/ endpoint maps _id to id.
             console.log("Rendering list item for book:", book, "ID:", book.id),
             <li
-              key={book.id} // Use book.id (which is the string representation of _id)
-              onMouseEnter={() => setHoveredBookId(book.id)}
-              onMouseLeave={() => setHoveredBookId(null)}
-              style={{
-                position: 'relative', // Needed for absolute positioning of actions
-                padding: '12px 15px',
-                borderBottom: '1px solid #e0e0e0',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                transition: 'background-color 0.2s ease',
-                backgroundColor: hoveredBookId === book.id ? '#f9f9f9' : 'transparent',
-              }}
+              key={book.id}
+              className={menuBookId === book.id ? 'book-list-row book-list-row--menu-open' : 'book-list-row'}
             >
-              <div style={{ flexGrow: 1, marginRight: '100px' }}> {/* Ensure space for buttons */}
+              <div className="book-list-item-main">
                 {book.status === 'completed' ? (
-                   <Link to={`/book/${book.id}`} style={{ textDecoration: 'none', color: '#007bff', fontWeight: '500' }}>
+                   <Link to={`/book/${book.id}`} className="book-list-title">
                       {book.title || book.original_filename}
                    </Link>
                 ) : (
-                   <span style={{ color: '#555', fontWeight: '500' }}>
+                   <span className="book-list-title">
                        {book.title || book.original_filename}
-                       <span data-status={book.status || 'unknown'} style={{ marginLeft: '8px', fontSize: '0.9em', color: '#777' }}>
-                           {' '}({book.status || 'unknown'}
-                           {(book.status === 'processing' || book.status === 'pending') && '...'})
-                           {book.status === 'failed' && ' - Failed'}
-                       </span>
                    </span>
+                )}
+                {book.status !== 'completed' && (
+                  <span className="book-status-badge" data-status={book.status || 'unknown'}>
+                    ({book.status || 'unknown'}
+                    {isInFlightStatus(book.status) && '...'})
+                    {book.status === 'failed' && ' - Failed'}
+                  </span>
                 )}
               </div>
 
               <div
-                style={{
-                  ...actionsContainerBaseStyle,
-                  ...(hoveredBookId === book.id ? actionsContainerVisibleStyle : {}),
-                }}
+                className="book-list-row-actions"
+                ref={menuBookId === book.id ? menuRef : null}
               >
                 <button
-                  title="Rename Book"
-                  onClick={(e) => { e.stopPropagation(); handleRenameBook(book.id, book.title || book.original_filename);}}
-                  disabled={renamingId === book.id || deletingId === book.id || book.status === 'processing'}
-                  style={renamingId === book.id ? {...renameButtonStyle, backgroundColor: renameButtonHoverStyle.backgroundColor} : renameButtonStyle}
-                  onMouseEnter={(e) => {
-                    if (!(renamingId === book.id || deletingId === book.id || book.status === 'processing')) {
-                        e.currentTarget.style.backgroundColor = renameButtonHoverStyle.backgroundColor;
-                        e.currentTarget.style.borderColor = renameButtonHoverStyle.borderColor;
-                        e.currentTarget.style.boxShadow = renameButtonHoverStyle.boxShadow;
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    if (!(renamingId === book.id)) { // Keep active style if renaming
-                        e.currentTarget.style.backgroundColor = renameButtonStyle.backgroundColor;
-                        e.currentTarget.style.borderColor = renameButtonStyle.borderColor; 
-                        e.currentTarget.style.boxShadow = baseButtonStyle.boxShadow;
-                    }
-                  }}
-                >
-                  {renamingId === book.id ? 'Renaming...' : 'Rename'}
-                </button>
-                <button
-                  title="Delete Book"
-                  onClick={(e) => { e.stopPropagation(); handleDeleteBook(book.id, book.title || book.original_filename);}}
-                  disabled={deletingId === book.id || renamingId === book.id || book.status === 'processing'}
-                  style={deletingId === book.id ? {...deleteButtonStyle, backgroundColor: deleteButtonHoverStyle.backgroundColor} : deleteButtonStyle}
-                   onMouseEnter={(e) => {
-                    if (!(renamingId === book.id || deletingId === book.id || book.status === 'processing')) {
-                        e.currentTarget.style.backgroundColor = deleteButtonHoverStyle.backgroundColor;
-                        e.currentTarget.style.borderColor = deleteButtonHoverStyle.borderColor;
-                        e.currentTarget.style.boxShadow = deleteButtonHoverStyle.boxShadow;
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                     if (!(deletingId === book.id)) { // Keep active style if deleting
-                        e.currentTarget.style.backgroundColor = deleteButtonStyle.backgroundColor;
-                        e.currentTarget.style.borderColor = deleteButtonStyle.borderColor; 
-                        e.currentTarget.style.boxShadow = baseButtonStyle.boxShadow;
-                    }
+                  type="button"
+                  className="book-list-menu-trigger"
+                  aria-label={
+                    renamingId === book.id
+                      ? 'Renaming book'
+                      : deletingId === book.id
+                        ? (isInFlightStatus(book.status) ? 'Cancelling book' : 'Deleting book')
+                        : 'Book actions'
+                  }
+                  aria-haspopup="menu"
+                  aria-expanded={menuBookId === book.id}
+                  title="Book actions"
+                  disabled={listActionsReadOnly || renamingId === book.id || deletingId === book.id}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setMenuBookId((openId) => (openId === book.id ? null : book.id));
                   }}
                 >
-                  {deletingId === book.id ? 'Deleting...' : 'Delete'}
+                  {renamingId === book.id || deletingId === book.id ? '…' : '⋯'}
                 </button>
+                {menuBookId === book.id && (
+                  <div className="book-list-menu" role="menu">
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="book-list-menu-item"
+                      disabled={isInFlightStatus(book.status)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setMenuBookId(null);
+                        handleRenameBook(book.id, book.title || book.original_filename);
+                      }}
+                    >
+                      Rename
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="book-list-menu-item book-list-menu-item--danger"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setMenuBookId(null);
+                        handleDeleteBook(
+                          book.id,
+                          book.title || book.original_filename,
+                          isInFlightStatus(book.status)
+                        );
+                      }}
+                    >
+                      {isInFlightStatus(book.status) ? 'Cancel processing' : 'Delete'}
+                    </button>
+                  </div>
+                )}
               </div>
             </li>
           ))}
         </ul>
       )}
-      <div className="upload-link-container" style={{ marginTop: '25px' }}>
-         <Link to="/upload" style={{
-             display: 'inline-block',
-             padding: '10px 15px',
-             backgroundColor: '#007bff',
-             color: 'white',
-             textDecoration: 'none',
-             borderRadius: '4px'
-         }}>Upload a New PDF</Link>
+      <div className="pagination-container" style={{ 
+          marginTop: '25px', 
+          display: 'flex', 
+          alignItems: 'center', 
+          gap: '15px' 
+      }}>
+          <button 
+              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+              disabled={currentPage === 1}
+              style={{
+                  ...baseButtonStyle,
+                  opacity: currentPage === 1 ? 0.5 : 1,
+                  cursor: currentPage === 1 ? 'not-allowed' : 'pointer'
+              }}
+          >
+              Previous
+          </button>
+          
+          <span style={{ fontSize: '14px', color: 'var(--color-text-muted)' }}>
+              Page <strong>{currentPage}</strong> of <strong>{Math.ceil(pagingTotal / PAGE_SIZE) || 1}</strong>
+          </span>
+
+          <button 
+              onClick={() => setCurrentPage(p => p + 1)}
+              disabled={currentPage * PAGE_SIZE >= pagingTotal}
+              style={{
+                  ...baseButtonStyle,
+                  opacity: currentPage * PAGE_SIZE >= pagingTotal ? 0.5 : 1,
+                  cursor: currentPage * PAGE_SIZE >= pagingTotal ? 'not-allowed' : 'pointer'
+              }}
+          >
+              Next
+          </button>
+          
+          <span style={{ fontSize: '12px', color: 'var(--color-text-subtle)', marginLeft: 'auto' }}>
+              {offlinePaging ? `Cached: ${cachedBookCount} books` : `Total: ${totalBooks} books`}
+          </span>
+      </div>
+
+      <div className="upload-link-container">
+         <Link to="/upload">Upload a New Book</Link>
       </div>
     </div>
   );

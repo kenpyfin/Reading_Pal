@@ -1,0 +1,160 @@
+.user-management-container {
+  padding: 20px;
+  max-width: 1200px;
+  margin: 0 auto;
+  font-family: Arial, sans-serif;
+}
+
+.user-management-container h1 {
+  text-align: center;
+  margin-bottom: 30px;
+  color: var(--color-text);
+}
+
+.users-table-scroll {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin-top: 20px;
+}
+
+.users-table {
+  width: 100%;
+  min-width: 980px;
+  border-collapse: collapse;
+  box-shadow: var(--shadow-md);
+}
+
+.users-table th,
+.users-table td {
+  border: 1px solid var(--color-border-light);
+  padding: 12px;
+  text-align: left;
+  font-size: 14px;
+}
+
+.users-table th {
+  background-color: var(--color-bg-muted);
+  color: var(--color-text);
+  font-weight: bold;
+}
+
+.users-table tr:nth-child(even) {
+  background-color: var(--color-bg-hover);
+}
+
+.users-table tr:hover {
+  background-color: var(--color-bg-muted);
+}
+
+.user-management-container .delete-button {
+  background-color: var(--color-danger);
+  color: var(--color-on-accent);
+  border: none;
+  padding: 8px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background-color 0.2s ease-in-out;
+}
+
+.user-management-container .delete-button:hover {
+  background-color: var(--color-danger-hover);
+}
+
+.user-management-container .delete-button:disabled {
+  background-color: var(--color-text-subtle);
+  cursor: not-allowed;
+}
+
+.error-message {
+  color: var(--color-error-text);
+  background-color: var(--color-error-bg);
+  border: 1px solid var(--color-border);
+  padding: 10px;
+  border-radius: 4px;
+  margin-bottom: 20px;
+  text-align: center;
+}
+
+.user-management-container p:first-child {
+  text-align: center;
+  font-size: 1.2em;
+  color: var(--color-text-muted);
+}
+
+.stats-container {
+  display: flex;
+  justify-content: space-around;
+  margin-bottom: 40px;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.stat-card {
+  background-color: var(--color-bg-elevated);
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: var(--shadow-md);
+  text-align: center;
+  flex-basis: 200px;
+  flex-grow: 1;
+  min-width: 180px;
+}
+
+.stat-card h2 {
+  margin-top: 0;
+  margin-bottom: 10px;
+  font-size: 1.2em;
+  color: var(--color-text-muted);
+}
+
+.stat-card p {
+  font-size: 2em;
+  font-weight: bold;
+  color: var(--color-primary);
+  margin: 0;
+}
+
+.user-management-container h2 {
+  text-align: center;
+  margin-top: 40px;
+  margin-bottom: 20px;
+  color: var(--color-text);
+}
+
+.activate-button,
+.deactivate-button {
+  color: var(--color-on-accent);
+  border: none;
+  padding: 8px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background-color 0.2s ease-in-out;
+  margin-left: 5px;
+}
+
+.activate-button {
+  background-color: var(--grass-9);
+}
+
+.activate-button:hover {
+  background-color: var(--grass-10);
+}
+
+.deactivate-button {
+  background-color: var(--amber-9);
+  color: var(--slate-12);
+}
+
+.deactivate-button:hover {
+  background-color: var(--amber-10);
+}
+
+.activate-button:disabled,
+.deactivate-button:disabled {
+  background-color: var(--color-text-subtle);
+  cursor: not-allowed;
+  color: var(--color-on-accent);
+}

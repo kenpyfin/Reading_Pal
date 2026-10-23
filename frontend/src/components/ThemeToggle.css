@@ -1,0 +1,72 @@
+.theme-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.theme-toggle-btn {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  color: inherit;
+  border-radius: 4px;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  line-height: 1.2;
+  min-width: 36px;
+}
+
+.theme-toggle-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.theme-toggle-btn--system {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.theme-toggle-icon {
+  display: inline-block;
+}
+
+.theme-toggle-auto {
+  background: transparent;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 0.75rem;
+  opacity: 0.85;
+  padding: 2px 4px;
+  text-decoration: underline;
+}
+
+.theme-toggle-auto:hover {
+  opacity: 1;
+}
+
+/* Login / admin pages (not inside dark navbar) */
+.login-page-container .theme-toggle,
+.admin-login-page-container .theme-toggle {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  z-index: 100;
+}
+
+.login-page-container .theme-toggle-btn,
+.admin-login-page-container .theme-toggle-btn {
+  border-color: var(--color-border);
+  color: var(--color-text);
+  background: var(--color-bg-elevated);
+}
+
+.login-page-container .theme-toggle-btn:hover,
+.admin-login-page-container .theme-toggle-btn:hover {
+  background: var(--color-bg-hover);
+}
+
+.login-page-container .theme-toggle-auto,
+.admin-login-page-container .theme-toggle-auto {
+  color: var(--color-text-muted);
+}

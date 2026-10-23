@@ -1,0 +1,26 @@
+---
+description: Development journal — read before changes; update when implementing
+alwaysApply: true
+---
+
+# Development journal
+
+## Canonical file
+
+- **`DEVELOPMENT_JOURNAL.md`** at the repo root is the project development log (decisions, implementations, migrations, notable fixes).
+
+## Before you work
+
+When planning, refactoring, adding features, or debugging non-trivial behavior:
+
+1. **Read** `DEVELOPMENT_JOURNAL.md` (and search within it for the area you are touching: service name, feature, file paths).
+2. Use what you find to align with prior decisions and avoid repeating mistakes or contradicting architecture.
+
+## After you implement
+
+For each meaningful change (new feature, non-trivial fix, API or schema change, infra/deploy change, or anything a future maintainer would need to know):
+
+1. **Append** a dated entry to `DEVELOPMENT_JOURNAL.md` with: what changed, why, key files/modules, and any follow-ups or env/config notes.
+2. Keep entries concise; link to issues/PRs if applicable.
+
+Skip journal updates only for trivial edits (typos, formatting, one-line obvious fixes with no behavioral impact).

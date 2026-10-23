@@ -1,17 +1,25 @@
-print("DEBUG: Executing backend/services/llm_service.py module")
-
 import os
 from dotenv import load_dotenv
 import logging
-from typing import Optional
+from typing import Optional, Dict, Any, List
 # Import client libraries for different LLM providers
 from anthropic import Anthropic # Assuming Anthropic is used
 from ollama import AsyncClient # Use AsyncClient for better FastAPI integration
-# Assuming google-generativeai is used for Gemini
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 # Assuming requests is used for DeepSeek (adjust if a specific client library is available)
 import requests
 import json # Import json for DeepSeek requests
+import re # Import re for regular expressions
+import time
+import base64
+from backend.models.reading_guide import ReadingGuideItem, MAX_CARD_CHAT_HISTORY_FOR_LLM
+from backend.services.prompt_defaults import (
+    DEFAULT_GUIDE_FORMAT_PROMPT,
+    DEFAULT_GUIDE_GENERATION_PROMPT,
+    resolve_prompt,
+)
+from backend.services.knowledge_mapper import KnowledgeMapper
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -26,17 +34,39 @@ LLM_SERVICE = os.getenv("LLM_SERVICE", "ollama")
 LLM_MODEL = os.getenv("LLM_MODEL", "deepseek-r1:14b")
 ollama_env_base_url = os.getenv("OLLAMA_BASE_URL")
 
+# Dedicated guide generation model/config (defaults to Gemini Flash for cost/latency).
+GUIDE_LLM_SERVICE = os.getenv("GUIDE_LLM_SERVICE", "gemini")
+GUIDE_LLM_MODEL = os.getenv("GUIDE_LLM_MODEL", "gemini-2.0-flash")
+GUIDE_LLM_GEMINI_API_KEY = os.getenv("GUIDE_LLM_GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
+
+# Gemini image generation model (uses generateContent, same endpoint as LLM).
+# Options: gemini-2.5-flash-image, gemini-3.1-flash-image-preview, gemini-3-pro-image-preview
+GRAPH_LLM_IMAGE_MODEL = os.getenv("GRAPH_LLM_IMAGE_MODEL", "gemini-2.5-flash-image")
+
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
+# --- Formatting-specific LLM configuration ---
+FORMATTING_LLM_SERVICE = os.getenv("FORMATTING_LLM_SERVICE")  # e.g., "anthropic", "gemini", "ollama"
+FORMATTING_LLM_MODEL = os.getenv("FORMATTING_LLM_MODEL")  # e.g., "claude-3-5-sonnet-20241022"
+FORMATTING_ANTHROPIC_API_KEY = os.getenv("FORMATTING_ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
+FORMATTING_GEMINI_API_KEY = os.getenv("FORMATTING_GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
+FORMATTING_OLLAMA_BASE_URL = os.getenv("FORMATTING_OLLAMA_BASE_URL") or os.getenv("OLLAMA_BASE_URL")
+
 # Initialize LLM clients based on configuration
 # Keep these outside the class for singleton pattern
 anthropic_client = None
 deepseek_config = None # For requests, this might just be the API key/URL
-gemini_model = None # Store the GenerativeModel instance
+gemini_client = None
 ollama_client = None
+guide_gemini_client = None
+
+# Initialize formatting-specific LLM clients
+formatting_anthropic_client = None
+formatting_gemini_client = None
+formatting_ollama_client = None
 
 # --- Use the dedicated variable for Ollama initialization ---
 if LLM_SERVICE == "ollama":
@@ -77,38 +107,79 @@ elif LLM_SERVICE == "deepseek":
 elif LLM_SERVICE == "gemini":
     if GEMINI_API_KEY:
         try:
-            genai.configure(api_key=GEMINI_API_KEY)
-            # Initialize the model, not the client itself
-            # Check if the model exists (synchronous check during init)
-            try:
-                # Use the configured model name
-                gemini_model = genai.GenerativeModel(model_name=LLM_MODEL)
-                # A simple test call might be needed to confirm connectivity/model existence
-                # For now, rely on error handling during actual calls.
-                logger.info(f"Gemini client initialized with model: {LLM_MODEL}.")
-            except Exception as e:
-                 logger.error(f"Failed to initialize Gemini model '{LLM_MODEL}': {e}")
-                 gemini_model = None
+            gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+            logger.info(f"Gemini client initialized with model: {LLM_MODEL}.")
         except Exception as e:
             logger.error(f"Failed to configure Gemini client: {e}")
-            gemini_model = None
+            gemini_client = None
     else:
         logger.warning("GEMINI_API_KEY not set. Gemini LLM service disabled.")
-
 
 else:
     logger.warning(f"Unknown or unsupported LLM_SERVICE configured: {LLM_SERVICE}. LLM features may not work.")
 
+# Optional dedicated guide model (currently only Gemini is supported as separate model target).
+if GUIDE_LLM_SERVICE == "gemini" and GUIDE_LLM_GEMINI_API_KEY:
+    try:
+        guide_gemini_client = genai.Client(api_key=GUIDE_LLM_GEMINI_API_KEY)
+        logger.info(f"Guide Gemini client initialized: {GUIDE_LLM_MODEL}")
+    except Exception as e:
+        logger.warning(f"Failed to initialize guide Gemini client '{GUIDE_LLM_MODEL}': {e}")
+        guide_gemini_client = None
+
+# Initialize formatting-specific LLM clients
+if FORMATTING_LLM_SERVICE == "anthropic" and FORMATTING_ANTHROPIC_API_KEY and FORMATTING_LLM_MODEL:
+    try:
+        formatting_anthropic_client = Anthropic(api_key=FORMATTING_ANTHROPIC_API_KEY)
+        logger.info(f"Formatting-specific Anthropic client initialized with model: {FORMATTING_LLM_MODEL}")
+    except Exception as e:
+        logger.warning(f"Failed to initialize formatting-specific Anthropic client: {e}")
+        formatting_anthropic_client = None
+elif FORMATTING_LLM_SERVICE == "gemini" and FORMATTING_GEMINI_API_KEY and FORMATTING_LLM_MODEL:
+    try:
+        formatting_gemini_client = genai.Client(api_key=FORMATTING_GEMINI_API_KEY)
+        logger.info(f"Formatting-specific Gemini client initialized: {FORMATTING_LLM_MODEL}")
+    except Exception as e:
+        logger.warning(f"Failed to initialize formatting-specific Gemini client: {e}")
+        formatting_gemini_client = None
+elif FORMATTING_LLM_SERVICE == "ollama" and FORMATTING_OLLAMA_BASE_URL and FORMATTING_LLM_MODEL:
+    try:
+        formatting_ollama_client = AsyncClient(host=FORMATTING_OLLAMA_BASE_URL)
+        logger.info(f"Formatting-specific Ollama AsyncClient initialized at {FORMATTING_OLLAMA_BASE_URL} with model: {FORMATTING_LLM_MODEL}")
+    except Exception as e:
+        logger.warning(f"Failed to initialize formatting-specific Ollama AsyncClient: {e}")
+        formatting_ollama_client = None
+elif FORMATTING_LLM_SERVICE:
+    logger.info(f"Formatting-specific LLM service '{FORMATTING_LLM_SERVICE}' configured but not fully initialized. Will fall back to standard reformatting.")
+else:
+    logger.info("No formatting-specific LLM service configured. Will use standard reformatting.")
+
 
 class LLMService:
     # Corrected the default value for deepseek from 'config' to None
-    def __init__(self, anthropic=None, deepseek=None, gemini=None, ollama=None):
+    def __init__(self, anthropic=None, deepseek=None, gemini_client=None, ollama=None, guide_gemini_client=None,
+                 formatting_anthropic=None, formatting_gemini_client=None, formatting_ollama=None):
         self.anthropic_client = anthropic
         self.deepseek_config = deepseek # Store config dict for requests
-        self.gemini_model = gemini # Store the GenerativeModel instance
+        self.gemini_client = gemini_client
         self.ollama_client = ollama
+        self.guide_gemini_client = guide_gemini_client
+        self.guide_model_name = GUIDE_LLM_MODEL
         self.service_name = LLM_SERVICE
         self.model_name = LLM_MODEL
+        # Formatting-specific clients
+        self.formatting_anthropic_client = formatting_anthropic
+        self.formatting_gemini_client = formatting_gemini_client
+        self.formatting_ollama_client = formatting_ollama
+        self.formatting_service_name = FORMATTING_LLM_SERVICE
+        self.formatting_model_name = FORMATTING_LLM_MODEL
+
+    def _remove_think_tags(self, text: str) -> str:
+        """Removes content within <think>...</think> tags."""
+        if not text:
+            return ""
+        # Using re.DOTALL to make '.' match newlines as well
+        return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
     async def ask(self, prompt: str, context: Optional[str]) -> str:
         """
@@ -142,7 +213,8 @@ class LLMService:
                         {"role": "user", "content": full_prompt}
                     ]
                 )
-                return message.content[0].text if message.content else "No response from LLM."
+                response_text = message.content[0].text if message.content else "No response from LLM."
+                return self._remove_think_tags(response_text)
 
             elif self.service_name == "ollama" and self.ollama_client:
                  # ... (Ollama async client call using full_prompt)
@@ -152,16 +224,16 @@ class LLMService:
                          {'role': 'user', 'content': full_prompt},
                      ],
                  )
-                 return response['message']['content'] if response and 'message' in response else "No response from LLM."
+                 response_text = response['message']['content'] if response and 'message' in response else "No response from LLM."
+                 return self._remove_think_tags(response_text)
 
-            elif self.service_name == "gemini" and self.gemini_model:
-                 # ... (Gemini async client call using full_prompt)
-                 response = await self.gemini_model.generate_content_async(
-                     contents=[
-                         {"role": "user", "parts": [full_prompt]}
-                     ]
+            elif self.service_name == "gemini" and self.gemini_client:
+                 response = await self.gemini_client.aio.models.generate_content(
+                     model=self.model_name,
+                     contents=full_prompt,
                  )
-                 return response.text if response and response.text else "No response from LLM."
+                 response_text = response.text if response and response.text else "No response from LLM."
+                 return self._remove_think_tags(response_text)
 
             elif self.service_name == "deepseek" and self.deepseek_config:
                  # ... (DeepSeek API call using requests (synchronous, needs run_in_threadpool) using full_prompt)
@@ -183,17 +255,18 @@ class LLMService:
                          self.deepseek_config['base_url'],
                          headers=headers,
                          json=payload,
-                         timeout=60
+                         timeout=180
                      )
                      response.raise_for_status()
                      response_data = response.json()
-                     return response_data['choices'][0]['message']['content'] if response_data and 'choices' in response_data and len(response_data['choices']) > 0 else "No response from LLM."
+                     response_text = response_data['choices'][0]['message']['content'] if response_data and 'choices' in response_data and len(response_data['choices']) > 0 else "No response from LLM."
+                     return self._remove_think_tags(response_text)
                  except requests.exceptions.RequestException as req_err:
                      logger.error(f"DeepSeek API request failed: {req_err}")
-                     return f"Error from DeepSeek API: {req_err}"
+                     return self._remove_think_tags(f"Error from DeepSeek API: {req_err}")
                  except json.JSONDecodeError:
                      logger.error(f"DeepSeek API returned invalid JSON: {response.text}")
-                     return f"Error from DeepSeek API: Invalid response format."
+                     return self._remove_think_tags(f"Error from DeepSeek API: Invalid response format.")
 
             else:
                  error_msg = f"LLM service '{self.service_name}' is configured but client is not initialized or implemented."
@@ -220,13 +293,14 @@ class LLMService:
             if self.service_name == "anthropic" and self.anthropic_client:
                  message = await self.anthropic_client.messages.create(
                     model=self.model_name, # Use the configured model
-                    max_tokens=4096, # Adjust as needed
+                    max_tokens=2048, # Adjust as needed
                     system="You are a helpful assistant that summarizes text.",
                     messages=[
                         {"role": "user", "content": prompt}
                     ]
                 )
-                 return message.content[0].text if message.content else "No summary from LLM."
+                 response_text = message.content[0].text if message.content else "No summary from LLM."
+                 return self._remove_think_tags(response_text)
 
             elif self.service_name == "ollama" and self.ollama_client:
                  # Ollama async client call
@@ -236,16 +310,16 @@ class LLMService:
                          {'role': 'user', 'content': prompt},
                      ],
                  )
-                 return response['message']['content'] if response and 'message' in response else "No summary from LLM."
+                 response_text = response['message']['content'] if response and 'message' in response else "No summary from LLM."
+                 return self._remove_think_tags(response_text)
 
-            elif self.service_name == "gemini" and self.gemini_model:
-                 # Gemini async client call
-                 response = await self.gemini_model.generate_content_async(
-                     contents=[
-                         {"role": "user", "parts": [prompt]}
-                     ]
+            elif self.service_name == "gemini" and self.gemini_client:
+                 response = await self.gemini_client.aio.models.generate_content(
+                     model=self.model_name,
+                     contents=prompt,
                  )
-                 return response.text if response and response.text else "No summary from LLM."
+                 response_text = response.text if response and response.text else "No summary from LLM."
+                 return self._remove_think_tags(response_text)
 
             elif self.service_name == "deepseek" and self.deepseek_config:
                  # DeepSeek API call using requests (synchronous, needs run_in_threadpool)
@@ -258,7 +332,7 @@ class LLMService:
                      "messages": [
                          {"role": "user", "content": prompt}
                      ],
-                     "max_tokens": 4096 # Adjust as needed
+                     "max_tokens": 2048 # Adjust as needed
                  }
                  from fastapi.concurrency import run_in_threadpool
                  try:
@@ -267,17 +341,18 @@ class LLMService:
                          self.deepseek_config['base_url'],
                          headers=headers,
                          json=payload,
-                         timeout=60 # Add a timeout
+                         timeout=120 # Add a timeout
                      )
                      response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
                      response_data = response.json()
-                     return response_data['choices'][0]['message']['content'] if response_data and 'choices' in response_data and len(response_data['choices']) > 0 else "No summary from LLM."
+                     response_text = response_data['choices'][0]['message']['content'] if response_data and 'choices' in response_data and len(response_data['choices']) > 0 else "No summary from LLM."
+                     return self._remove_think_tags(response_text)
                  except requests.exceptions.RequestException as req_err:
                      logger.error(f"DeepSeek API request failed: {req_err}")
-                     return f"Error from DeepSeek API: {req_err}"
+                     return self._remove_think_tags(f"Error from DeepSeek API: {req_err}")
                  except json.JSONDecodeError:
                      logger.error(f"DeepSeek API returned invalid JSON: {response.text}")
-                     return f"Error from DeepSeek API: Invalid response format."
+                     return self._remove_think_tags(f"Error from DeepSeek API: Invalid response format.")
 
             else:
                  # This case should ideally not be reached
@@ -289,17 +364,1174 @@ class LLMService:
             logger.error(f"Error calling {self.service_name} LLM 'summarize' method: {e}")
             return f"Error generating summary from LLM: {e}"
 
+    async def reformat_content(self, text: str, use_formatting_llm: bool = True) -> str:
+        """
+        Reformats the given text for better formatting and clarity using an LLM.
+        Preserves content and image links.
+        Uses formatting-specific LLM if configured and use_formatting_llm is True, otherwise falls back to standard LLM.
+        """
+        if not text:
+            return "No text provided to reformat."
+
+        # Enhanced system prompt focusing on paragraph breaks, headings, lists, and readability
+        system_prompt = """You are an expert in Markdown formatting and text organization. Your task is to reformat the given Markdown text to significantly improve its readability, consistency, and structural organization.
+
+**CRITICAL INSTRUCTIONS - ADHERE STRICTLY:**
+
+1. **CONTENT PRESERVATION:** Preserve ALL original information and content VERBATIM. Do NOT add new information, remove existing facts, or rephrase sentences. Maintain the exact meaning and wording.
+
+2. **INTELLIGENT PARAGRAPH BREAKS:** 
+   - Break long paragraphs into shorter, more digestible paragraphs when appropriate
+   - Respect semantic boundaries - break at natural thought transitions
+   - Ensure paragraphs are well-sized (typically 3-5 sentences, but adjust based on content)
+   - Maintain logical flow between paragraphs
+
+3. **PROPER HEADING HIERARCHY:**
+   - Keep existing Markdown headings.
+   - When a whole line is a structural title but not a heading, promote it without changing its words: # for Part or Book, ## for Chapter, Lesson, Preface, Introduction, Foreword, Prologue, Epilogue, Conclusion, Afterword, or Appendix, ### for Section.
+   - A structural title starts with Chapter, Part, Book, Volume, Section, Lesson, or Step plus a number or roman numeral, or is one of those front/back-matter names. Do not promote a normal sentence.
+   - Add appropriate spacing before and after headings
+   - Use consistent heading styles throughout
+
+4. **CONSISTENT LIST FORMATTING:**
+   - Standardize list markers (use '-' consistently for unordered lists, '1.' for ordered lists)
+   - Ensure proper indentation for nested lists
+   - Add appropriate spacing around lists
+   - Maintain list item alignment and structure
+
+5. **OVERALL READABILITY:**
+   - Improve sentence flow and clarity where appropriate (without changing meaning)
+   - Ensure appropriate spacing between sections and elements
+   - Normalize excessive blank lines (typically one blank line between paragraphs)
+   - Improve visual structure while preserving all content
+
+6. **SPECIAL ELEMENTS:**
+   - Preserve image links EXACTLY as they appear: `![](path/to/image.png)` or `![alt text](path/to/image.png)`
+   - Ensure tables are correctly formatted with proper alignment
+   - Preserve code blocks and inline code exactly as they appear
+   - Maintain blockquotes and other special formatting
+
+7. **OUTPUT FORMAT:**
+   - Output ONLY the reformatted Markdown text
+   - Do NOT include any conversational text, apologies, explanations, or meta-commentary
+   - Do NOT wrap the output in markdown code blocks (```markdown ... ```)
+
+Reformat the following markdown:
+"""
+        full_prompt = f"{system_prompt}\n\n{text}"
+        
+        # Determine which LLM to use
+        use_formatting = use_formatting_llm and self.formatting_service_name and (
+            (self.formatting_service_name == "anthropic" and self.formatting_anthropic_client) or
+            (self.formatting_service_name == "gemini" and self.formatting_gemini_client) or
+            (self.formatting_service_name == "ollama" and self.formatting_ollama_client)
+        )
+        
+        if use_formatting:
+            service_name = self.formatting_service_name
+            model_name = self.formatting_model_name
+            logger.info(f"Sending 'reformat' prompt to formatting-specific LLM ({service_name}/{model_name}). Text length: {len(text)}")
+        else:
+            service_name = self.service_name
+            model_name = self.model_name
+            logger.info(f"Sending 'reformat' prompt to standard LLM ({service_name}/{model_name}). Text length: {len(text)}")
+
+        try:
+            # Try formatting-specific LLM first if configured
+            if use_formatting and self.formatting_service_name == "anthropic" and self.formatting_anthropic_client:
+                message = await self.formatting_anthropic_client.messages.create(
+                    model=self.formatting_model_name,
+                    max_tokens=8192,
+                    system="You are an expert Markdown editor specializing in text organization and readability.",
+                    messages=[{"role": "user", "content": full_prompt}]
+                )
+                response_text = message.content[0].text if message.content else ""
+                return self._remove_think_tags(response_text)
+            
+            elif use_formatting and self.formatting_service_name == "gemini" and self.formatting_gemini_client:
+                response = await self.formatting_gemini_client.aio.models.generate_content(
+                    model=self.formatting_model_name,
+                    contents=full_prompt,
+                )
+                response_text = response.text if response and response.text else ""
+                return self._remove_think_tags(response_text)
+            
+            elif use_formatting and self.formatting_service_name == "ollama" and self.formatting_ollama_client:
+                response = await self.formatting_ollama_client.chat(
+                    model=self.formatting_model_name,
+                    messages=[{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': text}]
+                )
+                response_text = response['message']['content'] if response and 'message' in response else ""
+                return self._remove_think_tags(response_text)
+            
+            # Fall back to standard LLM
+            if self.service_name == "anthropic" and self.anthropic_client:
+                message = await self.anthropic_client.messages.create(
+                    model=self.model_name,
+                    max_tokens=8192, # Allow more tokens for reformatting full documents
+                    system="You are an expert Markdown editor specializing in text organization and readability.",
+                    messages=[{"role": "user", "content": full_prompt}]
+                )
+                response_text = message.content[0].text if message.content else ""
+                return self._remove_think_tags(response_text)
+
+            elif self.service_name == "ollama" and self.ollama_client:
+                response = await self.ollama_client.chat(
+                    model=self.model_name,
+                    messages=[{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': text}]
+                )
+                response_text = response['message']['content'] if response and 'message' in response else ""
+                return self._remove_think_tags(response_text)
+
+            elif self.service_name == "gemini" and self.gemini_client:
+                response = await self.gemini_client.aio.models.generate_content(
+                    model=self.model_name,
+                    contents=full_prompt,
+                )
+                response_text = response.text if response and response.text else ""
+                return self._remove_think_tags(response_text)
+
+            elif self.service_name == "deepseek" and self.deepseek_config:
+                headers = {"Authorization": f"Bearer {self.deepseek_config['api_key']}", "Content-Type": "application/json"}
+                payload = {"model": self.model_name, "messages": [{"role": "user", "content": full_prompt}], "max_tokens": 8192}
+                from fastapi.concurrency import run_in_threadpool
+                response = await run_in_threadpool(requests.post, self.deepseek_config['base_url'], headers=headers, json=payload, timeout=180)
+                response.raise_for_status()
+                response_data = response.json()
+                response_text = response_data['choices'][0]['message']['content'] if response_data and 'choices' in response_data and len(response_data['choices']) > 0 else ""
+                return self._remove_think_tags(response_text)
+
+            else:
+                error_msg = f"LLM service '{self.service_name}' is configured but client is not initialized or implemented for reformat."
+                logger.error(error_msg)
+                return f"Error: {error_msg}"
+
+        except Exception as e:
+            logger.error(f"Error calling {self.service_name} LLM 'reformat_content' method: {e}", exc_info=True)
+            return f"Error reformatting content from LLM: {e}"
+
+    async def generate_structured_reading_guide(
+        self,
+        segments: List[Dict[str, Any]],
+        book_title: str,
+        page_number: int,
+        total_pages: int,
+        guide_type: str = "summary",
+    ) -> Dict[str, Any]:
+        """
+        Generates a structured reading guide from pre-segmented content.
+        segments: list of {"section_title": str, "content": str}. Offsets are assigned by the caller.
+        Returns {"sections": [{"section_title", "key_takeaway", "rewritten_content"}], "document_structure_map": {}}.
+        """
+        if not segments:
+            return {"sections": [], "document_structure_map": {}}
+
+        brevity_instruction = {
+            "summary": "For each section provide: 1) key_takeaway: one sentence capturing the main idea in the author's tone and vocabulary; 2) rewritten_content: 2-4 bullet points OR 1-3 sentences that preserve the author's diction and nuance. Be concise but not dumbed-down.",
+            "comprehensive": "For each section provide: 1) key_takeaway: one sentence main idea in the author's register; 2) rewritten_content: a condensed rewrite that preserves key information, the author's terms of art, tone, and intellectual nuance—do not simplify into generic paraphrase.",
+            "quick_reference": "For each section provide: 1) key_takeaway: one sentence main idea; 2) rewritten_content: one line only (one short sentence or phrase), keeping the author's key terms when possible.",
+        }.get(guide_type, "For each section provide: 1) key_takeaway: one sentence main idea; 2) rewritten_content: 2-4 bullet points OR 1-3 sentences. Be concise.")
+
+        system_prompt = f"""You are an expert reading assistant and stylistic mentor. Your task is to create a READING GUIDE that helps readers absorb the full substance of a book while learning how the author articulates ideas. The guide is a replacement for skimming—readers use it to grasp the content fast, then click through to the original text when they want to go deeper. Preserve the author's tone, vocabulary, and intellectual nuance; do not flatten into generic summary language.
+
+CONTEXT:
+- Book: "{book_title}"
+- This is page {page_number} of {total_pages}
+
+INPUT:
+The following content is pre-segmented by headings. Each section has a title and content. Your job is to summarize each section concisely while retaining the author's craft of articulation.
+
+TASK:
+{brevity_instruction}
+
+CRITICAL: You do NOT need to provide character offsets. The system will link each section to the original text automatically.
+
+OUTPUT FORMAT (JSON):
+Return a JSON object with this exact structure. Use double braces for literal braces in the example:
+{{"sections": [{{"section_title": "Exact or cleaned heading from input", "key_takeaway": "One sentence main idea", "rewritten_content": "Bullet points or 1-3 sentences. Be brief."}}]}}
+
+Return ONLY valid JSON, no other text."""
+
+        input_parts = []
+        for i, seg in enumerate(segments):
+            title = seg.get("section_title", f"Section {i + 1}")
+            content = seg.get("content", "")
+            input_parts.append(f"[SECTION {i + 1}]\nTitle: {title}\nContent:\n{content}")
+        user_prompt = "INPUT SECTIONS:\n\n" + "\n\n".join(input_parts) + "\n\nProvide the structured guide in JSON format as specified."
+
+        logger.info(f"Generating structured reading guide for page {page_number} ({len(segments)} segments), guide_type={guide_type} using {self.service_name}/{self.model_name}")
+
+        try:
+            response_text = ""
+            
+            if self.service_name == "anthropic" and self.anthropic_client:
+                message = await self.anthropic_client.messages.create(
+                    model=self.model_name,
+                    max_tokens=4096,
+                    system=system_prompt,
+                    messages=[{"role": "user", "content": user_prompt}]
+                )
+                response_text = message.content[0].text if message.content else ""
+            
+            elif self.service_name == "ollama" and self.ollama_client:
+                response = await self.ollama_client.chat(
+                    model=self.model_name,
+                    messages=[
+                        {'role': 'system', 'content': system_prompt},
+                        {'role': 'user', 'content': user_prompt}
+                    ],
+                )
+                response_text = response['message']['content'] if response and 'message' in response else ""
+            
+            elif self.service_name == "gemini" and self.gemini_client:
+                response = await self.gemini_client.aio.models.generate_content(
+                    model=self.model_name,
+                    contents=user_prompt,
+                    config=types.GenerateContentConfig(system_instruction=system_prompt),
+                )
+                response_text = response.text if response and response.text else ""
+            
+            elif self.service_name == "deepseek" and self.deepseek_config:
+                headers = {
+                    "Authorization": f"Bearer {self.deepseek_config['api_key']}",
+                    "Content-Type": "application/json"
+                }
+                payload = {
+                    "model": self.model_name,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    "max_tokens": 4096
+                }
+                from fastapi.concurrency import run_in_threadpool
+                try:
+                    response = await run_in_threadpool(
+                        requests.post,
+                        self.deepseek_config['base_url'],
+                        headers=headers,
+                        json=payload,
+                        timeout=180
+                    )
+                    response.raise_for_status()
+                    response_data = response.json()
+                    response_text = response_data['choices'][0]['message']['content'] if response_data and 'choices' in response_data and len(response_data['choices']) > 0 else ""
+                except requests.exceptions.RequestException as req_err:
+                    logger.error(f"DeepSeek API request failed: {req_err}")
+                    return {"sections": [], "document_structure_map": {}}
+                except json.JSONDecodeError:
+                    logger.error(f"DeepSeek API returned invalid JSON: {response.text}")
+                    return {"sections": [], "document_structure_map": {}}
+            
+            else:
+                logger.error(f"LLM service '{self.service_name}' is not configured or not implemented for structured guide generation.")
+                return {"sections": [], "document_structure_map": {}}
+
+            response_text = self._remove_think_tags(response_text)
+            
+            # Parse JSON response
+            try:
+                # Strip markdown code blocks (```json ... ``` or ``` ... ```)
+                json_str = response_text.strip()
+                if json_str.startswith("```"):
+                    first_newline = json_str.find("\n")
+                    if first_newline != -1:
+                        json_str = json_str[first_newline + 1:]
+                    if json_str.endswith("```"):
+                        json_str = json_str[:-3].rstrip()
+                # Extract only the first JSON object (ignore trailing text / extra data)
+                json_str = json_str.strip()
+                decoder = json.JSONDecoder()
+                guide_data, _ = decoder.raw_decode(json_str)
+                
+                # Validate and normalize the structure
+                if not isinstance(guide_data, dict):
+                    raise ValueError("Response is not a dictionary")
+                
+                sections = guide_data.get("sections", [])
+                structure_map = guide_data.get("document_structure_map", {})
+                
+                validated_sections = []
+                for i, section in enumerate(sections):
+                    if isinstance(section, dict):
+                        default_title = segments[i].get("section_title", f"Section {i+1}") if i < len(segments) else f"Section {i+1}"
+                        validated_section = {
+                            "section_title": section.get("section_title", default_title),
+                            "key_takeaway": section.get("key_takeaway"),
+                            "rewritten_content": section.get("rewritten_content", ""),
+                        }
+                        validated_sections.append(validated_section)
+                
+                return {
+                    "sections": validated_sections,
+                    "document_structure_map": structure_map if isinstance(structure_map, dict) else {}
+                }
+            
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse JSON from LLM response: {e}. Response: {response_text[:500]}")
+                first_content = segments[0].get("content", "") if segments else ""
+                default_title = segments[0].get("section_title", "Page content") if segments else "Page content"
+                return {
+                    "sections": [{
+                        "section_title": default_title,
+                        "key_takeaway": None,
+                        "rewritten_content": response_text[:2000] if response_text else "No content generated.",
+                    }],
+                    "document_structure_map": {}
+                }
+            except Exception as e:
+                logger.error(f"Error processing structured guide response: {e}", exc_info=True)
+                return {"sections": [], "document_structure_map": {}}
+
+        except Exception as e:
+            logger.error(f"Error calling {self.service_name} LLM 'generate_structured_reading_guide' method: {e}", exc_info=True)
+            return {"sections": [], "document_structure_map": {}}
+
+    def _select_guide_gemini(self):
+        """Prefer dedicated guide client/model when configured, fall back to main Gemini."""
+        if self.guide_gemini_client:
+            return self.guide_gemini_client, self.guide_model_name
+        if self.service_name == "gemini" and self.gemini_client:
+            return self.gemini_client, self.model_name
+        return None, None
+
+    def _normalize_json_response(self, response_text: str) -> Optional[Dict[str, Any]]:
+        """Extract first JSON object from an LLM response."""
+        if not response_text:
+            return None
+        json_str = self._remove_think_tags(response_text).strip()
+        if json_str.startswith("```"):
+            first_newline = json_str.find("\n")
+            if first_newline != -1:
+                json_str = json_str[first_newline + 1:]
+            if json_str.endswith("```"):
+                json_str = json_str[:-3].rstrip()
+        try:
+            decoder = json.JSONDecoder()
+            data, _ = decoder.raw_decode(json_str.strip())
+            return data if isinstance(data, dict) else None
+        except Exception:
+            return None
+
+    def _extract_first_meaningful_sentence(self, source_text: str) -> str:
+        """
+        Return the first meaningful sentence from a segment.
+        Skips obvious heading/list-only noise and normalizes whitespace.
+        """
+        if not source_text:
+            return ""
+
+        meaningful_lines: List[str] = []
+        for raw_line in source_text.splitlines():
+            line = (raw_line or "").strip()
+            if not line:
+                continue
+            if line.startswith("#"):
+                continue
+            if re.fullmatch(r"[-*_`~\s]+", line):
+                continue
+            if line.lower() in {"contents", "table of contents"}:
+                continue
+            # Remove common list markers so list entries can still be meaningful.
+            line = re.sub(r"^([*\-+]\s+|\d+[\.\)]\s+)", "", line).strip()
+            if len(line) < 3:
+                continue
+            meaningful_lines.append(line)
+
+        normalized = re.sub(r"\s+", " ", " ".join(meaningful_lines)).strip()
+        if not normalized:
+            return ""
+
+        match = re.search(r"[^.!?]+[.!?](?:\s|$)", normalized)
+        sentence = (match.group(0) if match else normalized).strip()
+
+        if len(sentence) > 260:
+            sentence = sentence[:260].rsplit(" ", 1)[0].strip()
+            if not sentence.endswith(("...", ".", "!", "?")):
+                sentence = f"{sentence}..."
+        return sentence
+
+    def _prepend_reasonable_context(self, source_text: str, reference_sentence: str, max_prefix: int = 140) -> str:
+        """
+        Return reference_sentence prefixed with a bounded slice of text that
+        appears immediately before it in the segment (sentence boundary when sensible).
+        """
+        ref = (reference_sentence or "").strip()
+        if not ref:
+            return ""
+        source_normalized = re.sub(r"\s+", " ", (source_text or "")).strip()
+        if not source_normalized:
+            return ref
+        idx = source_normalized.find(ref)
+        if idx < 0 and ref:
+            words = ref.split()
+            stub = " ".join(words[: min(6, len(words))]) if len(words) >= 2 else (words[0] if words else "")
+            idx = source_normalized.find(stub) if stub else -1
+        if idx <= 0:
+            return ref
+        before = source_normalized[:idx].rstrip()
+        if not before:
+            return ref
+        # Prefer starting after prior sentence boundary for a cleaner excerpt.
+        window_start = max(0, len(before) - max_prefix)
+        candidate = before[window_start:].strip()
+        sentence_break = None
+        for m in re.finditer(r"[.!?]\s+", candidate):
+            sentence_break = m.end()
+        if sentence_break is not None and sentence_break < len(candidate) - 15:
+            prefix = candidate[sentence_break:].strip()
+        else:
+            prefix = candidate.strip()
+        if prefix and prefix[-1] in ".!?":
+            prefix = prefix[:-1].rstrip()
+        if not prefix:
+            return ref
+        return f"{prefix} {ref}".strip()
+
+    def _build_reference_preview(self, source_text: str, reference_sentence: str) -> str:
+        """
+        Build preview text with a short prefix before the reference sentence,
+        then optional continuation after it for navigation fallback.
+        """
+        source_normalized = re.sub(r"\s+", " ", (source_text or "")).strip()
+        ref = (reference_sentence or "").strip()
+        if not ref:
+            return source_normalized[:420]
+        if not source_normalized:
+            return ref
+
+        anchored = self._prepend_reasonable_context(source_text, ref)
+
+        continuation = ""
+        ref_idx = source_normalized.find(ref)
+        if ref_idx >= 0:
+            after = source_normalized[ref_idx + len(ref) :].strip()
+            if after:
+                continuation = after[:220].strip()
+
+        tail = f"{anchored} {continuation}".strip() if continuation else anchored
+
+        if len(tail) > 420:
+            tail = tail[:420].rsplit(" ", 1)[0].strip()
+            if not tail.endswith(("...", ".", "!", "?")):
+                tail = f"{tail}..."
+        return tail
+
+    async def _generate_guide_json(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        max_output_tokens: int = 8192,
+    ) -> Optional[Dict[str, Any]]:
+        """Run a guide-generation LLM call and parse JSON object."""
+        client, model_name = self._select_guide_gemini()
+        if not client or not model_name:
+            logger.warning("No guide Gemini client available.")
+            return None
+        try:
+            response = await client.aio.models.generate_content(
+                model=model_name,
+                contents=user_prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_prompt,
+                    max_output_tokens=max_output_tokens,
+                ),
+            )
+            response_text = response.text if response and response.text else ""
+            return self._normalize_json_response(response_text)
+        except Exception as e:
+            logger.error(f"_generate_guide_json failed: {e}", exc_info=True)
+            return None
+
+    @staticmethod
+    def _infer_book_title(markdown_text: str) -> str:
+        m = re.search(r"^#\s+(.+)$", markdown_text or "", re.MULTILINE)
+        return (m.group(1).strip() if m else "") or "this book"
+
+    @staticmethod
+    def _custom_angle_prompt_block(custom_requirements: Optional[str], for_segmentation: bool) -> str:
+        if not custom_requirements or not str(custom_requirements).strip():
+            return ""
+        req = str(custom_requirements).strip()
+        if for_segmentation:
+            return (
+                f"\n\nREADER'S CUSTOM ANGLE: {req}\n"
+                "Shape pillar boundaries and titles to serve this angle while still grounding every pillar "
+                "in the manuscript's actual structure and content. Do not drop substantive ideas that fall "
+                "outside the angle—keep full knowledge coverage; only reframe emphasis and naming."
+            )
+        return (
+            f"\n\nREADER'S CUSTOM ANGLE: {req}\n"
+            "Frame purpose, thought_process, and takeaway through this lens; "
+            "remain strictly grounded in SOURCE TEXT. Preserve the author's vocabulary, tone, and "
+            "articulation craft while serving the angle—do not flatten or omit core claims."
+        )
+
+    @staticmethod
+    def _prompt_controls_block(
+        prompt_depth: Optional[str],
+        prompt_emphasis: Optional[str],
+        for_segmentation: bool,
+    ) -> str:
+        depth = (prompt_depth or "standard").strip()
+        emphasis = (prompt_emphasis or "balanced").strip()
+        parts = []
+        if for_segmentation:
+            if depth == "compact":
+                parts.append(
+                    "\n\nDEPTH CONTROL: Compact. Aim for 4–6 pillars total. "
+                    "Merge adjacent headings that belong to the same movement. "
+                    "Still cover every major claim of the book; do not drop whole chapters."
+                )
+            elif depth == "high_fidelity":
+                parts.append(
+                    "\n\nDEPTH CONTROL: High fidelity. Keep a detailed pillar list. "
+                    "Split whenever a new distinct idea, lesson, case, or argumentative move begins. "
+                    "Do not impose a small fixed pillar cap."
+                )
+            if emphasis == "author_craft":
+                parts.append(
+                    "\nEMPHASIS: Name pillars for the author's rhetorical moves and diction, not generic topic labels."
+                )
+            elif emphasis == "takeaways":
+                parts.append(
+                    "\nEMPHASIS: Draw pillar boundaries around distinct claims the reader should keep."
+                )
+            return "".join(parts)
+
+        if emphasis == "author_craft":
+            parts.append(
+                "\n\nEMPHASIS: Author craft. thought_process should track diction, sequence of moves, "
+                "and how claims are articulated. Keep takeaway to 2 sentences of residue."
+            )
+        elif emphasis == "takeaways":
+            parts.append(
+                "\n\nEMPHASIS: Hard takeaways. takeaway is the sharpest residue (2–3 sentences). "
+                "thought_process is a short thread of only the decisive moves (3 steps)."
+            )
+        if depth == "compact":
+            parts.append(
+                " Keep each field tight: purpose 1 sentence, thought_process 3 steps, takeaway 2 sentences."
+            )
+        return "".join(parts)
+
+    async def _build_semantic_reading_guide_items(
+        self,
+        heading_nodes: List[Dict[str, Any]],
+        book_title: str,
+        full_markdown: str,
+        custom_requirements: Optional[str] = None,
+        prompt_depth: Optional[str] = None,
+        prompt_emphasis: Optional[str] = None,
+        generation_prompt: Optional[str] = None,
+        format_prompt: Optional[str] = None,
+    ) -> List[ReadingGuideItem]:
+        """
+        Two-pass semantic roadmap: LLM clusters headings into pillars, then fills guide fields per pillar.
+        """
+        if not heading_nodes:
+            return []
+
+        id_to_node = {n["id"]: n for n in heading_nodes}
+        section_lines = []
+        for n in heading_nodes:
+            snippet = (n.get("snippet") or "")[:700]
+            section_lines.append(
+                f'[{n["id"]}] level={n.get("level", 1)} title="{n.get("title", "")}"\n'
+                f"snippet: {snippet}"
+            )
+        sections_block = "\n\n".join(section_lines)
+
+        segmentation_system = (
+            resolve_prompt(generation_prompt, DEFAULT_GUIDE_GENERATION_PROMPT)
+            + self._custom_angle_prompt_block(custom_requirements, for_segmentation=True)
+            + self._prompt_controls_block(prompt_depth, prompt_emphasis, for_segmentation=True)
+        )
+        segmentation_user = (
+            f'BOOK: "{book_title}"\n\n'
+            "INPUT SECTIONS (use the exact id strings in brackets in source_section_ids):\n"
+            f"{sections_block}\n\n"
+            "Return JSON only in this shape:\n"
+            '{\n'
+            '  "segments": [\n'
+            '    {\n'
+            '      "id": "pillar1",\n'
+            '      "title": "Short pillar name: the movement\'s function in the book\'s architecture",\n'
+            '      "is_book_content": true,\n'
+            '      "source_section_ids": ["km-1","km-2"],\n'
+            '      "why": "one line: why these sections belong to the same movement / pillar"\n'
+            "    }\n"
+            "  ]\n"
+            "}\n"
+            "Rules: preserve reading order; every substantive section id must appear in exactly one segment; "
+            "Aim for high granularity—every distinct sub-topic, lesson, case study, or logical movement should be its own pillar. "
+            "Do NOT group independent ideas just to keep the list small. We prefer a long, detailed list of pillars over a condensed one. "
+            "If in doubt, preserve the section as a separate pillar rather than merging it. "
+            "The card list must be a complete knowledge surrogate for the book: do not collapse multiple lessons into one pillar. "
+            "Anchor titles in the author's logic and diction, not the table of contents."
+        )
+        seg_data = await self._generate_guide_json(segmentation_system, segmentation_user, max_output_tokens=12288)
+        raw_segments = seg_data.get("segments", []) if seg_data else []
+
+        mapper = KnowledgeMapper()
+        valid_segments = mapper.normalize_semantic_segments(heading_nodes, raw_segments)
+
+        cards: List[ReadingGuideItem] = []
+        for idx, seg in enumerate(valid_segments):
+            nodes = [id_to_node[sid] for sid in seg["source_section_ids"] if sid in id_to_node]
+            if not nodes:
+                continue
+            start_offset = min(n["start_offset"] for n in nodes)
+            end_offset = max(n["end_offset"] for n in nodes)
+            hub_total = sum(int(n.get("hub_score", 0)) for n in nodes)
+            source_text = full_markdown[start_offset:end_offset]
+            source_text = source_text[:10000]
+
+            seg_title = str(seg.get("title") or "")
+            merged_structural = KnowledgeMapper.is_structural_heading(seg_title) or any(
+                KnowledgeMapper.is_structural_heading(str(n.get("title") or "")) for n in nodes
+            )
+            segment_word_count = len(source_text.split())
+            if segment_word_count < 5 and not merged_structural:
+                logger.info(
+                    "Skipping thin non-structural segment: id=%s title=%r words=%s",
+                    seg.get("id"),
+                    (seg_title[:120] + "...") if len(seg_title) > 120 else seg_title,
+                    segment_word_count,
+                )
+                continue
+
+            card_system = (
+                resolve_prompt(format_prompt, DEFAULT_GUIDE_FORMAT_PROMPT)
+                + self._custom_angle_prompt_block(custom_requirements, for_segmentation=False)
+                + self._prompt_controls_block(prompt_depth, prompt_emphasis, for_segmentation=False)
+            )
+            card_user = (
+                f'BOOK: "{book_title}"\n'
+                f'SEGMENT TITLE: "{seg.get("title", f"Segment {idx + 1}")}"\n'
+                f"PILLAR RATIONALE (from segmentation): {seg.get('why', '') or '—'}\n"
+                f"SOURCE TEXT:\n{source_text}\n\n"
+                "Return JSON only:\n"
+                '{\n'
+                '  "title": "refined card title anchored in the author\'s logic and diction",\n'
+                '  "purpose": "1–2 signpost sentences: why this stretch matters in the book\'s arc (no claims list)",\n'
+                '  "thought_process": ["opens with…", "complicates with…", "illustrates by…", "pays off by…"],\n'
+                '  "takeaway": "2–3 sentences max: residue to carry forward—compression of the thread\'s payoff, not a retell",\n'
+                '  "quote": "verbatim 1–3 sentence quote chosen for literary beauty, rhetorical power, or signature articulation",\n'
+                '  "reference_paragraph": "optional longer excerpt for context"\n'
+                "}\n"
+                "thought_process: provide 3–5 progressive verb/move steps (not mini-summaries). "
+                "takeaway: 2–3 sentences maximum; compress, do not dump. "
+                "Do not include reading_summary or reading_bullets. "
+                "If a field has no good value, use an empty string or []. "
+                "Always fill purpose and thought_process when the source supports it; keep the three roles clearly distinct."
+            )
+
+            card_data = await self._generate_guide_json(card_system, card_user, max_output_tokens=5120)
+            if not card_data:
+                excerpt = (source_text[:260] + "...") if len(source_text) > 260 else source_text
+                card_data = {
+                    "title": seg.get("title", f"Segment {idx + 1}"),
+                    "purpose": "",
+                    "takeaway": excerpt,
+                    "thought_process": [],
+                    "quote": "",
+                    "reference_paragraph": source_text[:900],
+                }
+
+            thought_process = card_data.get("thought_process") or []
+            if not isinstance(thought_process, list):
+                thought_process = []
+            thought_process = [str(step).strip() for step in thought_process if str(step).strip()][:5]
+
+            purpose = (card_data.get("purpose") or "").strip() or None
+            takeaway = (card_data.get("takeaway") or card_data.get("key_idea") or "").strip() or None
+            # Option A: never persist reading_summary/bullets on new cards (ignore if model returns them).
+
+            reference_sentence = self._extract_first_meaningful_sentence(source_text)
+            key_quote = (card_data.get("quote") or "").strip() or reference_sentence or ""
+            preview_text = self._build_reference_preview(source_text, reference_sentence) or key_quote
+
+            title = (card_data.get("title") or "").strip() or seg.get("title") or f"Segment {idx + 1}"
+
+            cards.append(
+                ReadingGuideItem(
+                    id=str(seg.get("id") or f"seg{idx + 1}"),
+                    title=title,
+                    purpose=purpose,
+                    takeaway=takeaway,
+                    thought_process=thought_process or None,
+                    reading_summary=None,
+                    reading_bullets=None,
+                    key_quote=key_quote or None,
+                    preview_text=preview_text,
+                    start_offset=start_offset,
+                    end_offset=end_offset,
+                    level=1,
+                    children=[],
+                    hub_score=hub_total,
+                    enriched=True,
+                )
+            )
+        return cards
+
+    async def _generate_signposts_for_nodes(self, nodes: List[Dict[str, Any]]) -> Dict[str, str]:
+        """Best-effort LLM signpost generation for roadmap nodes."""
+        client, model_name = self._select_guide_gemini()
+        if not client or not model_name or not nodes:
+            return {}
+
+        compact_nodes = []
+        for node in nodes:
+            compact_nodes.append(
+                {
+                    "id": node.get("id"),
+                    "title": node.get("title"),
+                    "level": node.get("level"),
+                    "snippet": (node.get("snippet") or "")[:280],
+                    "hub_score": int(node.get("hub_score", 0)),
+                }
+            )
+
+        system_prompt = (
+            "You are a reading-map assistant and stylistic mentor. "
+            "Write one concise purpose sentence per heading node. "
+            "Purpose should describe why the section matters to understanding the book, "
+            "using language that respects the author's tone and terms when they appear in the snippet."
+        )
+        user_prompt = (
+            "Return JSON only with this shape:\n"
+            '{ "purposes": [{"id": "km-1", "purpose": "..." }] }\n'
+            "Keep each purpose under 20 words and grounded in the snippet.\n\n"
+            f"NODES:\n{json.dumps(compact_nodes, ensure_ascii=True)}"
+        )
+        parsed = await self._generate_guide_json(system_prompt, user_prompt, max_output_tokens=3072)
+        if not parsed:
+            return {}
+        purposes = parsed.get("purposes", [])
+        if not isinstance(purposes, list):
+            return {}
+
+        mapped: Dict[str, str] = {}
+        for item in purposes:
+            if not isinstance(item, dict):
+                continue
+            node_id = str(item.get("id", "")).strip()
+            purpose = str(item.get("purpose", "")).strip()
+            if node_id and purpose:
+                mapped[node_id] = purpose
+        return mapped
+
+    async def generate_roadmap(
+        self,
+        markdown_text: str,
+        custom_requirements: Optional[str] = None,
+        prompt_depth: Optional[str] = None,
+        prompt_emphasis: Optional[str] = None,
+        generation_prompt: Optional[str] = None,
+        format_prompt: Optional[str] = None,
+    ) -> List[ReadingGuideItem]:
+        """
+        Build a semantic pillar roadmap: cluster headings with an LLM, then enrich each pillar.
+        """
+        mapper = KnowledgeMapper()
+        md = markdown_text or ""
+        heading_nodes = mapper.flatten_document_sections_for_roadmap(md)
+        if not heading_nodes and md.strip():
+            heading_nodes = [
+                {
+                    "id": "km-fallback",
+                    "level": 1,
+                    "title": "Book content",
+                    "start_offset": 0,
+                    "end_offset": len(md),
+                    "snippet": md[:700],
+                    "hub_score": 0,
+                }
+            ]
+        if not heading_nodes:
+            return []
+        book_title = self._infer_book_title(md)
+        return await self._build_semantic_reading_guide_items(
+            heading_nodes,
+            book_title,
+            md,
+            custom_requirements=custom_requirements,
+            prompt_depth=prompt_depth,
+            prompt_emphasis=prompt_emphasis,
+            generation_prompt=generation_prompt,
+            format_prompt=format_prompt,
+        )
+
+    async def generate_whole_book_reading_roadmap(
+        self,
+        heading_nodes: List[Dict[str, Any]],
+        book_title: str,
+        full_markdown: str,
+        custom_requirements: Optional[str] = None,
+        prompt_depth: Optional[str] = None,
+        prompt_emphasis: Optional[str] = None,
+        generation_prompt: Optional[str] = None,
+        format_prompt: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Same semantic two-pass pipeline as generate_roadmap, returning plain dicts for callers
+        that do not use ReadingGuideItem directly.
+        """
+        items = await self._build_semantic_reading_guide_items(
+            heading_nodes,
+            book_title,
+            full_markdown,
+            custom_requirements=custom_requirements,
+            prompt_depth=prompt_depth,
+            prompt_emphasis=prompt_emphasis,
+            generation_prompt=generation_prompt,
+            format_prompt=format_prompt,
+        )
+        return [item.model_dump() for item in items]
+
+    async def chat_roadmap_card(
+        self,
+        *,
+        book_title: str,
+        card: Dict[str, Any],
+        source_excerpt: str,
+        history: List[Dict[str, Any]],
+        user_message: str,
+        guide_custom_requirements: Optional[str] = None,
+    ) -> Optional[str]:
+        """Multi-turn chat about one roadmap card using the guide LLM."""
+        client, model_name = self._select_guide_gemini()
+        if not client or not model_name:
+            logger.warning("Card chat skipped: no guide Gemini client available.")
+            return None
+
+        thought_steps = card.get("thought_process") or []
+        if isinstance(thought_steps, list):
+            thread_text = "\n".join(
+                f"{i}. {s}" for i, s in enumerate(thought_steps, 1) if str(s).strip()
+            )
+        else:
+            thread_text = ""
+
+        card_context = (
+            f'BOOK: "{book_title}"\n'
+            f'SECTION: "{card.get("title", "Section")}"\n'
+            f'Signpost (purpose): {card.get("purpose") or "—"}\n'
+            f'Read along (thought_process):\n{thread_text or "—"}\n'
+            f'Carry forward (takeaway): {card.get("takeaway") or "—"}\n'
+            f'Quote/preview: {card.get("key_quote") or card.get("preview_text") or "—"}\n'
+        )
+        legacy_summary = (card.get("reading_summary") or "").strip()
+        legacy_bullets = card.get("reading_bullets") or []
+        if isinstance(legacy_bullets, list):
+            legacy_bullets_text = "\n".join(f"- {b}" for b in legacy_bullets if str(b).strip())
+        else:
+            legacy_bullets_text = ""
+        if legacy_summary or legacy_bullets_text:
+            card_context += "Legacy fields (pre–Option A; only when present):\n"
+            if legacy_summary:
+                card_context += f"  reading_summary: {legacy_summary}\n"
+            if legacy_bullets_text:
+                card_context += f"  reading_bullets:\n{legacy_bullets_text}\n"
+        if guide_custom_requirements and str(guide_custom_requirements).strip():
+            card_context += (
+                f"\nGuide reading angle: {str(guide_custom_requirements).strip()}\n"
+            )
+
+        excerpt = (source_excerpt or "")[:10000]
+        system_prompt = (
+            "You are a warm, substantive reading mentor and stylistic guide helping the reader understand "
+            "one section of a book. Treat the reader as a language and rhetoric apprentice: when useful, "
+            "illuminate the author's word choice, tone, rhetorical moves, and how the argument is articulated— "
+            "without losing factual substance. "
+            "Answer using only the SOURCE EXCERPT and SECTION CONTEXT below. "
+            "If the answer is not supported by those materials, say so honestly. "
+            "Do not invent quotes or facts. Keep replies focused and conversational. "
+            "Preserve the author's terms of art when explaining ideas.\n\n"
+            f"SECTION CONTEXT:\n{card_context}\n\n"
+            f"SOURCE EXCERPT:\n{excerpt}"
+        )
+
+        trimmed_history = list(history or [])[-MAX_CARD_CHAT_HISTORY_FOR_LLM:]
+        contents: List[Any] = []
+        for msg in trimmed_history:
+            role = msg.get("role")
+            content = str(msg.get("content") or "").strip()
+            if not content:
+                continue
+            gemini_role = "user" if role == "user" else "model"
+            contents.append(
+                types.Content(role=gemini_role, parts=[types.Part(text=content)])
+            )
+        contents.append(
+            types.Content(role="user", parts=[types.Part(text=user_message.strip())])
+        )
+
+        try:
+            response = await client.aio.models.generate_content(
+                model=model_name,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_prompt,
+                    max_output_tokens=4096,
+                ),
+            )
+            text = response.text if response and response.text else ""
+            return self._remove_think_tags(text).strip() or None
+        except Exception as e:
+            logger.error(f"chat_roadmap_card failed: {e}", exc_info=True)
+            return None
+
+    async def generate_graph_image_bytes(
+        self,
+        card_title: str,
+        key_idea: str,
+        source_excerpt: str,
+    ) -> Optional[bytes]:
+        """
+        Best-effort Gemini image generation for a concept graph.
+        Returns image bytes (PNG/JPEG) or None.
+        """
+        api_key = GUIDE_LLM_GEMINI_API_KEY or os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            logger.warning("Graph generation skipped: Gemini API key is missing.")
+            return None
+
+        prompt = (
+            "Create a clean, minimal concept graph diagram (not decorative art). "
+            "Use nodes and arrows that explain the relationship between ideas.\n\n"
+            f"Title: {card_title}\n"
+            f"Key idea: {key_idea}\n"
+            f"Source excerpt: {source_excerpt[:1000]}"
+        )
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{GRAPH_LLM_IMAGE_MODEL}:generateContent?key={api_key}"
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"responseModalities": ["TEXT", "IMAGE"]},
+        }
+        try:
+            resp = requests.post(url, json=payload, timeout=60)
+            resp.raise_for_status()
+            data = resp.json()
+            candidates = data.get("candidates") or []
+            if not candidates:
+                logger.warning(f"Graph generation returned no candidates: {str(data)[:400]}")
+                return None
+            parts = candidates[0].get("content", {}).get("parts") or []
+            for part in parts:
+                inline = part.get("inlineData")
+                if inline and inline.get("data"):
+                    return base64.b64decode(inline["data"])
+            logger.warning(f"Graph generation: no image in response parts: {str(parts)[:400]}")
+        except Exception as e:
+            logger.error(f"Graph image generation failed: {e}", exc_info=True)
+            return None
+
+    async def generate_alternative_reading(
+        self,
+        card_title: str,
+        source_excerpt: str,
+    ) -> Optional[str]:
+        """
+        Generate a concise rewrite in the source author's style.
+        Returns plain text or None when generation fails.
+        """
+        if not source_excerpt or not source_excerpt.strip():
+            return None
+
+        client, model_name = self._select_guide_gemini()
+        if not client or not model_name:
+            logger.warning("Alternative reading generation skipped: no guide client available.")
+            return None
+
+        trimmed_source = source_excerpt.strip()
+        source_word_count = len(trimmed_source.split())
+        if source_word_count < 50:
+            logger.info(
+                "Author shortcut skipped: source excerpt too short (%s words).",
+                source_word_count,
+            )
+            return None
+        target_word_count = int(source_word_count * 0.30)
+        system_prompt = (
+            "You are rewriting your own passage as the original author. "
+            "Produce an Author Shortcut that is about 30% of the source passage length while preserving "
+            "the same claims, perspective, tone, cadence, and signature diction. "
+            "Keep the author's point of view, rhetorical stance, metaphors, and terms of art; "
+            "remove only repetition and non-essential detail. "
+            "Do not switch to editor commentary, meta explanation, or study-guide voice. "
+            "Do not flatten nuance or swap the author's precise language for generic paraphrase. "
+            "Do not add new facts, examples, or interpretations not supported by the source. "
+            "Always finish every sentence; never stop mid-word or mid-clause. "
+            "A complete coherent rewrite is more important than hitting the target length exactly."
+        )
+        user_prompt = (
+            f"CARD TITLE: {card_title}\n\n"
+            f"SOURCE WORD COUNT: {source_word_count}\n"
+            f"TARGET WORD COUNT (~30%): {target_word_count}\n\n"
+            "SOURCE PASSAGE:\n"
+            f"{trimmed_source}\n\n"
+            "Write an 'Author Shortcut' that is close to the target word count and easy to consume quickly, "
+            "while still sounding like the original author. "
+            "Prefer a single concise paragraph in 3-6 sentences. "
+            "Return only the rewritten passage text."
+        )
+
+        try:
+            # Gemini 3.x counts thinking tokens against max_output_tokens.
+            # Disable thinking so the full budget is available for visible text.
+            max_tokens = 4096 if source_word_count < 2500 else 8192
+            response = await client.aio.models.generate_content(
+                model=model_name,
+                contents=user_prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_prompt,
+                    max_output_tokens=max_tokens,
+                    thinking_config=types.ThinkingConfig(thinking_budget=0),
+                ),
+            )
+            finish_reason = None
+            candidates = getattr(response, "candidates", None) or []
+            if candidates:
+                finish_reason = getattr(candidates[0], "finish_reason", None)
+            if finish_reason is not None and "MAX_TOKENS" in str(finish_reason).upper():
+                logger.warning(
+                    "Author shortcut hit MAX_TOKENS (budget=%s); retrying once with higher budget.",
+                    max_tokens,
+                )
+                response = await client.aio.models.generate_content(
+                    model=model_name,
+                    contents=user_prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_prompt,
+                        max_output_tokens=max(max_tokens, 8192),
+                        thinking_config=types.ThinkingConfig(thinking_budget=0),
+                    ),
+                )
+            response_text = self._remove_think_tags(response.text if response and response.text else "").strip()
+            if response_text.startswith("```"):
+                first_newline = response_text.find("\n")
+                if first_newline != -1:
+                    response_text = response_text[first_newline + 1:].strip()
+                if response_text.endswith("```"):
+                    response_text = response_text[:-3].strip()
+            return response_text or None
+        except Exception as e:
+            logger.error(f"Alternative reading generation failed: {e}", exc_info=True)
+            return None
+
+    async def generate_outsider_guide(
+        self,
+        card_title: str,
+        source_excerpt: str,
+    ) -> Optional[str]:
+        """
+        Generate a beginner-oriented rewrite in the source author's style.
+        Returns plain text or None when generation fails.
+        """
+        if not source_excerpt or not source_excerpt.strip():
+            return None
+
+        client, model_name = self._select_guide_gemini()
+        if not client or not model_name:
+            logger.warning("Outsider guide generation skipped: no guide client available.")
+            return None
+
+        trimmed_source = source_excerpt.strip()
+        source_word_count = len(trimmed_source.split())
+        if source_word_count < 50:
+            logger.info(
+                "Outsider guide skipped: source excerpt too short (%s words).",
+                source_word_count,
+            )
+            return None
+        target_word_count = int(source_word_count * 0.40)
+        system_prompt = (
+            "You are rewriting your own passage as the original author, but for a reader who is completely new to this topic. "
+            "Write an Outsider Guide that keeps the author's voice, perspective, core claims, and signature diction, "
+            "while making the ideas easy for a first-time reader to follow. "
+            "Preserve factual meaning from the source passage. "
+            "Keep the same authorial stance and tone; do not switch to editor or teacher meta voice. "
+            "Assume zero prior topic exposure. "
+            "Explain specialized terms in plain language when needed, but keep the author's key terms of art "
+            "so the reader still learns how the author names and articulates ideas. "
+            "Prefer concrete, direct wording over abstract shorthand. "
+            "Remove repetition and non-essential detail. "
+            "Do not add facts, examples, or interpretations not supported by the source. "
+            "Always finish every sentence; never stop mid-word or mid-clause. "
+            "A complete coherent rewrite is more important than hitting the target length exactly. "
+            "Output only the final rewritten passage text with no title, bullets, or commentary."
+        )
+        user_prompt = (
+            f"CARD TITLE: {card_title}\n\n"
+            f"SOURCE WORD COUNT: {source_word_count}\n"
+            f"TARGET WORD COUNT (~40%): {target_word_count}\n\n"
+            "SOURCE PASSAGE:\n"
+            f"{trimmed_source}\n\n"
+            "Write an Outsider Guide that is close to the target word count and optimized for fast comprehension by a reader new to this subject. "
+            "Prefer one concise paragraph in 4-8 sentences. "
+            "Return only the rewritten passage text."
+        )
+
+        try:
+            # Gemini 3.x counts thinking tokens against max_output_tokens.
+            # Disable thinking so the full budget is available for visible text.
+            max_tokens = 4096 if source_word_count < 2500 else 8192
+            response = await client.aio.models.generate_content(
+                model=model_name,
+                contents=user_prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_prompt,
+                    max_output_tokens=max_tokens,
+                    thinking_config=types.ThinkingConfig(thinking_budget=0),
+                ),
+            )
+            finish_reason = None
+            candidates = getattr(response, "candidates", None) or []
+            if candidates:
+                finish_reason = getattr(candidates[0], "finish_reason", None)
+            if finish_reason is not None and "MAX_TOKENS" in str(finish_reason).upper():
+                logger.warning(
+                    "Outsider guide hit MAX_TOKENS (budget=%s); retrying once with higher budget.",
+                    max_tokens,
+                )
+                response = await client.aio.models.generate_content(
+                    model=model_name,
+                    contents=user_prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_prompt,
+                        max_output_tokens=max(max_tokens, 8192),
+                        thinking_config=types.ThinkingConfig(thinking_budget=0),
+                    ),
+                )
+            response_text = self._remove_think_tags(response.text if response and response.text else "").strip()
+            if response_text.startswith("```"):
+                first_newline = response_text.find("\n")
+                if first_newline != -1:
+                    response_text = response_text[first_newline + 1:].strip()
+                if response_text.endswith("```"):
+                    response_text = response_text[:-3].strip()
+            return response_text or None
+        except Exception as e:
+            logger.error(f"Outsider guide generation failed: {e}", exc_info=True)
+            return None
+
 
 # Instantiate the service as a singleton
 llm_service = LLMService(
     anthropic=anthropic_client,
     deepseek=deepseek_config, # Pass the config dict
-    gemini=gemini_model, # Pass the GenerativeModel instance
-    ollama=ollama_client # Pass the AsyncClient instance
+    gemini_client=gemini_client,
+    ollama=ollama_client, # Pass the AsyncClient instance
+    guide_gemini_client=guide_gemini_client,
+    formatting_anthropic=formatting_anthropic_client,
+    formatting_gemini_client=formatting_gemini_client,
+    formatting_ollama=formatting_ollama_client
 )
 
 # --- Add a check to see if any LLM service was successfully initialized ---
-if not (llm_service.anthropic_client or llm_service.deepseek_config or llm_service.gemini_model or llm_service.ollama_client):
+if not (llm_service.anthropic_client or llm_service.deepseek_config or llm_service.gemini_client or llm_service.ollama_client):
     logger.critical(f"No LLM service client was successfully initialized based on configuration (LLM_SERVICE='{LLM_SERVICE}'). LLM features will not work.")
 else:
     logger.info(f"LLM service initialized using: {LLM_SERVICE}")
@@ -324,5 +1556,13 @@ async def summarize_text(text: str) -> str:
     """
     logger.info(f"Calling LLM service 'summarize' via wrapper with text length: {len(text)}...")
     return await llm_service.summarize(text)
+
+async def reformat_book_content(text: str) -> str:
+    """
+    Sends text to the configured LLM for reformatting.
+    Calls the async LLMService.reformat_content method.
+    """
+    logger.info(f"Calling LLM service 'reformat_content' via wrapper with text length: {len(text)}...")
+    return await llm_service.reformat_content(text)
 
 # TODO: Add other LLM interaction functions as needed (e.g., extract_keywords)

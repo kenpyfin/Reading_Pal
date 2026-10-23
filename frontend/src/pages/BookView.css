@@ -3,65 +3,114 @@
 .book-view-container {
   display: flex;
   flex-direction: row; /* Ensure horizontal layout */
-  height: 100vh; /* Full viewport height, adjust if you have a global header/navbar */
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%; /* Fill App shell below NavBar; avoid 100vh + NavBar double-scroll */
   width: 100%;
-  overflow: hidden; 
+  overflow: hidden;
+  /* Widescreen reading column for the guide and the original text. */
+  --reader-column: min(1200px, calc(100% - 96px));
 }
 
 /* New styles for the resizable areas */
 .book-pane-area {
   /* flex-basis is set by inline style */
-  /* flex-shrink: 0; is set by inline style */
-  display: flex; /* Important for its children to fill it */
+  /* display: flex; Important for its children to fill it */ /* Flex is now on parent */
   flex-direction: column;
   overflow: hidden; /* Prevent this area from causing scrollbars */
   position: relative; /* If needed for child positioning */
+  min-height: 0; /* Allow nested flex children to shrink so .book-pane-body scrolls internally */
+  min-width: 0;
 }
 
-.note-pane-area {
-  /* flex-grow: 1; flex-shrink: 1; flex-basis: 0%; are set by inline style */
-  display: flex; /* Important for its children to fill it */
+/* Ensure book pane wrapper fills its parent */
+.book-pane-wrapper {
+  flex: 1 1 0%;
+  display: flex;
   flex-direction: column;
-  overflow: hidden; /* Prevent this area from causing scrollbars */
-  position: relative; /* If needed for child positioning */
-}
-    
-/* Ensure existing wrappers fill their new parent areas */
-.book-pane-wrapper,
-.note-pane-wrapper {
-  /* flex: 1; /* Each wrapper takes equal width INITIALLY if not overridden by parent area */
-               /* This should now be flex-grow: 1 to fill the parent area */
-  flex-grow: 1;
-  display: flex; 
-  flex-direction: column; 
-  overflow: hidden; 
+  overflow: hidden;
+  min-height: 0;
+  min-width: 0;
 }
 
-/* .note-pane-wrapper specific border (already exists, ensure it's not conflicting) */
-.note-pane-wrapper {
-  border-left: 1px solid #ccc; 
+/* Column: toolbar does not scroll; only .book-pane-body scrolls (reliable vs sticky + overflow:hidden ancestors) */
+.book-pane-container {
+  flex: 1 1 0%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0;
+  box-sizing: border-box;
 }
-/* If the resizer handle provides the visual separation, you might remove/adjust the border-left on .note-pane-wrapper */
 
-
-.book-pane-container,
-.note-pane-container {
-  flex-grow: 1; 
-  overflow-y: auto; 
+.book-pane-body {
+  flex: 1 1 0%;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
   padding: 20px;
-  box-sizing: border-box; 
-  height: 100%; /* Add if not present, helps ensure it fills flex parent */
+  box-sizing: border-box;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
 }
 
 
-/* Styles for the mobile resizer handle (if not fully covered by inline styles) */
-.resizer-handle-mobile {
-  /* Inline styles are mostly covering this, but you can add more here */
-  /* For example, a subtle box-shadow or gradient */
-  box-shadow: 0px 1px 3px rgba(0,0,0,0.1) inset;
-  /* Ensure it's not affected by other resizer handle styles if names collide */
+
+/* Guide search highlight styling */
+.guide-search-highlight {
+  background-color: var(--color-warning-bg); /* Light yellow background */
+  border: 2px solid var(--color-warning-text); /* Yellow border */
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-weight: 500;
+  animation: guide-highlight-pulse 2s ease-in-out;
 }
 
+@keyframes guide-highlight-pulse {
+  0%, 100% {
+    background-color: var(--color-warning-bg);
+    border-color: var(--color-warning-text);
+  }
+  50% {
+    background-color: var(--color-warning-text);
+    border-color: var(--color-warning-text);
+  }
+}
+
+.roadmap-section-end-notice {
+  margin: 0 auto 12px;
+  max-width: 100%;
+  padding: 8px 12px;
+  border: 1px dashed var(--color-primary);
+  border-radius: 8px;
+  background-color: var(--color-info-bg);
+  color: var(--color-info-text);
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.guide-section-start {
+  display: inline;
+}
+
+.roadmap-cutoff-indicator {
+  display: inline-block;
+  margin: 0 0.35rem;
+  padding: 0.05rem 0.5rem;
+  border: 1px dashed var(--color-primary);
+  border-radius: 999px;
+  background-color: var(--color-info-bg);
+  color: var(--color-info-text);
+  font-size: 0.72em;
+  font-weight: 600;
+  line-height: 1.35;
+  vertical-align: baseline;
+  white-space: nowrap;
+}
 
 /* Font control buttons in BookPane */
 .font-control-btn {
@@ -69,23 +118,23 @@
   font-size: 0.9em;    /* Adjusted font size */
   min-width: 30px; 
   line-height: 1;
-  border: 1px solid #ccc;
-  background-color: #f8f9fa;
+  border: 1px solid var(--color-border);
+  background-color: var(--color-bg-hover);
   border-radius: 3px; /* Slightly smaller radius */
   cursor: pointer;
   margin-left: 0; 
-  color: #333; /* Ensure text color is set */
+  color: var(--color-text); /* Ensure text color is set */
   display: inline-flex; /* Helps with alignment if icons are used */
   align-items: center;
   justify-content: center;
 }
 .font-control-btn:hover {
-  background-color: #e9ecef;
-  border-color: #bbb;
+  background-color: var(--color-bg-hover);
+  border-color: var(--color-border);
 }
 .font-control-btn:active {
-  background-color: #dee2e6;
-  border-color: #aaa;
+  background-color: var(--color-border-light);
+  border-color: var(--color-border);
 }
 
 /* Pagination controls styling */
@@ -95,8 +144,8 @@
   justify-content: center;
   align-items: center;
   padding: 8px 0;
-  border-top: 1px solid #eee;
-  background-color: #f9f9f9;
+  border-top: 1px solid var(--color-border-subtle);
+  background-color: var(--color-bg-hover);
   flex-shrink: 0; 
 }
 
@@ -111,7 +160,7 @@
   padding: 5px;
   margin: 0 5px; /* Space around the input field */
   text-align: center;
-  border: 1px solid #ccc;
+  border: 1px solid var(--color-border);
   border-radius: 3px;
   font-size: 0.9em;
 }
@@ -128,8 +177,8 @@
 
 
 .pagination-controls button {
-  background-color: #007bff;
-  color: white;
+  background-color: var(--color-primary);
+  color: var(--color-on-accent);
   border: none;
   padding: 8px 15px;
   border-radius: 4px;
@@ -138,49 +187,16 @@
 }
 
 .pagination-controls button:disabled {
-  background-color: #ccc;
+  background-color: var(--color-border);
   cursor: not-allowed;
 }
 
 .pagination-controls span {
   /* margin: 0 10px; */ /* Adjust if needed, form has margin now */
   font-size: 0.9em;
-  color: #333;
+  color: var(--color-text);
 }
 
-
-/* Resizer Handle Styles */
-.resizer-handle {
-  width: 10px;
-  background-color: #e0e0e0; 
-  cursor: col-resize;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-left: 1px solid #bdbdbd;
-  border-right: 1px solid #bdbdbd;
-  z-index: 10;
-}
-
-.resizer-handle::before {
-  content: '•••';
-  display: block;
-  writing-mode: vertical-rl;
-  text-orientation: mixed;
-  font-size: 10px;
-  color: #757575;
-  line-height: 0.5;
-}
-
-/* Class added to body during resize */
-.resizing-no-select {
-  user-select: none;
-  -webkit-user-select: none;
-  -moz-user-select: none;
-  -ms-user-select: none;
-  cursor: col-resize !important; /* Force cursor globally during resize */
-}
 
 /* ... rest of your existing BookView.css styles ... */
 /* Ensure that .book-pane, .note-item, .new-note-form etc. are correctly styled within their scrolling containers */
@@ -189,7 +205,7 @@
 /* Styling for h2 elements within the BookPane (e.g., markdown content) */
 .book-pane h2 {
   margin-top: 0;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid var(--color-border-subtle);
   padding-bottom: 10px;
 }
 /* Note: .note-pane h2 styling was removed from here and moved to NotePane.css */
@@ -207,8 +223,8 @@
 }
 
 .note-item {
-    background-color: #f9f9f9;
-    border: 1px solid #eee;
+    background-color: var(--color-bg-hover);
+    border: 1px solid var(--color-border-subtle);
     padding: 10px;
     margin-bottom: 10px;
     border-radius: 4px;
@@ -221,7 +237,7 @@
 .new-note-form {
     margin-top: 20px;
     padding-top: 20px;
-    border-top: 1px solid #eee;
+    border-top: 1px solid var(--color-border-subtle);
 }
 
 .new-note-form textarea {
@@ -229,7 +245,7 @@
     width: calc(100% - 20px); /* Adjust for padding */
     padding: 10px;
     margin-bottom: 10px;
-    border: 1px solid #ccc;
+    border: 1px solid var(--color-border);
     border-radius: 4px;
     font-family: inherit; /* Use inherited font */
     font-size: inherit; /* Use inherited font size */
@@ -237,15 +253,15 @@
 
 .new-note-form button {
     padding: 8px 15px;
-    background-color: #007bff;
-    color: white;
+    background-color: var(--color-primary);
+    color: var(--color-on-accent);
     border: none;
     border-radius: 4px;
     cursor: pointer;
 }
 
 .new-note-form button:disabled {
-    background-color: #cccccc;
+    background-color: var(--color-border);
     cursor: not-allowed;
 }
 
@@ -253,7 +269,7 @@
 .llm-interaction {
     margin-top: 30px;
     padding-top: 20px;
-    border-top: 1px dashed #ccc;
+    border-top: 1px dashed var(--color-border);
 }
 
 .llm-interaction h3, .llm-interaction h4 {
@@ -262,8 +278,8 @@
 }
 
 .llm-response {
-    background-color: #e9f7ef; /* Light green background */
-    border: 1px solid #d0e9c6; /* Green border */
+    background-color: var(--color-success-bg); /* Light green background */
+    border: 1px solid var(--color-border); /* Green border */
     padding: 15px;
     margin-top: 15px;
     border-radius: 4px;
@@ -271,7 +287,7 @@
 
 .llm-response h4 {
     margin-top: 0;
-    color: #28a745; /* Green text */
+    color: var(--color-primary); /* Green text */
 }
 
 .llm-response p {
@@ -284,14 +300,69 @@
     /* Add any specific styles for the markdown content wrapper if needed */
 }
 
+/* Long-form reading measure & typography standards */
+.book-pane-content {
+  max-width: 100%;
+  margin: 0 auto;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+@media (min-width: 769px) {
+  .book-pane-content,
+  .roadmap-section-end-notice {
+    max-width: var(--reader-column, min(1200px, calc(100% - 96px)));
+  }
+}
+
+.book-pane-content h1 {
+  font-size: 1.85em;
+  line-height: 1.25;
+  margin-top: 1.4em;
+  margin-bottom: 0.6em;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.book-pane-content h2 {
+  font-size: 1.45em;
+  line-height: 1.3;
+  margin-top: 1.3em;
+  margin-bottom: 0.5em;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.book-pane-content h3 {
+  font-size: 1.2em;
+  line-height: 1.35;
+  margin-top: 1.2em;
+  margin-bottom: 0.4em;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.book-pane-content p {
+  margin-bottom: 1.25em;
+}
+
+.book-pane-content blockquote {
+  border-left: 3px solid var(--color-primary);
+  padding: 10px 16px;
+  margin: 1.25em 0;
+  color: var(--color-text-secondary);
+  background-color: var(--color-bg-muted);
+  border-radius: 0 4px 4px 0;
+}
+
 /* Ensure markdown elements are styled reasonably */
 .book-pane p { margin-bottom: 1em; }
 .book-pane h1, .book-pane h2, .book-pane h3, .book-pane h4, .book-pane h5, .book-pane h6 { margin-top: 1em; margin-bottom: 0.5em; }
 .book-pane ul, .book-pane ol { margin-bottom: 1em; padding-left: 20px; }
 .book-pane li { margin-bottom: 0.5em; }
 .book-pane pre {
-    background-color: #f4f4f4;
-    border: 1px solid #ddd;
+    background-color: var(--color-bg-muted);
+    border: 1px solid var(--color-border-light);
     border-radius: 5px;
     padding: 10px;
     overflow-x: auto;
@@ -308,9 +379,9 @@
     border: none;
 }
 .book-pane blockquote {
-    border-left: 4px solid #ccc;
+    border-left: 4px solid var(--color-border);
     padding: 10px 15px;
-    color: #666;
+    color: var(--color-text-muted);
     margin-bottom: 1em;
 }
 .book-pane table {
@@ -319,20 +390,26 @@
     width: 100%;
 }
 .book-pane th, .book-pane td {
-    border: 1px solid #ddd;
+    border: 1px solid var(--color-border-light);
     padding: 8px;
     text-align: left;
 }
 .book-pane th {
-    background-color: #f2f2f2;
+    background-color: var(--color-bg-muted);
 }
 
 /* Styling for highlighted note text (from user selection for new notes) */
-.highlighted-note-text {
-  background-color: yellow; /* Or your preferred highlight color */
-  /* padding: 0 2px; */ /* Optional: if you want a little space around the text */
-  /* border-radius: 3px; */ /* Optional: for rounded corners on the highlight */
-  /* cursor: pointer; */ /* Optional: if you plan to make them clickable */
+.note-highlight {
+  background-color: var(--color-highlight-bg);
+  cursor: pointer;
+  transition: background-color 0.2s ease-in-out;
+  border-radius: 2px;
+  padding: 0 0.5px;
+  margin: 0;
+}
+
+.note-highlight:hover {
+  background-color: var(--color-highlight-bg-active);
 }
 
 /* Styling for the temporary highlight when scrolling to a note */
@@ -356,7 +433,7 @@
   left: 0;
   right: 0;
   bottom: 0;
-  background-color: rgba(0, 0, 0, 0.6); /* Slightly darker overlay */
+  background-color: var(--color-overlay);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -364,7 +441,7 @@
 }
 
 .modal-content {
-  background-color: #fff;
+  background-color: var(--color-bg-elevated);
   padding: 25px;
   border-radius: 8px;
   box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
@@ -379,13 +456,13 @@
   margin-top: 0;
   margin-bottom: 10px; /* Added margin */
   font-size: 1.6em; /* Slightly larger title */
-  color: #333;
+  color: var(--color-text);
 }
 
 .bookmark-name-input {
   width: 100%; /* Simpler width */
   padding: 12px; /* More padding */
-  border: 1px solid #ccc;
+  border: 1px solid var(--color-border);
   border-radius: 4px;
   font-size: 1em;
   box-sizing: border-box; /* Important for width: 100% and padding */
@@ -410,38 +487,194 @@
 }
 
 .modal-actions .button-primary {
-  background-color: #007bff;
-  color: white;
+  background-color: var(--color-primary);
+  color: var(--color-on-accent);
 }
 .modal-actions .button-primary:hover {
-  background-color: #0056b3;
+  background-color: var(--color-primary-hover);
 }
 
 .modal-actions .button-secondary {
-  background-color: #6c757d;
-  color: white;
+  background-color: var(--color-text-subtle);
+  color: var(--color-on-accent);
 }
 .modal-actions .button-secondary:hover {
-  background-color: #545b62;
+  background-color: var(--color-text-subtle);
 }
 
 .modal-content .error-message { /* Specific to modal */
-  color: #dc3545; /* Bootstrap danger color */
+  color: var(--color-danger); /* Bootstrap danger color */
   font-size: 0.9em;
   margin-top: -5px; /* Adjust spacing */
   margin-bottom: 5px;
 }
 
+/* Import child component CSS files */
+@import url('../components/AllNotesModal.css');
+@import url('../components/NoteDisplayModal.css');
+
 /* --- Styling for the new Book Pane Controls Header --- */
-.book-pane-controls-header {
+.book-floating-toolbar-shell {
   display: flex;
-  justify-content: space-between; /* Key for layout */
+  justify-content: flex-end;
+  pointer-events: none;
+}
+
+.book-floating-toolbar {
+  margin: 8px;
+  display: inline-flex;
+  align-items: stretch;
+  pointer-events: auto;
+}
+
+.book-floating-toolbar-panel {
+  overflow: hidden;
+  transform-origin: right center;
+  transition: max-width 220ms ease, opacity 180ms ease, transform 220ms ease;
+  max-width: min(980px, calc(100vw - 120px));
+  opacity: 1;
+  transform: scaleX(1);
+}
+
+.book-floating-toolbar.is-collapsed .book-floating-toolbar-panel {
+  max-width: 0;
+  opacity: 0;
+  transform: scaleX(0);
+}
+
+.book-floating-toolbar.is-expanded .book-floating-toolbar-panel {
+  pointer-events: auto;
+}
+
+.book-floating-toolbar.is-collapsed .book-floating-toolbar-panel {
+  pointer-events: none;
+}
+
+.book-pane-controls-header {
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
+  column-gap: 10px;
   padding: 8px 12px;
-  border-bottom: 1px solid #e0e0e0;
-  background-color: #f8f9fa;
+  background-color: var(--color-bg-hover);
+  border-bottom: none;
   flex-shrink: 0;
-  position: relative; /* For dropdown positioning context */
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .book-pane-controls-header {
+    scroll-behavior: auto;
+  }
+}
+
+.book-toolbar-toggle-btn {
+  flex-shrink: 0;
+  margin-left: auto;
+  min-width: 36px;
+  padding: 0 10px;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.book-pane-controls-header .book-toolbar-toggle-btn {
+  margin-left: 8px;
+}
+
+.book-toolbar-toggle-btn--floating {
+  margin-left: 0;
+  min-width: 40px;
+  border-radius: 0 10px 10px 0;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
+}
+
+/* Book View Menu Container (Left) */
+.book-view-menu-container {
+  position: relative; /* For dropdown positioning */
+  display: inline-block; /* Or flex if needed for internal alignment */
+}
+
+.book-view-menu-button .arrow {
+  display: inline-block;
+  margin-left: 6px;
+  transition: transform 0.2s ease-in-out;
+}
+.book-view-menu-button .arrow.down::before {
+  content: '▼'; /* Simple down arrow */
+  font-size: 0.7em;
+}
+.book-view-menu-button .arrow.up::before {
+  content: '▲'; /* Simple up arrow */
+  font-size: 0.7em;
+}
+
+.book-view-dropdown-menu {
+  position: absolute;
+  top: 100%; /* Position below the button */
+  left: 0;
+  background-color: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  z-index: 100; /* Ensure it's above other content */
+  min-width: 220px; /* Adjust as needed */
+  padding: 5px 0; /* Padding for top/bottom of the dropdown itself */
+  display: flex;
+  flex-direction: column;
+}
+
+/* Portaled to document.body — fixed coords from JS; do not participate in layout */
+.book-view-dropdown-menu.book-view-dropdown-menu--portal {
+  position: fixed;
+  top: auto;
+  left: auto;
+  margin: 0;
+  box-sizing: border-box;
+}
+
+.book-view-dropdown-menu .dropdown-item,
+.book-view-dropdown-menu .dropdown-item-select-container {
+  display: block; /* Make items take full width */
+  width: 100%;
+  text-align: left;
+  background-color: transparent;
+  border: none;
+}
+
+.book-view-dropdown-menu .control-button.dropdown-item {
+  margin: 0; /* Remove margin from base .control-button */
+  border-radius: 0; /* No border-radius for items inside dropdown */
+  border-bottom: 1px solid var(--color-bg-muted); /* Separator line */
+  padding: 8px 12px; /* Consistent padding */
+  width: calc(100% - 0px); /* Full width accounting for potential box-sizing issues */
+  box-sizing: border-box;
+}
+.book-view-dropdown-menu .control-button.dropdown-item:last-child {
+  border-bottom: none;
+}
+.book-view-dropdown-menu .control-button.dropdown-item:hover {
+  background-color: var(--color-bg-muted); /* Hover for dropdown items */
+}
+
+/* Font Controls Group */
+.font-controls-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  justify-content: flex-end;
+}
+
+.font-controls-value {
+  margin: 0 8px;
+  font-size: 13px;
+  min-width: 40px;
+  text-align: center;
+}
+
+.font-controls-separator {
+  border-left: 1px solid var(--color-border);
+  height: 20px;
+  margin: 0 10px;
 }
 
 /* Bookmark Menu Container (Left) */
@@ -468,8 +701,8 @@
   position: absolute;
   top: 100%; /* Position below the button */
   left: 0;
-  background-color: white;
-  border: 1px solid #ccc;
+  background-color: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
   border-radius: 4px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
   z-index: 100; /* Ensure it's above other content */
@@ -493,7 +726,7 @@
 .bookmark-dropdown-menu .control-button.dropdown-item {
   margin: 0; /* Remove margin from base .control-button */
   border-radius: 0; /* No border-radius for items inside dropdown */
-  border-bottom: 1px solid #f0f0f0; /* Separator line */
+  border-bottom: 1px solid var(--color-bg-muted); /* Separator line */
   padding: 8px 12px; /* Consistent padding */
   width: calc(100% - 0px); /* Full width accounting for potential box-sizing issues */
   box-sizing: border-box;
@@ -502,13 +735,13 @@
   border-bottom: none;
 }
 .bookmark-dropdown-menu .control-button.dropdown-item:hover {
-  background-color: #f0f0f0; /* Hover for dropdown items */
+  background-color: var(--color-bg-muted); /* Hover for dropdown items */
 }
 
 
 .dropdown-item-select-container {
   padding: 5px 0px; /* Padding around the select container */
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid var(--color-bg-muted);
 }
 .dropdown-item-select-container:last-child {
   border-bottom: none;
@@ -526,7 +759,7 @@
   display: flex;
   align-items: center;
   justify-content: center; /* Center its own items */
-  flex-grow: 1; /* Allow it to take available space in the center */
+  justify-self: center;
   padding: 0; /* Remove padding if already handled by header */
   border: none; /* Remove border if already handled by header */
   background-color: transparent; /* Inherit header background */
@@ -560,8 +793,8 @@
 
 /* Placeholder for pagination to maintain layout balance */
 .pagination-controls-placeholder {
-  flex-grow: 1; /* Occupy the same space as pagination would */
-  /* visibility: hidden; /* Or just be an empty div */
+  justify-self: center;
+  min-width: 160px;
 }
 
 
@@ -569,7 +802,73 @@
 .right-controls-group {
   display: flex;
   align-items: center;
-  /* No flex-grow, so it stays to the right */
+  justify-self: end;
+  min-width: 0;
+}
+
+.left-controls-group {
+  display: flex;
+  align-items: center;
+  justify-self: start;
+  min-width: 0;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Desktop reader bar sits in page flow, one row. Bookmark and note live in Menu.
+   Type size stays on the bar from 1200px up (same cutoff as DESKTOP_FONT_ON_BAR_QUERY). */
+.book-floating-toolbar-shell.is-desktop-shell {
+  display: block;
+  width: 100%;
+  flex-shrink: 0;
+  pointer-events: auto;
+  position: relative;
+  z-index: 5;
+}
+
+.book-floating-toolbar.is-desktop-bar {
+  display: block;
+  width: 100%;
+  margin: 0;
+}
+
+.book-floating-toolbar.is-desktop-bar .book-floating-toolbar-panel {
+  max-width: none;
+  width: 100%;
+  opacity: 1;
+  transform: none;
+  overflow: visible;
+}
+
+.book-floating-toolbar.is-desktop-bar .book-toolbar-toggle-btn--floating {
+  display: none;
+}
+
+.book-floating-toolbar.is-desktop-bar .book-pane-controls-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  width: 100%;
+  box-sizing: border-box;
+  border-bottom: 1px solid var(--color-border);
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.book-floating-toolbar.is-desktop-bar .left-controls-group,
+.book-floating-toolbar.is-desktop-bar .font-controls-group,
+.book-floating-toolbar.is-desktop-bar .pagination-controls.header-pagination {
+  flex-wrap: nowrap;
+}
+
+.book-floating-toolbar.is-desktop-bar .left-controls-group > .reader-tool-inline {
+  display: none;
+}
+
+@media (max-width: 1199px) {
+  .book-floating-toolbar.is-desktop-bar .right-controls-group {
+    display: none;
+  }
 }
 
 /* General .control-button (ensure it's robust) */
@@ -581,9 +880,9 @@
   padding: 0 10px; 
   font-size: 0.875rem; 
   line-height: 30px; 
-  color: #333; 
-  background-color: #ffffff; 
-  border: 1px solid #ccc; 
+  color: var(--color-text); 
+  background-color: var(--color-bg-elevated); 
+  border: 1px solid var(--color-border); 
   border-radius: 4px; 
   cursor: pointer;
   text-decoration: none; 
@@ -593,12 +892,12 @@
   margin-left: 0; /* Remove default margin, use gap on parent or specific margins */
 }
 .control-button:hover {
-  background-color: #f0f0f0; 
-  border-color: #bbb;
+  background-color: var(--color-bg-muted); 
+  border-color: var(--color-border);
 }
 .control-button:active {
-  background-color: #e0e0e0; 
-  border-color: #aaa;
+  background-color: var(--color-border-light); 
+  border-color: var(--color-border);
 }
 
 /* Remove margin from .left-controls and .right-controls if they are no longer direct children with multiple items */
@@ -621,15 +920,118 @@
 
 /* frontend/src/pages/BookView.css */
 
+/* Layout for Reading Guide, Book, and Note Panes */
+.reading-guide-pane-area {
+  /* Styles are applied inline in BookView.js for flex behavior */
+  /* e.g., flex: 0 0 25%; max-width: 300px; */
+  height: 100%; /* Ensure it fills the vertical space */
+  overflow-y: auto; /* Allow scrolling within the guide pane itself if content overflows */
+  background-color: var(--color-bg-hover); /* Match ReadingGuidePane.css or choose a theme color */
+  border-right: 1px solid var(--color-border-light); /* Separator */
+}
+
+.main-content-area {
+  /* Styles are applied inline in BookView.js for flex behavior */
+  display: flex;
+  flex-direction: row; /* BookPane and NotePane side-by-side */
+  flex: 1 1 0%;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden; /* Important to contain children */
+}
+
+
+/* Mobile overlay for Reading Guide Pane */
+.reading-guide-pane-area-mobile-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: var(--color-bg-elevated); /* Or your app's background color */
+  z-index: 1001; /* Higher than note pane overlay if they can overlap, or same if not */
+  display: flex; /* To make ReadingGuidePane component fill it */
+  flex-direction: column;
+  overflow-y: auto; /* Allow scrolling within the overlay if content exceeds height */
+}
+
+
+.view-mode-switch {
+  position: relative;
+  min-width: 150px;
+  height: 32px;
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  cursor: pointer;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  overflow: hidden;
+}
+
+.view-mode-switch-track {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: center;
+  text-align: center;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 0 8px;
+  z-index: 1;
+}
+
+.view-mode-switch-label {
+  pointer-events: none;
+  transition: color 0.18s ease;
+}
+
+.view-mode-switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: calc(50% - 2px);
+  height: 26px;
+  border-radius: 13px;
+  background: var(--color-primary);
+  transition: transform 0.2s ease;
+}
+
+.view-mode-switch.is-guide .view-mode-switch-thumb {
+  transform: translateX(0);
+}
+
+.view-mode-switch.is-original .view-mode-switch-thumb {
+  transform: translateX(calc(100% - 2px));
+}
+
+.view-mode-switch.is-guide .view-mode-switch-label--guide,
+.view-mode-switch.is-original .view-mode-switch-label--original {
+  color: var(--color-on-accent);
+}
+
+.view-mode-switch.is-guide .view-mode-switch-label--original,
+.view-mode-switch.is-original .view-mode-switch-label--guide {
+  color: var(--color-text-secondary);
+}
+
+.view-mode-switch:focus-visible {
+  outline: 2px solid rgba(0, 123, 255, 0.45);
+  outline-offset: 2px;
+}
+
+
 /* ... existing styles ... */
 
 .bookmark-select {
   /* margin-left: 10px; */ /* Space from the Add Bookmark button - Now handled by dropdown structure */
   /* Inherits .control-button styles if class is applied, otherwise define: */
   /* padding: 7px 10px; */
-  /* background-color: #007bff; */ /* Or a different color for select */
-  /* color: white; */
-  /* border: 1px solid #007bff; */
+  /* background-color: var(--color-primary); */ /* Or a different color for select */
+  /* color: var(--color-on-accent); */
+  /* border: 1px solid var(--color-primary); */
   /* border-radius: 4px; */
   /* font-size: 0.9em; */
   /* cursor: pointer; */
@@ -642,7 +1044,7 @@
 
 /* Optional: Style for options if needed, though browser defaults are usually fine */
 .bookmark-select option {
-  background-color: white; /* Ensure options have a standard background */
+  background-color: var(--color-bg-elevated); /* Ensure options have a standard background */
   color: black; /* Ensure options have standard text color */
 }
 
@@ -655,7 +1057,7 @@
   margin-bottom: 20px;
   max-height: 300px; /* Adjust as needed */
   overflow-y: auto;
-  border: 1px solid #e0e0e0;
+  border: 1px solid var(--color-border-light);
   border-radius: 4px;
 }
 
@@ -664,7 +1066,7 @@
   justify-content: space-between;
   align-items: center;
   padding: 10px 12px;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid var(--color-bg-muted);
 }
 
 .manage-bookmarks-modal .manage-bookmark-item:last-child {
@@ -675,7 +1077,7 @@
   flex-grow: 1;
   margin-right: 10px;
   font-size: 0.95em;
-  color: #333;
+  color: var(--color-text);
 }
 
 /* .delete-bookmark-button can inherit from .delete-button in index.css */
@@ -687,54 +1089,71 @@
 
 
 /* --- Add Mobile Specific Styles at the end or in a dedicated @media block --- */
-@media (max-width: 768px) {
+@media (max-width: 768px), (max-height: 500px) and (orientation: landscape) {
   .book-view-container {
     /* flexDirection: column; is handled by inline style in BookView.js */
     /* height: calc(100vh - YOUR_HEADER_HEIGHT); is handled by parent or inline style */
   }
 
-  .book-pane-area, .note-pane-area {
+  .book-pane-area, .reading-guide-pane-area {
     /* flex-basis and width are handled by inline styles in BookView.js for mobile */
-    /* Ensure they don't have conflicting fixed widths/heights from desktop styles */
+  }
+
+  .main-content-area { /* This wraps Book and Note panes */
+    flex-direction: column; /* Stack Book and Note panes if both are visible (though usually one is an overlay) */
+  }
+
+  .book-pane-body.book-pane-body--guide-scroll {
+    overflow: hidden;
+    padding: 0;
   }
   
   .book-pane-controls-header {
-    flex-wrap: wrap; 
-    justify-content: space-around; /* Changed from center to space-around for better distribution */
+    grid-template-columns: 1fr;
+    justify-items: start;
     padding: 6px 8px;
-    gap: 8px; /* Increased gap slightly for better touch targets when wrapped */
+    row-gap: 8px;
   }
 
-  .bookmark-menu-container,
+  .left-controls-group {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
   .pagination-controls.header-pagination,
-  .right-controls-group {
-    flex-basis: auto; /* Allow items to size based on content, not force full width */
-    flex-grow: 0;     /* Don't grow by default */
-    flex-shrink: 1;   /* Allow shrinking if needed */
-    /* justify-content: center; /* Remove this, let parent handle alignment */
-    margin-bottom: 0; /* Remove bottom margin if they fit on one line */
-    /* Ensure they align to the center of the flex line if they wrap */
-    align-self: center; 
+  .pagination-controls-placeholder {
+    justify-self: start;
+    min-width: 0;
   }
 
-  /* Allow pagination to take more space if available on the line */
-  .pagination-controls.header-pagination {
-    flex-grow: 1; /* Let pagination try to fill available space */
-    min-width: 160px; /* Give pagination a minimum width to prevent it from becoming too squished */
-                      /* Adjust this based on how compact you make the prev/next/input */
-    justify-content: center; /* Ensure its internal items are centered */
+  .right-controls-group {
+    justify-self: start;
   }
-  
-  /* Make the bookmark menu button and toggle notes button more compact */
-  .bookmark-menu-container .control-button, /* Target the button directly */
-  .right-controls-group .control-button {   /* Target the button directly */
-    padding: 0 8px; /* Reduce horizontal padding */
-    height: 30px;   /* Slightly smaller height */
-    font-size: 0.8rem; /* Smaller font */
-    line-height: 28px; /* Adjust line height */
+
+  .right-controls-group .font-controls-group {
+    justify-content: flex-start;
   }
-  .bookmark-menu-button .arrow { /* Ensure this is specific enough if .control-button is too general */
-    margin-left: 4px; /* Reduce space for arrow */
+
+  .view-mode-switch {
+    min-width: 132px;
+    height: 30px;
+  }
+
+  .view-mode-switch-thumb {
+    height: 24px;
+  }
+
+  /* Make all control buttons in header compact on mobile */
+  .book-pane-controls-header .control-button {
+    padding: 0 8px; 
+    height: 30px;   
+    font-size: 0.75rem; /* Even smaller font for all header buttons */
+    line-height: 28px; 
+  }
+
+  /* Specific adjustments for bookmark menu button if needed */
+  .bookmark-menu-button .arrow { 
+    margin-left: 4px; 
   }
   .bookmark-menu-button .arrow.down::before,
   .bookmark-menu-button .arrow.up::before {
@@ -754,8 +1173,8 @@
                       /* Adjust this value as needed based on your content */
     
     box-sizing: border-box; 
-    background-color: white;
-    border: 1px solid #ccc;
+    background-color: var(--color-bg-elevated);
+    border: 1px solid var(--color-border);
     border-radius: 4px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
     z-index: 100; 
@@ -843,39 +1262,24 @@
     font-size: 0.85em;
   }
 
-  /* Adjust heading sizes in NotePane for mobile if needed */
-  /* These selectors assume NotePane's content is within .note-pane-container */
-  .note-pane-container h2 { /* Targets "Notes & LLM Insights" */
-    font-size: 1.2em;
-    margin-top: 0.5em;
-    margin-bottom: 0.5em;
-    padding-bottom: 5px; /* Adjust if there's a border */
-  }
-  .note-pane-container h3 { /* Targets "Add New Note", "LLM Reading Assistance", "Saved Notes" */
+  /* Note/LLM popup modal content (NotePane inside modal) */
+  .note-llm-popup-modal .note-pane h3 {
     font-size: 1.05em;
     margin-top: 0.8em;
     margin-bottom: 0.4em;
   }
-  .note-pane-container h4 { /* Targets "Selected Text from Book:", "LLM Response:" */
+  .note-llm-popup-modal .note-pane h4 {
     font-size: 0.95em;
   }
-
-  /* Ensure textareas and buttons in NotePane are reasonably sized */
-  .note-pane-container .new-note-form textarea, 
-  .note-pane-container .llm-interaction textarea {
+  .note-llm-popup-modal .note-pane .new-note-form textarea,
+  .note-llm-popup-modal .note-pane .llm-interaction textarea {
     font-size: 0.9em;
     padding: 8px;
   }
-  .note-pane-container .new-note-form button, 
-  .note-pane-container .llm-interaction button {
+  .note-llm-popup-modal .note-pane .new-note-form button,
+  .note-llm-popup-modal .note-pane .llm-interaction button {
     font-size: 0.9em;
     padding: 7px 12px;
-  }
-
-  /* Hide Note Pane Button (if not fully covered by inline styles) */
-  /* .hide-note-pane-btn is styled inline in NotePane.js, but you can add hover/active states here */
-  .hide-note-pane-btn:hover {
-    background-color: #5a6268; /* Example hover color */
   }
 
   /* Modal adjustments for mobile if needed */
@@ -902,56 +1306,336 @@
   }
 }
 
-/* In BookView.css or a global stylesheet */
-.note-pane-area-mobile-overlay {
-  position: fixed; /* Or absolute if .book-view-container is relative and fills viewport */
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background-color: white; /* Or your app's background color */
-  z-index: 1000; /* Ensure it's above other content */
+/* Note/LLM popup modals */
+.note-llm-popup-modal .modal-header {
   display: flex;
-  flex-direction: column;
-  overflow-y: auto; /* Allow scrolling within the overlay if content exceeds height */
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--color-border);
+}
+.note-llm-popup-modal .modal-header h2 {
+  margin: 0;
+  font-size: 1.25em;
+}
+.note-llm-popup-modal .close-button {
+  background: none;
+  border: none;
+  font-size: 1.2em;
+  cursor: pointer;
+  padding: 4px 8px;
+  color: var(--color-text);
+}
+.note-llm-popup-modal .close-button:hover {
+  color: var(--color-text);
+}
+.modal-body-scrollable {
+  max-height: 80vh;
+  overflow-y: auto;
+  padding: 20px;
+  box-sizing: border-box;
 }
 
-/* Optional: Style the .note-pane-wrapper and .note-pane-container if they need specific adjustments within the overlay */
-.note-pane-area-mobile-overlay .note-pane-wrapper {
-  flex-grow: 1;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden; /* Or visible if you want scrolling on note-pane-container */
+/* NotePane when used inside modal (embedInModal) - no fixed width from parent */
+.note-llm-popup-modal .note-pane {
+  min-width: 0;
 }
 
-.note-pane-area-mobile-overlay .note-pane-container {
-  flex-grow: 1;
-  overflow-y: auto; /* Primary scroll for notes content */
-}
-
-/* Styling for the header within NotePane when in mobile overlay */
+/* Legacy: header/close when NotePane was used in mobile overlay (kept for NotePane.css if needed) */
 .note-pane-mobile-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   padding: 10px 15px;
-  background-color: #f0f0f0; /* Example background */
-  border-bottom: 1px solid #ccc;
+  background-color: var(--color-bg-muted);
+  border-bottom: 1px solid var(--color-border);
 }
-
 .note-pane-mobile-header h2 {
   margin: 0;
   font-size: 1.2em;
 }
-
 .close-pane-button {
   background: none;
   border: none;
   font-size: 1em;
   cursor: pointer;
   padding: 5px;
-  color: #333;
+  color: var(--color-text);
 }
 .close-pane-button:hover {
-  color: #000;
+  color: var(--color-text);
+}
+
+/* Floating "Back to Reading Guide" button */
+.back-to-guide-floating-btn {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  background-color: var(--color-primary);
+  color: var(--color-on-accent);
+  border: none;
+  padding: 12px 20px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.95em;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  z-index: 1001;
+  transition: background-color 0.2s, transform 0.1s;
+}
+.back-to-guide-floating-btn:hover {
+  background-color: var(--color-primary-hover);
+  transform: translateY(-2px);
+}
+
+.scroll-to-top-floating-btn {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: 999px;
+  background-color: var(--color-text);
+  color: var(--color-on-accent);
+  font-size: 1.15rem;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  z-index: 20000;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: transform 0.15s ease, background-color 0.2s ease;
+}
+
+.scroll-to-top-floating-btn__icon {
+  display: block;
+  margin-top: -1px;
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
+.scroll-to-top-floating-btn:hover {
+  background-color: var(--color-nav-bg);
+  transform: translateY(-2px);
+}
+
+.scroll-to-top-floating-btn.with-back-guide-btn {
+  bottom: 86px;
+}
+
+@media (max-width: 768px), (max-height: 500px) and (orientation: landscape) {
+  .scroll-to-top-floating-btn {
+    right: 16px;
+    bottom: 16px;
+    width: 40px;
+    height: 40px;
+  }
+
+  .scroll-to-top-floating-btn.with-back-guide-btn {
+    bottom: 76px;
+  }
+}
+
+.back-to-guide-label-short {
+  display: none;
+}
+
+.page-nav-short {
+  display: none;
+}
+
+.selection-action-bar {
+  position: fixed;
+  z-index: 1300;
+  display: flex;
+  gap: 6px;
+  padding: 4px;
+  border-radius: 10px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+}
+
+.selection-action-bar button {
+  min-height: 44px;
+  min-width: 64px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 8px;
+  background: var(--color-primary);
+  color: var(--color-on-accent);
+  font: inherit;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.dropdown-font-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px 10px;
+}
+
+.dropdown-font-controls-label {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+
+.markdown-table-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+  -webkit-overflow-scrolling: touch;
+  margin-bottom: 1em;
+}
+
+.markdown-table-scroll table {
+  width: max-content;
+  min-width: 100%;
+  margin-bottom: 0;
+}
+
+@media (max-width: 768px), (max-height: 500px) and (orientation: landscape) {
+  .book-floating-toolbar-shell.is-phone-shell {
+    justify-content: stretch;
+    width: 100%;
+    pointer-events: auto;
+    background: var(--color-bg-elevated);
+    border-top: 1px solid var(--color-border);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+
+  .book-floating-toolbar.is-phone-bar {
+    width: 100%;
+    margin: 0;
+  }
+
+  .book-floating-toolbar.is-phone-bar .book-floating-toolbar-panel {
+    max-width: none;
+    width: 100%;
+    opacity: 1;
+    transform: none;
+    pointer-events: auto;
+  }
+
+  .book-floating-toolbar.is-phone-bar .book-toolbar-toggle-btn--floating {
+    display: none;
+  }
+
+  .book-floating-toolbar.is-phone-bar .book-pane-controls-header {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 8px;
+    box-sizing: border-box;
+  }
+
+  .book-floating-toolbar.is-phone-bar .left-controls-group {
+    display: contents;
+    width: auto;
+  }
+
+  .book-floating-toolbar.is-phone-bar .reader-tool-inline {
+    display: none;
+  }
+
+  .book-floating-toolbar.is-phone-bar .book-view-menu-container {
+    order: 1;
+  }
+
+  .book-floating-toolbar.is-phone-bar .pagination-controls.header-pagination,
+  .book-floating-toolbar.is-phone-bar .pagination-controls-placeholder {
+    order: 2;
+    flex: 1 1 auto;
+    min-width: 0;
+    justify-content: center;
+  }
+
+  .book-floating-toolbar.is-phone-bar .view-mode-switch {
+    order: 3;
+    min-width: 112px;
+    height: 44px;
+  }
+
+  .book-floating-toolbar.is-phone-bar .view-mode-switch-thumb {
+    height: 38px;
+  }
+
+  .book-floating-toolbar.is-phone-bar .control-button,
+  .book-floating-toolbar.is-phone-bar .page-input {
+    min-height: 44px;
+    height: 44px;
+    font-size: 16px;
+  }
+
+  .book-floating-toolbar.is-phone-bar .page-nav-long {
+    display: none;
+  }
+
+  .book-floating-toolbar.is-phone-bar .page-nav-short {
+    display: inline;
+  }
+
+  .book-floating-toolbar.is-phone-bar .page-input {
+    width: 52px;
+  }
+
+  .is-phone-reader .book-pane-body {
+    padding-bottom: calc(76px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .back-to-guide-floating-btn {
+    right: max(12px, env(safe-area-inset-right, 0px));
+    bottom: calc(84px + env(safe-area-inset-bottom, 0px));
+    min-height: 44px;
+    padding: 10px 14px;
+  }
+
+  .back-to-guide-label-long {
+    display: none;
+  }
+
+  .back-to-guide-label-short {
+    display: inline;
+  }
+
+  .scroll-to-top-floating-btn {
+    right: max(12px, env(safe-area-inset-right, 0px));
+    bottom: calc(84px + env(safe-area-inset-bottom, 0px));
+    width: 44px;
+    height: 44px;
+  }
+
+  .scroll-to-top-floating-btn.with-back-guide-btn {
+    bottom: calc(136px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .book-view-dropdown-menu .control-button.dropdown-item,
+  .dropdown-font-controls .font-control-btn {
+    min-height: 44px;
+    min-width: 44px;
+    font-size: 16px;
+  }
+
+  .modal-overlay--sheet {
+    align-items: flex-end;
+    padding-bottom: var(--keyboard-inset, 0px);
+  }
+
+  .modal-overlay--sheet .modal-content {
+    width: 100%;
+    max-width: 100%;
+    margin: 0;
+    border-radius: 16px 16px 0 0;
+    padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .modal-overlay--sheet .modal-body-scrollable {
+    max-height: min(60dvh, calc(100dvh - 160px - var(--keyboard-inset, 0px)));
+  }
 }

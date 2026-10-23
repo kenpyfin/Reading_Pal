@@ -2,7 +2,7 @@ import asyncio
 import os
 import logging
 from datetime import datetime, timedelta
-from backend.db.mongodb import get_database, update_book # delete_book_record is not directly used here for deletion, we use db.books.delete_one
+from backend.db.mongodb import get_database, update_book_by_system
 from fastapi.concurrency import run_in_threadpool # For async file operations
 
 logger = logging.getLogger(__name__)
@@ -73,15 +73,14 @@ async def run_cleanup_task():
 
                     logger.warning(f"Marking 'processing' job {job_id_val} (Book ID: {book_id_str}, Title: '{title_val}') as failed due to timeout (updated_at < {stuck_threshold_time}).")
                     
-                    update_result = await update_book( # update_book should ideally return a boolean or modified_count
+                    update_result = await update_book_by_system(
                         book_id_str,
                         {
                             "status": "failed",
                             "processing_error": f"Processing timed out after {STUCK_JOB_THRESHOLD_SECONDS} seconds (based on updated_at).",
-                            "updated_at": datetime.utcnow() # Explicitly set updated_at
                         }
                     )
-                    if update_result: # Assuming update_book returns something truthy on success
+                    if update_result:
                         logger.info(f"Successfully marked 'processing' job {job_id_val} (Book ID: {book_id_str}) as failed.")
                     else:
                         logger.error(f"Failed to mark 'processing' job {job_id_val} (Book ID: {book_id_str}) as failed in DB.")

@@ -1,19 +1,80 @@
-import React, { useEffect, useState, useRef, useCallback } from 'react';
+import React, { useEffect, useLayoutEffect, useState, useRef, useCallback, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { useParams, Link } from 'react-router-dom';
 import BookPane from '../components/BookPane';
 import NotePane from '../components/NotePane';
+import ReadingGuidePane from '../components/ReadingGuidePane'; // Import ReadingGuidePane
+import AllNotesModal from '../components/AllNotesModal';
+import NoteDisplayModal from '../components/NoteDisplayModal';
+import ReaderDialog from '../components/ReaderDialog';
+import ReaderSelectionBar from '../components/ReaderSelectionBar';
+import ReaderProgressRing from '../components/ReaderProgressRing';
 import { debounce } from 'lodash';
 import './BookView.css';
 import logger from '../utils/logger'; // Ensure logger is imported
+import { matchesMobileLayout, subscribeMobileLayout, matchesWideDesktop, subscribeWideDesktop } from '../utils/mobileLayout';
+import { getPageForOffset } from '../utils/textLinking'; // Import text linking utilities
+import {
+  markerOffsetInPageMarkdown,
+  resolveGuideHighlightOnPage,
+  resolveGuideNavigationOffset,
+} from '../utils/guideJump';
+import {
+  MAX_PAGE_BUDGET as APPROX_CHARS_PER_PAGE,
+  calculatePageBoundaries,
+} from '../utils/pageBoundaries';
+import {
+  getStoredAuthToken,
+  getStoredReadingPosition,
+  getStoredReadingViewMode,
+  setStoredReadingPosition,
+  setStoredReadingViewMode,
+} from '../utils/storage';
+import {
+  putBookMeta,
+  getBookMeta,
+  putGuide,
+  getGuide,
+  getGuideEntry,
+  DEFAULT_GUIDE_ID,
+  MAX_READING_GUIDES,
+  putAnnotations,
+  getAnnotations,
+  prefetchMarkdownImages,
+  rewriteMarkdownWithCachedImages,
+  cacheRoadmapGraphImages,
+  hydrateRoadmapWithCachedGraphs,
+  addOutboxEntry,
+  getOutboxCount,
+  newLocalId,
+  isLocalId,
+  removePendingCreateNote,
+  removePendingCreateBookmark,
+} from '../utils/offlineBookCache';
+import { flushOutbox } from '../utils/outboxSync';
+import {
+  mergeAnnotationsByTimestamp,
+  applyLocalProgressToggle,
+  reconcileGuideProgressState,
+} from '../utils/syncReconciler';
 
-const APPROX_CHARS_PER_PAGE = 5000; // Approximate target characters per page
+// Virtual pages: at most 2,000 characters, one third of the previous cap.
 
-// Function to escape regex special characters
-function escapeRegExp(string) {
-  if (typeof string !== 'string') {
-    return '';
+const BOOK_CONTROLS_EXPANDED_KEY = 'readingPal_bookControlsExpanded';
+const FLOATING_TOOLBAR_TOP_PX = 80;
+/** Show floating control after scrolling this many px (inner scroll container). */
+const SCROLL_TOP_REVEAL_PX = 16;
+
+function readStoredBookControlsExpanded() {
+  if (typeof window === 'undefined') return true;
+  try {
+    const v = window.sessionStorage.getItem(BOOK_CONTROLS_EXPANDED_KEY);
+    if (v === '0') return false;
+    if (v === '1') return true;
+  } catch (_e) {
+    /* ignore */
   }
-  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // $& means the whole matched string
+  return true;
 }
 
 // Helper to decode HTML entities (basic version)
@@ -144,85 +205,169 @@ function mapRenderedToRawOffset(renderedOffsetTarget, mdSegments) {
   return currentRawOffset;
 }
 
-// Helper function to calculate page boundaries respecting word breaks
-function calculatePageBoundaries(markdown, targetCharsPerPage) {
-  if (!markdown || typeof markdown !== 'string') { // Added type check for markdown
-    logger.warn("[calculatePageBoundaries] Markdown content is invalid or empty.");
-    return [];
-  }
-  const boundaries = [];
-  let currentOffset = 0;
-  const totalLength = markdown.length;
-  // Heuristic: Don't let pages become too small if a word break is found very early.
-  // This means a page might be slightly larger than targetCharsPerPage if it prevents a tiny next page.
-  const MIN_PAGE_CHARS = targetCharsPerPage * 0.5; // Page should be at least 50% of target
+function normalizeWhitespaceWithIndexMap(text) {
+  const normalizedChars = [];
+  const indexMap = [];
+  let previousWasWhitespace = false;
 
-  while (currentOffset < totalLength) {
-    const pageStart = currentOffset;
-    let potentialEnd = Math.min(pageStart + targetCharsPerPage, totalLength);
-    let actualEnd = potentialEnd;
-
-    if (potentialEnd < totalLength) { // If not the last character of the document
-      let boundaryFound = false;
-      // Search backwards from potentialEnd for a natural break (space)
-      for (let i = potentialEnd; i > pageStart; i--) {
-        if (/\s/.test(markdown[i-1])) { // Check character *before* potential cut point
-          actualEnd = i; // End *before* the space if cutting, or *at* the space if space is end of word
-          boundaryFound = true;
-          break;
-        }
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    const isWhitespace = /\s/.test(char);
+    if (isWhitespace) {
+      if (!previousWasWhitespace) {
+        normalizedChars.push(' ');
+        indexMap.push(i);
       }
-
-      if (!boundaryFound) {
-        // No space found searching backwards. This means pageStart to potentialEnd is one long token.
-        // Try to find the *next* space *after* potentialEnd, but not too far.
-        let nextSpaceSearchLimit = Math.min(potentialEnd + targetCharsPerPage * 0.25, totalLength); // Search forward a bit
-        let foundNextSpace = false;
-        for (let i = potentialEnd; i < nextSpaceSearchLimit; i++) {
-          if (/\s/.test(markdown[i])) {
-            actualEnd = i + 1; // End after this space
-            foundNextSpace = true;
-            break;
-          }
-        }
-        // If still no space found (very long word/URL), we have to take potentialEnd.
-        // This might break the word if it's longer than targetCharsPerPage.
-        if (!foundNextSpace) {
-          actualEnd = potentialEnd; 
-        }
-      }
-      
-      // If the found boundary makes the current page too short, and it's not the end of the document,
-      // prefer to take the original potentialEnd or even extend a bit if that helps the next page.
-      // This logic can get very complex. A simpler rule: if actualEnd is too close to pageStart,
-      // and we are not near the end of the document, just use potentialEnd.
-      if ((actualEnd - pageStart) < MIN_PAGE_CHARS && (totalLength - pageStart) > targetCharsPerPage) {
-         actualEnd = potentialEnd;
-      }
-    }
-    
-    // Prevent infinite loop if actualEnd doesn't advance
-    if (actualEnd <= pageStart && pageStart < totalLength) {
-        logger.warn(`[calculatePageBoundaries] actualEnd (${actualEnd}) did not advance from pageStart (${pageStart}). Forcing advance.`);
-        actualEnd = Math.min(pageStart + targetCharsPerPage, totalLength);
-    }
-    
-    // Ensure actualEnd does not exceed totalLength
-    actualEnd = Math.min(actualEnd, totalLength);
-
-    boundaries.push({ start: pageStart, end: actualEnd });
-    currentOffset = actualEnd;
-
-    if (boundaries.length > 10000) { // Safety break for very large documents / potential infinite loops
-        logger.error("[calculatePageBoundaries] Exceeded 10000 page boundaries, breaking loop. Check content or logic.");
-        break;
+      previousWasWhitespace = true;
+    } else {
+      normalizedChars.push(char);
+      indexMap.push(i);
+      previousWasWhitespace = false;
     }
   }
-  logger.info(`[calculatePageBoundaries] Calculated ${boundaries.length} pages.`);
-  return boundaries;
+
+  while (normalizedChars.length > 0 && normalizedChars[0] === ' ') {
+    normalizedChars.shift();
+    indexMap.shift();
+  }
+  while (normalizedChars.length > 0 && normalizedChars[normalizedChars.length - 1] === ' ') {
+    normalizedChars.pop();
+    indexMap.pop();
+  }
+
+  return {
+    normalized: normalizedChars.join(''),
+    indexMap,
+  };
 }
 
-function BookView() {
+function findNearestMatchIndex(haystack, needle, targetIndex) {
+  if (!needle || !haystack) return -1;
+  let bestIndex = -1;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  let searchFrom = 0;
+
+  while (searchFrom <= haystack.length) {
+    const idx = haystack.indexOf(needle, searchFrom);
+    if (idx === -1) break;
+    const distance = Math.abs(idx - targetIndex);
+    if (distance < bestDistance) {
+      bestIndex = idx;
+      bestDistance = distance;
+    }
+    searchFrom = idx + 1;
+  }
+
+  return bestIndex;
+}
+
+function expandRangeToWordBoundaries(text, start, end) {
+  const maxBoundaryExpansion = 24;
+  let safeStart = Math.max(0, Math.min(start, text.length));
+  let safeEnd = Math.max(safeStart + 1, Math.min(end, text.length));
+
+  let leftExpanded = 0;
+  while (
+    safeStart > 0 &&
+    leftExpanded < maxBoundaryExpansion &&
+    /\S/.test(text[safeStart - 1]) &&
+    /\S/.test(text[safeStart])
+  ) {
+    safeStart--;
+    leftExpanded++;
+  }
+
+  let rightExpanded = 0;
+  while (
+    safeEnd < text.length &&
+    rightExpanded < maxBoundaryExpansion &&
+    /\S/.test(text[safeEnd - 1]) &&
+    /\S/.test(text[safeEnd])
+  ) {
+    safeEnd++;
+    rightExpanded++;
+  }
+
+  return { start: safeStart, end: safeEnd };
+}
+
+function resolveNoteHighlightRange(plainPageText, anchorInPage, sourceText) {
+  if (!plainPageText || !sourceText) return null;
+
+  const pageLength = plainPageText.length;
+  if (pageLength <= 0) return null;
+
+  const anchor = Math.max(0, Math.min(anchorInPage, pageLength - 1));
+  const expectedLen = Math.max(1, sourceText.length);
+  const searchRadius = Math.max(240, Math.min(2200, expectedLen * 4));
+  const windowStart = Math.max(0, anchor - searchRadius);
+  const windowEnd = Math.min(pageLength, anchor + expectedLen + searchRadius);
+  const windowText = plainPageText.substring(windowStart, windowEnd);
+
+  const exactMatchInWindow = findNearestMatchIndex(
+    windowText,
+    sourceText,
+    Math.max(0, anchor - windowStart)
+  );
+  if (exactMatchInWindow !== -1) {
+    const exactStart = windowStart + exactMatchInWindow;
+    return {
+      start: exactStart,
+      end: Math.min(pageLength, exactStart + sourceText.length),
+      strategy: 'exact',
+    };
+  }
+
+  const normalizedWindow = normalizeWhitespaceWithIndexMap(windowText);
+  const normalizedNeedle = normalizeWhitespaceWithIndexMap(sourceText);
+  if (normalizedWindow.normalized && normalizedNeedle.normalized) {
+    const estimatedNormalizedAnchor = normalizeWhitespaceWithIndexMap(
+      windowText.substring(0, Math.max(0, anchor - windowStart))
+    ).normalized.length;
+    const normalizedMatchIndex = findNearestMatchIndex(
+      normalizedWindow.normalized,
+      normalizedNeedle.normalized,
+      estimatedNormalizedAnchor
+    );
+
+    if (normalizedMatchIndex !== -1) {
+      const normalizedMatchEnd = normalizedMatchIndex + normalizedNeedle.normalized.length - 1;
+      const localStart = normalizedWindow.indexMap[normalizedMatchIndex];
+      const localEndChar = normalizedWindow.indexMap[normalizedMatchEnd];
+      if (
+        typeof localStart === 'number' &&
+        typeof localEndChar === 'number'
+      ) {
+        const normalizedRange = expandRangeToWordBoundaries(
+          plainPageText,
+          windowStart + localStart,
+          windowStart + localEndChar + 1
+        );
+        return {
+          ...normalizedRange,
+          strategy: 'normalized',
+        };
+      }
+    }
+  }
+
+  const minGenerousLen = Math.max(28, Math.min(260, Math.round(expectedLen * 1.4)));
+  const generousStart = Math.max(0, anchor - 8);
+  const generousEnd = Math.min(pageLength, generousStart + minGenerousLen);
+  const expandedFallback = expandRangeToWordBoundaries(plainPageText, generousStart, generousEnd);
+
+  return {
+    ...expandedFallback,
+    strategy: 'fallback',
+  };
+}
+
+function BookView({
+  setNavBarExtra = null,
+  navBarActiveScrollRef = null,
+  bumpNavBarScrollSync = null,
+  mobileChromeHidden = false,
+} = {}) {
   const { bookId } = useParams();
   const [bookData, setBookData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -230,20 +375,28 @@ function BookView() {
 
   // Refs for the scrollable container divs
   const bookPaneContainerRef = useRef(null);
-  const notePaneContainerRef = useRef(null);
   const isProgrammaticScroll = useRef(false);
-  const fullMarkdownContent = useRef(''); // To store the full markdown
+  const [fullMarkdownContent, setFullMarkdownContent] = useState(''); // To store the full markdown as state
 
   const [selectedBookText, setSelectedBookText] = useState(null);
+  const [selectionAnchor, setSelectionAnchor] = useState(null);
   const [selectedScrollPercentage, setSelectedScrollPercentage] = useState(null);
   const [selectedGlobalCharOffset, setSelectedGlobalCharOffset] = useState(null);
 
-  const [currentPage, setCurrentPage] = useState(1);
+  const [currentPage, setCurrentPage] = useState(() => {
+    const savedPosition = getStoredReadingPosition(bookId);
+    if (savedPosition && typeof savedPosition.page === 'number') {
+      logger.info(`[BookView - useState init] Initializing currentPage from localStorage: ${savedPosition.page}`);
+      return savedPosition.page;
+    }
+    return 1;
+  });
   const [totalPages, setTotalPages] = useState(1);
   const [currentPageContent, setCurrentPageContent] = useState(''); // Original content for logic
   const [highlightedPageContent, setHighlightedPageContent] = useState(''); // Content with highlights for rendering
   const [pageInput, setPageInput] = useState('');
   const [pageBoundaries, setPageBoundaries] = useState([]);
+  const pageBoundariesRef = useRef([]);
 
   const [scrollToGlobalOffset, setScrollToGlobalOffset] = useState(null);
   const [pendingScrollOffsetInPage, setPendingScrollOffsetInPage] = useState(null);
@@ -255,34 +408,431 @@ function BookView() {
 
   // State for Add Bookmark Modal
   const [showAddBookmarkModal, setShowAddBookmarkModal] = useState(false);
+  const [showAllNotesModal, setShowAllNotesModal] = useState(false);
+  const [activeNoteForModal, setActiveNoteForModal] = useState(null);
   const [newBookmarkName, setNewBookmarkName] = useState('');
   const [bookmarkError, setBookmarkError] = useState(null);
   const [bookmarks, setBookmarks] = useState([]); 
   const [pendingScrollToPercentage, setPendingScrollToPercentage] = useState(null); // New state for bookmark jump
 
-  // State and Refs for Resizing
-  const [bookPaneFlexBasis, setBookPaneFlexBasis] = useState('50%'); // Initial width as percentage
+  // State and Refs for Resizing (guide pane only; note pane is now popup)
   const bookViewContainerRef = useRef(null); // Ref for the main flex container
   const bookPaneAreaRef = useRef(null);      // Ref for the book-pane-area div
 
-  const isResizing = useRef(false);
-  const dragStartX = useRef(0);
-  const initialBookPaneWidthPx = useRef(0);
-
-  const [showManageBookmarksModal, setShowManageBookmarksModal] = useState(false); // ADD THIS STATE
-  const [isNotePaneVisible, setIsNotePaneVisible] = useState(true); // For desktop side-by-side
-  const [showNotesPanelOnMobile, setShowNotesPanelOnMobile] = useState(false); // For mobile overlay
-  const [isMobileView, setIsMobileView] = useState(window.innerWidth <= 768); // ADD THIS LINE, initialize directly
+  const [showManageBookmarksModal, setShowManageBookmarksModal] = useState(false);
+  const [notesLLMPopupMode, setNotesLLMPopupMode] = useState(null); // null | 'note' | 'llm'
+  const [isMobileView, setIsMobileView] = useState(() => matchesMobileLayout());
+  const [fontControlsOnBar, setFontControlsOnBar] = useState(() => matchesWideDesktop());
   const [isBookmarkMenuOpen, setIsBookmarkMenuOpen] = useState(false);
   const bookmarkMenuRef = useRef(null); // For detecting clicks outside
   const [initialScrollTop, setInitialScrollTop] = useState(null); // For restoring scroll position
 
+  // Close dropdown menus when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      const t = event.target;
+      const inBookMenu =
+        (bookViewMenuRef.current && bookViewMenuRef.current.contains(t)) ||
+        (bookViewMenuPortalRef.current && bookViewMenuPortalRef.current.contains(t));
+      if (!inBookMenu) {
+        setIsBookViewMenuOpen(false);
+      }
+      if (bookmarkMenuRef.current && !bookmarkMenuRef.current.contains(t)) {
+        setIsBookmarkMenuOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
+
+  // View mode: 'guide' = reading guide as main content, 'original' = original text as main content
+  const [viewMode, setViewMode] = useState(() => getStoredReadingViewMode(bookId));
+
+  // Show floating "Back to Reading Guide" when user navigated from guide via "View in original text"
+  const [showBackToGuide, setShowBackToGuide] = useState(false);
+  const [showScrollToTopButton, setShowScrollToTopButton] = useState(false);
+  const navigatingFromGuideTextLinkRef = useRef(false);
+  // Roadmap card id to scroll back to after "View in original text" → "Back to Reading Guide"
+  const [guideReturnItemId, setGuideReturnItemId] = useState(null);
+
+  // Guide scroll to restore when clicking "Back to Reading Guide" (saved when leaving via "View in original text")
+  const [guideScrollToRestoreOnBack, setGuideScrollToRestoreOnBack] = useState(null);
+
+  // Remember guide scroll position per page so we can restore when returning or changing page
+  const [guideScrollPositionByPage, setGuideScrollPositionByPage] = useState({});
+  const guideScrollContainerRef = useRef(null);
+  const lastScrollToTopPageRef = useRef(null); // Only scroll book pane to top when page actually changed (not when only notes changed)
+  const skipBookScrollRestoreOnPageChangeRef = useRef(false);
+  const guideJumpAnchorPendingRef = useRef(false);
+  const explicitPaginationInFlightRef = useRef(false);
+  const explicitPaginationTargetPageRef = useRef(null);
+  /** Bumped on explicit pagination so delayed scroll helpers (e.g. guide highlight) do not run stale timeouts. */
+  const bookPaneScrollEpochRef = useRef(0);
+  // Remember book (original) pane scroll per page when switching to guide so we can restore when switching back
+  const [bookScrollPositionByPage, setBookScrollPositionByPage] = useState({});
+
+  const getTrackedScrollContainers = useCallback(() => {
+    const outer = bookPaneContainerRef.current;
+    const inner = guideScrollContainerRef.current;
+    if (viewMode === 'guide') {
+      const active = inner || outer;
+      return { outer, inner, active, containers: active ? [active] : [] };
+    }
+    return { outer, inner: null, active: outer, containers: outer ? [outer] : [] };
+  }, [viewMode]);
+
+  const getEffectiveScrollState = useCallback(() => {
+    const { active, containers } = getTrackedScrollContainers();
+    if (!active || containers.length === 0) {
+      return null;
+    }
+    const top = active.scrollTop || 0;
+    const maxScroll = Math.max(0, (active.scrollHeight || 0) - (active.clientHeight || 0));
+    return { top, maxScroll, active, containers };
+  }, [getTrackedScrollContainers]);
+
+  const updateScrollToTopVisibility = useCallback(() => {
+    const state = getEffectiveScrollState();
+    const winY =
+      typeof window !== 'undefined'
+        ? window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0
+        : 0;
+    const winMax =
+      typeof window !== 'undefined'
+        ? Math.max(
+            0,
+            Math.max(
+              document.documentElement.scrollHeight,
+              document.body.scrollHeight,
+            ) - window.innerHeight,
+          )
+        : 0;
+    const top = Math.max(state?.top ?? 0, winY);
+    const maxScroll = Math.max(state?.maxScroll ?? 0, winMax);
+    if (!state && maxScroll <= 0) {
+      setShowScrollToTopButton(false);
+      return;
+    }
+    setShowScrollToTopButton(maxScroll > 0 && top > SCROLL_TOP_REVEAL_PX);
+  }, [getEffectiveScrollState]);
+
+  const handleScrollToTop = useCallback(() => {
+    const prefersReducedMotion =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const behavior = prefersReducedMotion ? 'auto' : 'smooth';
+    const state = getEffectiveScrollState();
+    if (state) {
+      state.containers.forEach((el) => el.scrollTo({ top: 0, behavior }));
+    }
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior });
+    }
+  }, [getEffectiveScrollState]);
+
+  // Whole-book reading roadmap state
+  const [readingRoadmap, setReadingRoadmap] = useState(null);
+  const [guidesList, setGuidesList] = useState([]);
+  const [activeGuideId, setActiveGuideId] = useState(DEFAULT_GUIDE_ID);
+  const [guideLoading, setGuideLoading] = useState(false);
+  const [guideError, setGuideError] = useState(null);
+  const [hasRoadmap, setHasRoadmap] = useState(false);
+  const [isGeneratingGuide, setIsGeneratingGuide] = useState(false);
+  const [completedRoadmapIds, setCompletedRoadmapIds] = useState([]);
+  const [graphLoadingById, setGraphLoadingById] = useState({});
+  const [alternativeLoadingById, setAlternativeLoadingById] = useState({});
+  const [outsiderLoadingById, setOutsiderLoadingById] = useState({});
+  /** null | 'graphs' | 'shortcuts' | 'outsiders' — sequential bulk generation for roadmap cards */
+  const [roadmapBulkJob, setRoadmapBulkJob] = useState(null);
+
+  const [isOfflineSnapshot, setIsOfflineSnapshot] = useState(false);
+  const [outboxPendingCount, setOutboxPendingCount] = useState(0);
+  const [netOnline, setNetOnline] = useState(
+    typeof navigator !== 'undefined' ? navigator.onLine : true
+  );
+  const blobUrlRegistryRef = useRef(new Set());
+
+  const serverOffline = !netOnline || isOfflineSnapshot;
+
+  const guideApiPath = useCallback(
+    (suffix = '') => {
+      const base = `/api/books/${bookId}/reading-guides/${encodeURIComponent(activeGuideId)}`;
+      return suffix ? `${base}${suffix}` : base;
+    },
+    [bookId, activeGuideId],
+  );
+
+  const registerBlobUrl = useCallback((url) => {
+    if (url && url.startsWith('blob:')) {
+      blobUrlRegistryRef.current.add(url);
+    }
+  }, []);
+
+  const refreshOutboxCount = useCallback(async () => {
+    try {
+      const n = await getOutboxCount();
+      setOutboxPendingCount(n);
+    } catch (_e) {
+      setOutboxPendingCount(0);
+    }
+  }, []);
+
+  // --- State for Reading Guide Search/Highlight ---
+  const [guideSearchText, setGuideSearchText] = useState(null); // Text to search and highlight from reading guide
+  const [guideSearchGlobalOffset, setGuideSearchGlobalOffset] = useState(null); // Stable offset target for guide highlight fallback
+  const [guideJumpSession, setGuideJumpSession] = useState(null); // Stored start/end that keeps the section-end marker
+  const guideSearchHighlightRef = useRef(null); // Ref for the highlighted element to scroll to
+  // --- END State for Reading Guide Search/Highlight ---
+
+  // --- Font Control State (moved from BookPane) ---
+  const [fontSize, setFontSize] = useState(18);
+  const [lineHeight, setLineHeight] = useState(1.7);
+  const FONT_SIZE_STEP = 1;
+  const MIN_FONT_SIZE = 10;
+  const MAX_FONT_SIZE = 32;
+  const LINE_HEIGHT_STEP = 0.1;
+  const MIN_LINE_HEIGHT = 1.2;
+  const MAX_LINE_HEIGHT = 2.5;
+
+  const increaseFontSize = () => {
+    setFontSize(prevSize => Math.min(prevSize + FONT_SIZE_STEP, MAX_FONT_SIZE));
+  };
+
+  const decreaseFontSize = () => {
+    setFontSize(prevSize => Math.max(prevSize - FONT_SIZE_STEP, MIN_FONT_SIZE));
+  };
+
+  const increaseLineHeight = () => {
+    setLineHeight(prevHeight => parseFloat(Math.min(prevHeight + LINE_HEIGHT_STEP, MAX_LINE_HEIGHT).toFixed(2)));
+  };
+
+  const decreaseLineHeight = () => {
+    setLineHeight(prevHeight => parseFloat(Math.max(prevHeight - LINE_HEIGHT_STEP, MIN_LINE_HEIGHT).toFixed(2)));
+  };
+  // --- END Font Control State ---
+
+  const clearGuideHighlight = useCallback(() => {
+    setGuideSearchText(null);
+    setGuideSearchGlobalOffset(null);
+    setPendingScrollOffsetInPage(null);
+    setPendingScrollToPercentage(null);
+    setScrollToGlobalOffset(null);
+  }, []);
+
+  const beginExplicitPagination = useCallback((targetPage) => {
+    bookPaneScrollEpochRef.current += 1;
+    explicitPaginationInFlightRef.current = true;
+    explicitPaginationTargetPageRef.current = targetPage;
+    // Reset stale page marker so explicit pagination always re-applies top scroll.
+    lastScrollToTopPageRef.current = null;
+    // Prevent stale initial-position restore from overriding explicit page-top intent.
+    setInitialScrollTop(null);
+    // Explicit pagination should always land from the beginning of the target page.
+    setGuideScrollToRestoreOnBack(null);
+    setGuideScrollPositionByPage((prev) => ({ ...prev, [targetPage]: 0 }));
+    setBookScrollPositionByPage((prev) => ({ ...prev, [targetPage]: 0 }));
+    skipBookScrollRestoreOnPageChangeRef.current = true;
+    navigatingFromGuideTextLinkRef.current = false;
+    clearGuideHighlight();
+    setGuideJumpSession((prev) => {
+      if (!prev) return null;
+      const bounds = pageBoundariesRef.current;
+      const startInfo = getPageForOffset(prev.startOffset, bounds);
+      const endInfo = getPageForOffset(prev.endOffset, bounds);
+      if (!startInfo || !endInfo) return null;
+      const lo = Math.min(startInfo.pageNumber, endInfo.pageNumber);
+      const hi = Math.max(startInfo.pageNumber, endInfo.pageNumber);
+      if (targetPage < lo || targetPage > hi) return null;
+      return prev;
+    });
+  }, [clearGuideHighlight]);
+
+  const guideSectionEndNotice = useMemo(() => {
+    if (viewMode !== 'original' || !guideJumpSession) return '';
+    const startInfo = getPageForOffset(guideJumpSession.startOffset, pageBoundaries);
+    const endInfo = getPageForOffset(guideJumpSession.endOffset, pageBoundaries);
+    if (!startInfo || !endInfo) return '';
+    if (currentPage === endInfo.pageNumber) return '';
+    if (currentPage >= startInfo.pageNumber && currentPage < endInfo.pageNumber) {
+      return `End of this section is on page ${endInfo.pageNumber}`;
+    }
+    return '';
+  }, [viewMode, guideJumpSession, pageBoundaries, currentPage]);
+
+  // --- Dropdown Menu State ---
+  const [isBookViewMenuOpen, setIsBookViewMenuOpen] = useState(false);
+  const bookViewMenuRef = useRef(null);
+  const bookViewMenuButtonRef = useRef(null);
+  const bookViewMenuPortalRef = useRef(null);
+  const [bookViewMenuPopperStyle, setBookViewMenuPopperStyle] = useState(null);
+  // --- END Dropdown Menu State ---
+
+  const [bookControlsExpanded, setBookControlsExpanded] = useState(() => readStoredBookControlsExpanded());
+  const setBookControlsExpandedPersist = useCallback((next) => {
+    setBookControlsExpanded(next);
+    try {
+      window.sessionStorage.setItem(BOOK_CONTROLS_EXPANDED_KEY, next ? '1' : '0');
+    } catch (_e) {
+      /* ignore */
+    }
+  }, []);
+
+  /** Viewport frame of the book pane area — used to float toolbar / callout above inner scrollers */
+  const bookToolbarWrapperRef = useRef(null);
+  const [bookPaneAreaFrame, setBookPaneAreaFrame] = useState(null);
+
+  const handleRoadmapReturnFocusDone = useCallback(() => {
+    setGuideReturnItemId(null);
+  }, []);
+  // --- NEW State for Content Reformatting ---
+  const [isReformatting, setIsReformatting] = useState(false);
+  const [reformatError, setReformatError] = useState(null);
+  // --- END NEW State for Content Reformatting ---
+  const isInitialMount = useRef(true);
+  const lastSavedPageRef = useRef(null);
+
+  useLayoutEffect(() => {
+    if (!bookPaneAreaRef.current || loading || !bookData) {
+      setBookPaneAreaFrame(null);
+      return undefined;
+    }
+
+    const area = bookPaneAreaRef.current;
+
+    const updateLayout = () => {
+      const r = area.getBoundingClientRect();
+      const nextFrame = { left: r.left, width: r.width };
+      setBookPaneAreaFrame((prev) => {
+        if (
+          prev &&
+          prev.left === nextFrame.left &&
+          prev.width === nextFrame.width
+        ) {
+          return prev;
+        }
+        return nextFrame;
+      });
+    };
+
+    updateLayout();
+
+    const roArea = new ResizeObserver(updateLayout);
+    roArea.observe(area);
+
+    let roToolbar = null;
+    if (bookControlsExpanded && bookToolbarWrapperRef.current) {
+      roToolbar = new ResizeObserver(updateLayout);
+      roToolbar.observe(bookToolbarWrapperRef.current);
+    }
+
+    const onWin = () => updateLayout();
+    window.addEventListener('resize', onWin);
+
+    return () => {
+      roArea.disconnect();
+      if (roToolbar) roToolbar.disconnect();
+      window.removeEventListener('resize', onWin);
+    };
+  }, [loading, bookData, bookControlsExpanded, viewMode]);
+
+  useLayoutEffect(() => {
+    if (!isBookViewMenuOpen) {
+      setBookViewMenuPopperStyle(null);
+      return undefined;
+    }
+    const btn = bookViewMenuButtonRef.current;
+    if (!btn) {
+      setBookViewMenuPopperStyle(null);
+      return undefined;
+    }
+    const margin = 8;
+    const update = () => {
+      const r = btn.getBoundingClientRect();
+      const gap = 4;
+      const minW = Math.max(220, r.width);
+      let left = r.left;
+      if (left + minW > window.innerWidth - margin) {
+        left = Math.max(margin, window.innerWidth - minW - margin);
+      }
+      const spaceBelow = window.innerHeight - r.bottom - gap - margin;
+      const spaceAbove = r.top - gap - margin;
+      const openUp = spaceBelow < 240 && spaceAbove > spaceBelow;
+      const maxH = Math.max(120, openUp ? spaceAbove : spaceBelow);
+      setBookViewMenuPopperStyle({
+        position: 'fixed',
+        top: openUp ? 'auto' : r.bottom + gap,
+        bottom: openUp ? window.innerHeight - r.top + gap : 'auto',
+        left,
+        minWidth: minW,
+        maxHeight: maxH,
+        overflowY: 'auto',
+        zIndex: 10050,
+      });
+    };
+    update();
+    window.addEventListener('resize', update);
+    window.addEventListener('scroll', update, true);
+    return () => {
+      window.removeEventListener('resize', update);
+      window.removeEventListener('scroll', update, true);
+    };
+  }, [isBookViewMenuOpen, bookControlsExpanded, viewMode, bookPaneAreaFrame]);
+
+  const applyBookPayload = useCallback((data, markdownOverride) => {
+    const md = markdownOverride !== undefined ? markdownOverride : (data?.markdown_content || '');
+    setBookData(data);
+    if (data && md) {
+      setFullMarkdownContent(md);
+      const calculatedBoundaries = calculatePageBoundaries(md, APPROX_CHARS_PER_PAGE);
+      setPageBoundaries(calculatedBoundaries);
+      pageBoundariesRef.current = calculatedBoundaries;
+      const numPages = Math.max(1, calculatedBoundaries.length);
+      setTotalPages(numPages);
+      const savedPosition = getStoredReadingPosition(bookId);
+      setCurrentPage((cp) => {
+        let next = cp > numPages ? 1 : cp;
+        let offsetInPage = null;
+        if (savedPosition && Number.isFinite(savedPosition.charOffset)) {
+          const info = getPageForOffset(savedPosition.charOffset, calculatedBoundaries);
+          if (info) {
+            next = info.pageNumber;
+            offsetInPage = info.offsetInPage;
+          }
+        }
+        if (next > numPages || next < 1) {
+          logger.warn(`[BookView - applyBookPayload] Page ${next} out of bounds (${numPages}). Resetting to 1.`);
+          next = 1;
+          offsetInPage = 0;
+        }
+        if (offsetInPage > 0) {
+          setPendingScrollOffsetInPage(offsetInPage);
+        } else if (
+          savedPosition &&
+          !Number.isFinite(savedPosition.charOffset) &&
+          savedPosition.page === next &&
+          typeof savedPosition.scrollTop === 'number'
+        ) {
+          setInitialScrollTop(savedPosition.scrollTop);
+        }
+        return next;
+      });
+    } else {
+      setFullMarkdownContent('');
+      setPageBoundaries([]);
+      pageBoundariesRef.current = [];
+      setTotalPages(1);
+    }
+  }, [bookId]);
 
   const fetchBook = async () => {
     setLoading(true);
     setError(null);
     try {
-      const token = localStorage.getItem('authToken');
+      const token = getStoredAuthToken();
       if (!token) {
         setError("Authentication token not found. Please log in.");
         setLoading(false);
@@ -294,61 +844,66 @@ function BookView() {
         },
       });
       if (!response.ok) {
-        const errorData = await response.json();
-        if (response.status === 401) { // Handle specific 401 error
+        const errorData = await response.json().catch(() => ({}));
+        if (response.status === 401) {
           setError("Not authenticated. Please log in again.");
-          // Optionally, redirect to login or clear token
-          // localStorage.removeItem('authToken'); 
-          // window.location.href = '/login';
         } else if (response.status === 404) {
           setBookData(null);
+          setLoading(false);
           return;
         }
         throw new Error(`HTTP error! status: ${response.status} - ${errorData.detail || response.statusText}`);
       }
       const data = await response.json();
-      setBookData(data);
-      if (data && data.markdown_content) {
-        fullMarkdownContent.current = data.markdown_content;
-        // Calculate page boundaries
-        const calculatedBoundaries = calculatePageBoundaries(fullMarkdownContent.current, APPROX_CHARS_PER_PAGE);
-        setPageBoundaries(calculatedBoundaries);
-        setTotalPages(Math.max(1, calculatedBoundaries.length)); // Ensure totalPages is at least 1
-        
-        // Try to restore last reading position for this book
-        const savedPositionRaw = localStorage.getItem(`readingPalLastPosition_${bookId}`);
-        if (savedPositionRaw) {
-          try {
-            const savedPosition = JSON.parse(savedPositionRaw);
-            if (savedPosition && typeof savedPosition.page === 'number' && typeof savedPosition.scrollTop === 'number') {
-              const restoredPage = Math.max(1, Math.min(savedPosition.page, calculatedBoundaries.length || 1));
-              logger.info(`[BookView - fetchBook] Restoring saved position for book ${bookId}: Page ${restoredPage}, ScrollTop ${savedPosition.scrollTop}`);
-              setCurrentPage(restoredPage); // Set current page first
-              setInitialScrollTop(savedPosition.scrollTop); // Set initial scroll top to be applied later
-            } else {
-              logger.warn(`[BookView - fetchBook] Invalid saved position data for book ${bookId}:`, savedPosition);
-              setCurrentPage(1); // Default to page 1 if saved data is invalid
-            }
-          } catch (parseError) {
-            logger.error(`[BookView - fetchBook] Error parsing saved position for book ${bookId}:`, parseError);
-            setCurrentPage(1); // Default to page 1 on parse error
-          }
-        } else {
-          // setCurrentPage(1); // Ensure currentPage is reset to 1 if no saved position
-          // No need to explicitly set to 1 here if fetchBook resets it later or if default is 1
+      applyBookPayload(data, data.markdown_content);
+      setIsOfflineSnapshot(false);
+      try {
+        await putBookMeta(bookId, { bookData: data, markdownContent: data.markdown_content || '' });
+        if (data.markdown_content) {
+          await prefetchMarkdownImages(bookId, data.markdown_content);
         }
-
-      } else {
-        fullMarkdownContent.current = '';
-        setPageBoundaries([]);
-        setTotalPages(1);
-        // setCurrentPage(1);
+      } catch (cacheErr) {
+        logger.warn('[BookView - fetchBook] Cache persist failed:', cacheErr);
       }
     } catch (err) {
       logger.error('Failed to fetch book:', err);
-      setError(`Failed to load book: ${err.message || 'Unknown error'}`);
-      setBookData(null);
-      fullMarkdownContent.current = '';
+      const tryCache =
+        !navigator.onLine ||
+        err.name === 'TypeError' ||
+        (err.message && String(err.message).includes('Failed to fetch'));
+      if (tryCache) {
+        try {
+          const meta = await getBookMeta(bookId);
+          if (meta && meta.bookData && meta.markdownContent) {
+            let md = meta.markdownContent;
+            md = await rewriteMarkdownWithCachedImages(bookId, md, registerBlobUrl);
+            applyBookPayload(meta.bookData, md);
+            setIsOfflineSnapshot(true);
+            setError(null);
+          } else {
+            if (!navigator.onLine) {
+              setError('Offline and no cached copy found for this book yet. Reconnect once and open this book to enable offline reading.');
+            } else {
+              setError(`Failed to load book: ${err.message || 'Unknown error'}. No cached copy is available for fallback.`);
+            }
+            setBookData(null);
+            setFullMarkdownContent('');
+          }
+        } catch (cacheErr) {
+          logger.error('[BookView - fetchBook] Cache load failed:', cacheErr);
+          if (!navigator.onLine) {
+            setError('Offline and failed to read this book from local cache. Reconnect and reopen to refresh the offline copy.');
+          } else {
+            setError(`Failed to load book: ${err.message || 'Unknown error'}`);
+          }
+          setBookData(null);
+          setFullMarkdownContent('');
+        }
+      } else {
+        setError(`Failed to load book: ${err.message || 'Unknown error'}`);
+        setBookData(null);
+        setFullMarkdownContent('');
+      }
     } finally {
       setLoading(false);
     }
@@ -357,7 +912,7 @@ function BookView() {
   const fetchBookmarks = async () => {
     if (!bookId) return;
     try {
-      const token = localStorage.getItem('authToken');
+      const token = getStoredAuthToken();
       if (!token) {
         // setError("Authentication token not found for fetching bookmarks. Please log in."); // Or handle silently
         logger.warn("[BookView - fetchBookmarks] Auth token not found.");
@@ -400,12 +955,32 @@ function BookView() {
       });
 
       processedBookmarks.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-      setBookmarks(processedBookmarks);
-      logger.info("Processed and set bookmarks:", processedBookmarks);
+      try {
+        const ann = await getAnnotations(bookId);
+        const merged = mergeAnnotationsByTimestamp({
+          localBookmarks: ann?.bookmarks || [],
+          localNotes: ann?.notes || [],
+          serverBookmarks: processedBookmarks,
+          serverNotes: ann?.notes || [],
+        });
+        setBookmarks(merged.bookmarks);
+        setNotes(merged.notes);
+        await putAnnotations(bookId, merged);
+        logger.info("Processed and reconciled bookmarks:", merged.bookmarks);
+      } catch (_e) { /* ignore */ }
 
     } catch (err) {
       logger.error('Error fetching bookmarks:', err);
-      setBookmarks([]); // Reset bookmarks on error
+      try {
+        const ann = await getAnnotations(bookId);
+        if (ann && Array.isArray(ann.bookmarks)) {
+          setBookmarks(ann.bookmarks);
+        } else {
+          setBookmarks([]);
+        }
+      } catch (_e) {
+        setBookmarks([]);
+      }
     }
   };
 
@@ -415,12 +990,33 @@ function BookView() {
     }
     logger.info(`[BookView - handleDeleteBookmark] Attempting to delete bookmark ID: ${bookmarkIdToDelete}`);
     try {
-      const token = localStorage.getItem('authToken');
+      const token = getStoredAuthToken();
       if (!token) {
         alert("Authentication token not found. Please log in to delete bookmarks.");
         logger.warn("[BookView - handleDeleteBookmark] Auth token not found.");
         return;
       }
+
+      if (!navigator.onLine || isOfflineSnapshot) {
+        setBookmarks((prev) => prev.filter((b) => b.id !== bookmarkIdToDelete));
+        try {
+          const ann = await getAnnotations(bookId);
+          const nextBm = (ann?.bookmarks || []).filter((b) => b.id !== bookmarkIdToDelete);
+          await putAnnotations(bookId, { bookmarks: nextBm, notes: ann?.notes || [] });
+          if (isLocalId(bookmarkIdToDelete)) {
+            await removePendingCreateBookmark(bookmarkIdToDelete);
+          } else {
+            await addOutboxEntry({
+              type: 'delete_bookmark',
+              bookId,
+              payload: { bookmarkId: bookmarkIdToDelete },
+            });
+          }
+          await refreshOutboxCount();
+        } catch (_e) { /* ignore */ }
+        return;
+      }
+
       const response = await fetch(`/api/bookmarks/${bookmarkIdToDelete}`, {
         method: 'DELETE',
         headers: {
@@ -447,75 +1043,1047 @@ function BookView() {
   useEffect(() => {
     if (bookId) {
       // Reset initialScrollTop when bookId changes, so it only applies once per book load
-      setInitialScrollTop(null); 
+      setInitialScrollTop(null);
+      setIsOfflineSnapshot(false);
       fetchBook(); // fetchBook now handles restoring page and setting initialScrollTop
       fetchBookmarks();
-      // setCurrentPage(1); // fetchBook handles setting currentPage, potentially from localStorage
+      // setCurrentPage(1); // This is now handled by the useState initializer
       // setPageInput('1'); // pageInput updates based on currentPage effect
+      setReadingRoadmap(null);
+      setGuideError(null);
+      setHasRoadmap(false);
+      setCompletedRoadmapIds([]);
+      setGuideJumpSession(null);
+      setGuideSearchText(null);
+      setGuideSearchGlobalOffset(null);
     }
   }, [bookId]);
 
-  // Resizer Event Handlers
-  const handleDocumentMouseMove = useCallback((e) => {
-      if (!isResizing.current || !bookViewContainerRef.current || !bookPaneAreaRef.current) {
-          return;
-      }
-      e.preventDefault();
-
-      const deltaX = e.clientX - dragStartX.current;
-      let newWidthPx = initialBookPaneWidthPx.current + deltaX;
-
-      const containerWidth = bookViewContainerRef.current.offsetWidth;
-      // Define minimum width for each pane (e.g., 200px or 20% of container width, whichever is larger)
-      const minPaneWidth = Math.max(200, containerWidth * 0.20); 
-      const maxPaneWidth = containerWidth - minPaneWidth; 
-
-      newWidthPx = Math.max(minPaneWidth, Math.min(newWidthPx, maxPaneWidth));
-      setBookPaneFlexBasis(`${newWidthPx}px`); // Set flex-basis in pixels
-  }, []); 
-
-  const handleDocumentMouseUp = useCallback(() => {
-      if (!isResizing.current) {
-          return;
-      }
-      isResizing.current = false;
-      document.body.classList.remove('resizing-no-select');
-      document.removeEventListener('mousemove', handleDocumentMouseMove);
-      document.removeEventListener('mouseup', handleDocumentMouseUp);
-  }, [handleDocumentMouseMove]); 
-
-  const handleMouseDownOnResizer = useCallback((e) => {
-      if (!bookPaneAreaRef.current) return;
-
-      isResizing.current = true;
-      dragStartX.current = e.clientX;
-      initialBookPaneWidthPx.current = bookPaneAreaRef.current.offsetWidth;
-      e.preventDefault(); 
-
-      document.body.classList.add('resizing-no-select');
-      document.addEventListener('mousemove', handleDocumentMouseMove);
-      document.addEventListener('mouseup', handleDocumentMouseUp);
-  }, [handleDocumentMouseMove, handleDocumentMouseUp]);
-
-  // Cleanup useEffect for global event listeners
   useEffect(() => {
-      return () => {
-          if (isResizing.current) {
-              document.body.classList.remove('resizing-no-select');
-              document.removeEventListener('mousemove', handleDocumentMouseMove);
-              document.removeEventListener('mouseup', handleDocumentMouseUp);
-          }
-      };
-  }, [handleDocumentMouseMove, handleDocumentMouseUp]);
-
-  useEffect(() => { // ADD THIS useEffect BLOCK
-    const checkMobileView = () => {
-      setIsMobileView(window.innerWidth <= 768);
+    return () => {
+      blobUrlRegistryRef.current.forEach((url) => {
+        try {
+          URL.revokeObjectURL(url);
+        } catch (_e) {
+          /* ignore */
+        }
+      });
+      blobUrlRegistryRef.current.clear();
     };
-    // checkMobileView(); // Already initialized in useState
-    window.addEventListener('resize', checkMobileView);
-    return () => window.removeEventListener('resize', checkMobileView);
+  }, [bookId]);
+
+  useEffect(() => {
+    refreshOutboxCount();
+  }, [bookId, refreshOutboxCount]);
+
+  useEffect(() => {
+    const sync = () => setNetOnline(navigator.onLine);
+    window.addEventListener('online', sync);
+    window.addEventListener('offline', sync);
+    return () => {
+      window.removeEventListener('online', sync);
+      window.removeEventListener('offline', sync);
+    };
   }, []);
+
+  useEffect(() => {
+    const run = async () => {
+      if (typeof navigator !== 'undefined' && navigator.onLine) {
+        try {
+          await flushOutbox();
+          await refreshOutboxCount();
+        } catch (_e) {
+          /* ignore */
+        }
+      }
+    };
+    run();
+  }, []);
+
+  // Persist viewMode to localStorage when it changes
+  useEffect(() => {
+    if (bookId) {
+      setStoredReadingViewMode(bookId, viewMode);
+    }
+  }, [bookId, viewMode]);
+
+  // Restore viewMode from localStorage when bookId changes
+  useEffect(() => {
+    if (bookId) {
+      setViewMode(getStoredReadingViewMode(bookId));
+    }
+  }, [bookId]);
+
+  const loadActiveGuideData = useCallback(
+    async (guideId, token, localCache) => {
+      const localEntry = getGuideEntry(localCache, guideId);
+      const [guideResp, progressResp] = await Promise.all([
+        fetch(`/api/books/${bookId}/reading-guides/${encodeURIComponent(guideId)}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+        fetch(`/api/books/${bookId}/reading-guides/${encodeURIComponent(guideId)}/progress`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+      ]);
+
+      let completedIds = localEntry?.completedIds || [];
+      let progressTouchedAt = localEntry?.progressTouchedAt || {};
+      if (progressResp.ok) {
+        const progressData = await progressResp.json();
+        const reconciledProgress = reconcileGuideProgressState({
+          localCompletedIds: localEntry?.completedIds || [],
+          localProgressTouchedAt: localEntry?.progressTouchedAt || {},
+          serverCompletedIds: progressData.completed_ids || [],
+        });
+        completedIds = reconciledProgress.completedIds;
+        progressTouchedAt = reconciledProgress.progressTouchedAt;
+      }
+      setCompletedRoadmapIds(completedIds);
+
+      if (guideResp.ok) {
+        const data = await guideResp.json();
+        if (data === null) {
+          setReadingRoadmap(null);
+          setHasRoadmap(false);
+          return;
+        }
+        try {
+          await putGuide(bookId, {
+            roadmap: data,
+            completedIds,
+            progressTouchedAt,
+            guideId,
+            activeGuideId: guideId,
+          });
+          await cacheRoadmapGraphImages(bookId, data);
+        } catch (_e) { /* ignore */ }
+        const hydrated = await hydrateRoadmapWithCachedGraphs(bookId, data, registerBlobUrl);
+        setReadingRoadmap(hydrated);
+        setHasRoadmap(!!(data && data.items && data.items.length > 0));
+        setGuideError(null);
+      } else if (guideResp.status === 404) {
+        setReadingRoadmap(null);
+        setHasRoadmap(false);
+      } else {
+        const e = await guideResp.json().catch(() => ({ detail: `HTTP ${guideResp.status}` }));
+        throw new Error(e.detail || 'Failed to load roadmap');
+      }
+    },
+    [bookId, registerBlobUrl],
+  );
+
+  const fetchReadingRoadmap = useCallback(async () => {
+    if (!bookId) return;
+    setGuideLoading(true);
+    setGuideError(null);
+    try {
+      const token = getStoredAuthToken();
+      if (!token) throw new Error('Authentication token not found.');
+
+      const listResp = await fetch(`/api/books/${bookId}/reading-guides`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      let summaries = [];
+      if (listResp.ok) {
+        summaries = await listResp.json();
+      }
+      setGuidesList(summaries || []);
+
+      const localGuide = await getGuide(bookId);
+      let nextActiveId =
+        localGuide?.activeGuideId ||
+        summaries[0]?.guide_id ||
+        DEFAULT_GUIDE_ID;
+      if (summaries.length && !summaries.some((s) => s.guide_id === nextActiveId)) {
+        nextActiveId = summaries[0].guide_id;
+      }
+      setActiveGuideId(nextActiveId);
+
+      if (summaries.length) {
+        try {
+          await putGuide(bookId, { guidesList: summaries, activeGuideId: nextActiveId });
+        } catch (_e) { /* ignore */ }
+        await loadActiveGuideData(nextActiveId, token, localGuide);
+      } else {
+        setReadingRoadmap(null);
+        setHasRoadmap(false);
+        setCompletedRoadmapIds([]);
+      }
+    } catch (err) {
+      logger.error('[BookView - fetchReadingRoadmap] Failed:', err);
+      const tryCache =
+        !navigator.onLine ||
+        err.name === 'TypeError' ||
+        (err.message && String(err.message).includes('Failed to fetch'));
+      if (tryCache) {
+        try {
+          const g = await getGuide(bookId);
+          const entry = getGuideEntry(g, g?.activeGuideId);
+          if (entry?.roadmap) {
+            const hydrated = await hydrateRoadmapWithCachedGraphs(bookId, entry.roadmap, registerBlobUrl);
+            setReadingRoadmap(hydrated);
+            setActiveGuideId(g.activeGuideId || DEFAULT_GUIDE_ID);
+            setGuidesList(
+              (g.guides || []).map((item) => ({
+                guide_id: item.guideId,
+                name: item.name,
+                custom_requirements: item.custom_requirements,
+                prompt_depth: item.prompt_depth,
+                prompt_emphasis: item.prompt_emphasis,
+                item_count: item.roadmap?.items?.length || 0,
+              })),
+            );
+            setCompletedRoadmapIds(entry.completedIds || []);
+            setHasRoadmap(!!(entry.roadmap.items && entry.roadmap.items.length > 0));
+            setGuideError(null);
+          } else {
+            setGuideError(err.message);
+            setReadingRoadmap(null);
+            setHasRoadmap(false);
+          }
+        } catch (_e) {
+          setGuideError(err.message);
+          setReadingRoadmap(null);
+          setHasRoadmap(false);
+        }
+      } else {
+        setGuideError(err.message);
+        setReadingRoadmap(null);
+        setHasRoadmap(false);
+      }
+    } finally {
+      setGuideLoading(false);
+    }
+  }, [bookId, registerBlobUrl, loadActiveGuideData]);
+
+  useEffect(() => {
+    const onOnline = async () => {
+      try {
+        await flushOutbox();
+        await refreshOutboxCount();
+        if (!bookId || !getStoredAuthToken()) return;
+        const token = getStoredAuthToken();
+        const [bookmarksRes, notesRes] = await Promise.all([
+          fetch(`/api/bookmarks/book/${bookId}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          }),
+          fetch(`/api/notes/${bookId}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          }),
+        ]);
+        if (bookmarksRes.ok && notesRes.ok) {
+          const [bookmarksData, notesData] = await Promise.all([
+            bookmarksRes.json(),
+            notesRes.json(),
+          ]);
+          const ann = await getAnnotations(bookId);
+          const merged = mergeAnnotationsByTimestamp({
+            localBookmarks: ann?.bookmarks || [],
+            localNotes: ann?.notes || [],
+            serverBookmarks: bookmarksData || [],
+            serverNotes: notesData || [],
+          });
+          setBookmarks(merged.bookmarks);
+          setNotes(merged.notes);
+          await putAnnotations(bookId, merged);
+        } else {
+          if (bookmarksRes.ok) fetchBookmarks();
+          if (notesRes.ok) {
+            const notesData = await notesRes.json();
+            notesData.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+            const ann = await getAnnotations(bookId);
+            const merged = mergeAnnotationsByTimestamp({
+              localBookmarks: ann?.bookmarks || [],
+              localNotes: ann?.notes || [],
+              serverBookmarks: ann?.bookmarks || [],
+              serverNotes: notesData,
+            });
+            setBookmarks(merged.bookmarks);
+            setNotes(merged.notes);
+            await putAnnotations(bookId, merged);
+          }
+        }
+        if (viewMode === 'guide') {
+          fetchReadingRoadmap();
+        }
+      } catch (_e) {
+        /* ignore */
+      }
+    };
+    window.addEventListener('online', onOnline);
+    return () => window.removeEventListener('online', onOnline);
+  }, [bookId, fetchReadingRoadmap, viewMode]);
+
+  // Function to refresh signed URLs in markdown content (must be defined before handleGuideTextLink)
+  const refreshImageUrls = useCallback(async () => {
+    if (!bookId) return;
+    if (isOfflineSnapshot || !navigator.onLine) return;
+    try {
+      const token = getStoredAuthToken();
+      if (!token) {
+        logger.warn("[BookView - refreshImageUrls] Auth token not found.");
+        return;
+      }
+      const response = await fetch(`/api/books/${bookId}/refresh-image-urls`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      if (response.ok) {
+        const data = await response.json();
+        if (data.markdown_content) {
+          setFullMarkdownContent(data.markdown_content);
+          logger.info("[BookView - refreshImageUrls] Refreshed signed URLs in markdown content");
+        }
+      } else {
+        logger.warn("[BookView - refreshImageUrls] Failed to refresh URLs, continuing with existing content");
+      }
+    } catch (err) {
+      logger.error("[BookView - refreshImageUrls] Error refreshing URLs:", err);
+    }
+  }, [bookId, isOfflineSnapshot]);
+
+  const handleSwitchGuide = useCallback(
+    async (guideId) => {
+      if (!bookId || !guideId || guideId === activeGuideId) return;
+      setActiveGuideId(guideId);
+      setGuideLoading(true);
+      setGuideError(null);
+      try {
+        const token = getStoredAuthToken();
+        if (!token) throw new Error('Authentication token not found.');
+        const localGuide = await getGuide(bookId);
+        await putGuide(bookId, { activeGuideId: guideId });
+        await loadActiveGuideData(guideId, token, localGuide);
+      } catch (err) {
+        logger.error('[BookView - handleSwitchGuide] Failed:', err);
+        setGuideError(err.message);
+      } finally {
+        setGuideLoading(false);
+      }
+    },
+    [bookId, activeGuideId, loadActiveGuideData],
+  );
+
+  const handleCreateGuide = async ({
+    name,
+    custom_requirements: customRequirements,
+    prompt_depth: promptDepth,
+    prompt_emphasis: promptEmphasis,
+  }) => {
+    if (!bookId) return;
+    if (!navigator.onLine || isOfflineSnapshot) {
+      setGuideError('Roadmap generation requires an internet connection.');
+      return;
+    }
+    if (guidesList.length >= MAX_READING_GUIDES) {
+      setGuideError(`You can have at most ${MAX_READING_GUIDES} reading guides per book.`);
+      return;
+    }
+    setIsGeneratingGuide(true);
+    setGuideError(null);
+    try {
+      const token = getStoredAuthToken();
+      if (!token) throw new Error('Authentication token not found.');
+      const response = await fetch(`/api/books/${bookId}/reading-guides`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: name || undefined,
+          custom_requirements: customRequirements || undefined,
+          prompt_depth: promptDepth || undefined,
+          prompt_emphasis: promptEmphasis || undefined,
+        }),
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+        throw new Error(errorData.detail);
+      }
+      await fetchReadingRoadmap();
+    } catch (err) {
+      logger.error('[BookView - handleCreateGuide] Failed:', err);
+      setGuideError(err.message);
+    } finally {
+      setIsGeneratingGuide(false);
+    }
+  };
+
+  const handleDeleteGuide = async (guideId) => {
+    if (!bookId || !guideId) return;
+    if (!navigator.onLine || isOfflineSnapshot) {
+      setGuideError('Deleting a guide requires an internet connection.');
+      return;
+    }
+    setGuideError(null);
+    try {
+      const token = getStoredAuthToken();
+      if (!token) throw new Error('Authentication token not found.');
+      const response = await fetch(
+        `/api/books/${bookId}/reading-guides/${encodeURIComponent(guideId)}`,
+        { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (!response.ok && response.status !== 204) {
+        const errorData = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+        throw new Error(errorData.detail);
+      }
+      await fetchReadingRoadmap();
+    } catch (err) {
+      logger.error('[BookView - handleDeleteGuide] Failed:', err);
+      setGuideError(err.message);
+    }
+  };
+
+  const handleGenerateRoadmap = async () => {
+    if (!bookId) return;
+    if (!navigator.onLine || isOfflineSnapshot) {
+      setGuideError('Roadmap generation requires an internet connection.');
+      return;
+    }
+    setIsGeneratingGuide(true);
+    setGuideError(null);
+
+    try {
+      const token = getStoredAuthToken();
+      if (!token) throw new Error('Authentication token not found.');
+
+      const hasActive = guidesList.some((g) => g.guide_id === activeGuideId);
+      const url = hasActive
+        ? guideApiPath('/generate')
+        : `/api/books/${bookId}/reading-guides`;
+      const method = 'POST';
+      const body = hasActive ? undefined : JSON.stringify({ name: 'Reading Roadmap' });
+
+      const response = await fetch(url, {
+        method,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          ...(body ? { 'Content-Type': 'application/json' } : {}),
+        },
+        body,
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+        throw new Error(errorData.detail);
+      }
+      await fetchReadingRoadmap();
+    } catch (err) {
+      logger.error('[BookView - handleGenerateRoadmap] Failed:', err);
+      setGuideError(err.message);
+    } finally {
+      setIsGeneratingGuide(false);
+    }
+  };
+
+  const handleToggleRoadmapProgress = async (itemId, completed) => {
+    if (!bookId || !itemId) return;
+    if (!navigator.onLine || isOfflineSnapshot) {
+      try {
+        const g = await getGuide(bookId);
+        const entry = getGuideEntry(g, activeGuideId);
+        const localProgress = applyLocalProgressToggle({
+          completedIds: completedRoadmapIds,
+          progressTouchedAt: entry?.progressTouchedAt || {},
+          itemId,
+          completed,
+        });
+        const nextIds = localProgress.completedIds;
+        setCompletedRoadmapIds(nextIds);
+        if (entry?.roadmap) {
+          await putGuide(bookId, {
+            roadmap: entry.roadmap,
+            completedIds: nextIds,
+            progressTouchedAt: localProgress.progressTouchedAt,
+            guideId: activeGuideId,
+            activeGuideId,
+          });
+        }
+        await addOutboxEntry({
+          type: 'roadmap_progress',
+          bookId,
+          payload: { item_id: itemId, completed, guide_id: activeGuideId },
+        });
+        await refreshOutboxCount();
+      } catch (err) {
+        logger.error("[BookView - handleToggleRoadmapProgress] Offline persist failed:", err);
+      }
+      return;
+    }
+    try {
+      const token = getStoredAuthToken();
+      if (!token) throw new Error("Authentication token not found.");
+      const response = await fetch(guideApiPath('/progress'), {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ item_id: itemId, completed }),
+      });
+      if (!response.ok) return;
+      const data = await response.json();
+      const g = await getGuide(bookId);
+      const entry = getGuideEntry(g, activeGuideId);
+      const reconciledProgress = reconcileGuideProgressState({
+        localCompletedIds: entry?.completedIds || [],
+        localProgressTouchedAt: entry?.progressTouchedAt || {},
+        serverCompletedIds: data.completed_ids || [],
+      });
+      setCompletedRoadmapIds(reconciledProgress.completedIds);
+      try {
+        if (entry?.roadmap) {
+          await putGuide(bookId, {
+            roadmap: entry.roadmap,
+            completedIds: reconciledProgress.completedIds,
+            progressTouchedAt: reconciledProgress.progressTouchedAt,
+            guideId: activeGuideId,
+            activeGuideId,
+          });
+        }
+      } catch (_e) { /* ignore */ }
+    } catch (err) {
+      logger.error("[BookView - handleToggleRoadmapProgress] Failed:", err);
+    }
+  };
+
+  const generateGraphForCard = useCallback(async (cardId, options = {}) => {
+    const { surfaceError = true } = options;
+    if (!bookId || !cardId) return false;
+    if (!navigator.onLine || isOfflineSnapshot) {
+      if (surfaceError) {
+        setGuideError('Graph generation requires an internet connection.');
+      }
+      return false;
+    }
+    setGraphLoadingById((prev) => ({ ...prev, [cardId]: true }));
+    try {
+      const token = getStoredAuthToken();
+      if (!token) throw new Error("Authentication token not found.");
+      const response = await fetch(guideApiPath(`/cards/${encodeURIComponent(cardId)}/graph`), {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+        throw new Error(errorData.detail || "Failed to generate graph");
+      }
+      const data = await response.json();
+      const graphUrl = data.graph_image_url;
+      if (graphUrl) {
+        const setGraph = (nodes) => (nodes || []).map((n) => ({
+          ...n,
+          graph_image_url: n.id === cardId ? graphUrl : n.graph_image_url,
+          children: setGraph(n.children),
+        }));
+        setReadingRoadmap((prev) => {
+          if (!prev) return prev;
+          const updated = { ...prev, items: setGraph(prev.items) };
+          (async () => {
+            try {
+              const gSnap = await getGuide(bookId);
+              await putGuide(bookId, {
+                roadmap: updated,
+                completedIds: getGuideEntry(gSnap, activeGuideId)?.completedIds ?? completedRoadmapIds,
+                guideId: activeGuideId,
+                activeGuideId,
+              });
+              await cacheRoadmapGraphImages(bookId, updated);
+              const hydrated = await hydrateRoadmapWithCachedGraphs(bookId, updated, registerBlobUrl);
+              setReadingRoadmap(hydrated);
+            } catch (_e) { /* ignore */ }
+          })();
+          return updated;
+        });
+      }
+      return true;
+    } catch (err) {
+      logger.error("[BookView - generateGraphForCard] Failed:", err);
+      if (surfaceError) {
+        setGuideError(err.message);
+      }
+      return false;
+    } finally {
+      setGraphLoadingById((prev) => ({ ...prev, [cardId]: false }));
+    }
+  }, [bookId, activeGuideId, isOfflineSnapshot, completedRoadmapIds, registerBlobUrl, guideApiPath]);
+
+  const handleGenerateCardGraph = async (cardId) => {
+    await generateGraphForCard(cardId, { surfaceError: true });
+  };
+
+  const updateRoadmapAlternativeReading = useCallback((cardId, data) => {
+    const alternativeReading = data?.alternative_reading;
+    const sourceWordCount = Number.isFinite(data?.source_word_count) ? data.source_word_count : null;
+    const shortcutWordCount = Number.isFinite(data?.shortcut_word_count) ? data.shortcut_word_count : null;
+    if (!(typeof alternativeReading === 'string' && alternativeReading.trim())) {
+      return false;
+    }
+
+    const setAlternative = (nodes) => (nodes || []).map((n) => ({
+      ...n,
+      alternative_reading: n.id === cardId ? alternativeReading : n.alternative_reading,
+      alternative_source_word_count: n.id === cardId ? sourceWordCount : n.alternative_source_word_count,
+      alternative_word_count: n.id === cardId ? shortcutWordCount : n.alternative_word_count,
+      children: setAlternative(n.children),
+    }));
+
+    setReadingRoadmap((prev) => {
+      if (!prev) return prev;
+      const updated = { ...prev, items: setAlternative(prev.items) };
+      (async () => {
+        try {
+          const gSnap = await getGuide(bookId);
+          await putGuide(bookId, {
+            roadmap: updated,
+            completedIds: getGuideEntry(gSnap, activeGuideId)?.completedIds ?? completedRoadmapIds,
+            guideId: activeGuideId,
+            activeGuideId,
+          });
+        } catch (_e) { /* ignore */ }
+      })();
+      return updated;
+    });
+    return true;
+  }, [bookId, activeGuideId, completedRoadmapIds]);
+
+  const generateAlternativeReadingForCard = useCallback(async (cardId, options = {}) => {
+    const { surfaceError = true } = options;
+    if (!bookId || !cardId) return false;
+    if (!navigator.onLine || isOfflineSnapshot) {
+      if (surfaceError) {
+        setGuideError('Author Shortcut generation requires an internet connection.');
+      }
+      return false;
+    }
+
+    setAlternativeLoadingById((prev) => ({ ...prev, [cardId]: true }));
+    try {
+      const token = getStoredAuthToken();
+      if (!token) throw new Error("Authentication token not found.");
+      const response = await fetch(guideApiPath(`/cards/${encodeURIComponent(cardId)}/alternative-reading`), {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+        throw new Error(errorData.detail || "Failed to generate alternative reading");
+      }
+
+      const data = await response.json();
+      return updateRoadmapAlternativeReading(cardId, data);
+    } catch (err) {
+      logger.error("[BookView - generateAlternativeReadingForCard] Failed:", err);
+      if (surfaceError) {
+        setGuideError(err.message);
+      }
+      return false;
+    } finally {
+      setAlternativeLoadingById((prev) => ({ ...prev, [cardId]: false }));
+    }
+  }, [bookId, isOfflineSnapshot, updateRoadmapAlternativeReading, guideApiPath]);
+
+  const handleGenerateAlternativeReading = async (cardId) => {
+    await generateAlternativeReadingForCard(cardId, { surfaceError: true });
+  };
+
+  const updateRoadmapOutsiderGuide = useCallback((cardId, data) => {
+    const outsiderGuide = data?.outsider_guide;
+    const sourceWordCount = Number.isFinite(data?.source_word_count) ? data.source_word_count : null;
+    const outsiderWordCount = Number.isFinite(data?.outsider_word_count) ? data.outsider_word_count : null;
+    if (!(typeof outsiderGuide === 'string' && outsiderGuide.trim())) {
+      return false;
+    }
+
+    const setOutsiderGuide = (nodes) => (nodes || []).map((n) => ({
+      ...n,
+      outsider_guide: n.id === cardId ? outsiderGuide : n.outsider_guide,
+      outsider_source_word_count: n.id === cardId ? sourceWordCount : n.outsider_source_word_count,
+      outsider_word_count: n.id === cardId ? outsiderWordCount : n.outsider_word_count,
+      children: setOutsiderGuide(n.children),
+    }));
+
+    setReadingRoadmap((prev) => {
+      if (!prev) return prev;
+      const updated = { ...prev, items: setOutsiderGuide(prev.items) };
+      (async () => {
+        try {
+          const gSnap = await getGuide(bookId);
+          await putGuide(bookId, {
+            roadmap: updated,
+            completedIds: getGuideEntry(gSnap, activeGuideId)?.completedIds ?? completedRoadmapIds,
+            guideId: activeGuideId,
+            activeGuideId,
+          });
+        } catch (_e) { /* ignore */ }
+      })();
+      return updated;
+    });
+    return true;
+  }, [bookId, activeGuideId, completedRoadmapIds]);
+
+  const generateOutsiderGuideForCard = useCallback(async (cardId, options = {}) => {
+    const { surfaceError = true } = options;
+    if (!bookId || !cardId) return false;
+    if (!navigator.onLine || isOfflineSnapshot) {
+      if (surfaceError) {
+        setGuideError('Outsider Guide generation requires an internet connection.');
+      }
+      return false;
+    }
+
+    setOutsiderLoadingById((prev) => ({ ...prev, [cardId]: true }));
+    try {
+      const token = getStoredAuthToken();
+      if (!token) throw new Error("Authentication token not found.");
+      const response = await fetch(guideApiPath(`/cards/${encodeURIComponent(cardId)}/outsider-guide`), {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+        throw new Error(errorData.detail || "Failed to generate outsider guide");
+      }
+
+      const data = await response.json();
+      return updateRoadmapOutsiderGuide(cardId, data);
+    } catch (err) {
+      logger.error("[BookView - generateOutsiderGuideForCard] Failed:", err);
+      if (surfaceError) {
+        setGuideError(err.message);
+      }
+      return false;
+    } finally {
+      setOutsiderLoadingById((prev) => ({ ...prev, [cardId]: false }));
+    }
+  }, [bookId, isOfflineSnapshot, updateRoadmapOutsiderGuide, guideApiPath]);
+
+  const handleSendCardChat = useCallback(
+    async (cardId, message) => {
+      if (!bookId || !cardId || !message?.trim()) return null;
+      if (!navigator.onLine || isOfflineSnapshot) {
+        throw new Error('Chat requires an internet connection.');
+      }
+      const token = getStoredAuthToken();
+      if (!token) throw new Error('Authentication token not found.');
+      const response = await fetch(guideApiPath(`/cards/${encodeURIComponent(cardId)}/chat`), {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ message: message.trim() }),
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+        throw new Error(errorData.detail || 'Chat failed');
+      }
+      const data = await response.json();
+      return data.messages || [];
+    },
+    [bookId, isOfflineSnapshot, guideApiPath],
+  );
+
+  const handleLoadCardChat = useCallback(
+    async (cardId) => {
+      if (!bookId || !cardId) return [];
+      if (!navigator.onLine || isOfflineSnapshot) return [];
+      const token = getStoredAuthToken();
+      if (!token) return [];
+      const response = await fetch(guideApiPath(`/cards/${encodeURIComponent(cardId)}/chat`), {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) return [];
+      const data = await response.json();
+      return data.messages || [];
+    },
+    [bookId, isOfflineSnapshot, guideApiPath],
+  );
+
+  const handleClearCardChat = useCallback(
+    async (cardId) => {
+      if (!bookId || !cardId) return;
+      if (!navigator.onLine || isOfflineSnapshot) {
+        throw new Error('Clearing chat requires an internet connection.');
+      }
+      const token = getStoredAuthToken();
+      if (!token) throw new Error('Authentication token not found.');
+      const response = await fetch(guideApiPath(`/cards/${encodeURIComponent(cardId)}/chat`), {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+        throw new Error(errorData.detail || 'Failed to clear chat');
+      }
+    },
+    [bookId, isOfflineSnapshot, guideApiPath],
+  );
+
+  const handleGenerateOutsiderGuide = async (cardId) => {
+    await generateOutsiderGuideForCard(cardId, { surfaceError: true });
+  };
+
+  const collectRoadmapCardIds = (nodes) => {
+    const ids = [];
+    const walk = (list) => {
+      for (const node of list || []) {
+        if (node?.id != null) ids.push(node.id);
+        if (Array.isArray(node?.children) && node.children.length > 0) {
+          walk(node.children);
+        }
+      }
+    };
+    walk(nodes);
+    return ids;
+  };
+
+  const handleBulkRoadmapGenerate = async (kind) => {
+    if (kind !== 'graph' && kind !== 'shortcut' && kind !== 'outsider') return;
+    if (!bookId || !readingRoadmap?.items?.length) return;
+
+    const cardIds = collectRoadmapCardIds(readingRoadmap.items);
+    if (!cardIds.length) return;
+
+    const jobKey = kind === 'graph' ? 'graphs' : kind === 'shortcut' ? 'shortcuts' : 'outsiders';
+    const offlineMessage =
+      kind === 'graph'
+        ? 'Graph generation requires an internet connection.'
+        : kind === 'shortcut'
+          ? 'Author Shortcut generation requires an internet connection.'
+          : 'Outsider Guide generation requires an internet connection.';
+
+    if (!navigator.onLine || isOfflineSnapshot) {
+      setGuideError(offlineMessage);
+      return;
+    }
+
+    setGuideError(null);
+    setRoadmapBulkJob(jobKey);
+    try {
+      let failed = 0;
+      if (kind === 'graph') {
+        for (const cardId of cardIds) {
+          const ok = await generateGraphForCard(cardId, { surfaceError: false });
+          if (!ok) failed += 1;
+        }
+        if (failed > 0) {
+          setGuideError(`Generated ${cardIds.length - failed}/${cardIds.length} graphs. ${failed} failed.`);
+        }
+      } else if (kind === 'shortcut') {
+        for (const cardId of cardIds) {
+          const ok = await generateAlternativeReadingForCard(cardId, { surfaceError: false });
+          if (!ok) failed += 1;
+        }
+        if (failed > 0) {
+          setGuideError(`Generated ${cardIds.length - failed}/${cardIds.length} shortcuts. ${failed} failed.`);
+        }
+      } else {
+        for (const cardId of cardIds) {
+          const ok = await generateOutsiderGuideForCard(cardId, { surfaceError: false });
+          if (!ok) failed += 1;
+        }
+        if (failed > 0) {
+          setGuideError(`Generated ${cardIds.length - failed}/${cardIds.length} outsider guides. ${failed} failed.`);
+        }
+      }
+    } finally {
+      setRoadmapBulkJob(null);
+    }
+  };
+
+  // --- NEW: Handler for clicking a document structure item or guide section ---
+  const handleStructureItemClick = (offset) => {
+    logger.info(`[BookView - handleStructureItemClick] Clicked item with global offset: ${offset}`);
+    if (offset === null || offset === undefined || isNaN(offset)) {
+      logger.warn(`[BookView - handleStructureItemClick] Invalid offset provided: ${offset}`);
+      return;
+    }
+    const globalOffset = parseInt(offset, 10);
+    if (globalOffset < 0) {
+      logger.warn(`[BookView - handleStructureItemClick] Negative offset provided: ${globalOffset}`);
+      return;
+    }
+    if (fullMarkdownContent && globalOffset > fullMarkdownContent.length) {
+      logger.warn(`[BookView - handleStructureItemClick] Offset ${globalOffset} exceeds document length ${fullMarkdownContent.length}`);
+      return;
+    }
+    if (guideScrollContainerRef.current) setGuideScrollPositionByPage(prev => ({ ...prev, [currentPage]: guideScrollContainerRef.current.scrollTop }));
+    setShowBackToGuide(true);
+    setViewMode('original');
+    setScrollToGlobalOffset(globalOffset);
+  };
+  // --- END NEW Handler ---
+
+  // --- NEW: Enhanced handler for TextLink objects with smooth scrolling and highlighting ---
+  const handleGuideTextLink = useCallback((textLink) => {
+    if (!textLink || typeof textLink !== 'object') {
+      logger.warn('[BookView - handleGuideTextLink] Invalid textLink provided');
+      return;
+    }
+
+    const { start_offset, end_offset, preview_text, key_quote } = textLink;
+    guideJumpAnchorPendingRef.current = true;
+    skipBookScrollRestoreOnPageChangeRef.current = true;
+    const navigationOffset = resolveGuideNavigationOffset(fullMarkdownContent || '', start_offset);
+
+    const normalizeQuote = (value) => {
+      const cleaned = value ? String(value).replace(/\s+/g, ' ').trim() : '';
+      if (!cleaned) return '';
+      const firstSentence = cleaned.match(/^[^.!?]*[.!?]?/);
+      return (firstSentence ? firstSentence[0] : cleaned).trim();
+    };
+    const textToHighlight = normalizeQuote(key_quote) || normalizeQuote(preview_text) || null;
+    setGuideSearchText(textToHighlight);
+    setGuideSearchGlobalOffset(
+      typeof navigationOffset === 'number' && !isNaN(navigationOffset) ? navigationOffset : null
+    );
+    const hasStoredSpan =
+      typeof start_offset === 'number' &&
+      !isNaN(start_offset) &&
+      typeof end_offset === 'number' &&
+      !isNaN(end_offset) &&
+      end_offset > start_offset;
+    setGuideJumpSession(hasStoredSpan ? { startOffset: start_offset, endOffset: end_offset } : null);
+
+    logger.info(`[BookView - handleGuideTextLink] Navigating to offset ${navigationOffset} (raw: ${start_offset}) with preview: "${preview_text?.substring(0, 50)}..."`);
+
+    // 1. Navigate to correct page if needed
+    if (pageBoundaries && pageBoundaries.length > 0) {
+      const pageInfo = getPageForOffset(navigationOffset, pageBoundaries);
+
+      if (pageInfo && pageInfo.pageNumber !== currentPage) {
+        logger.info(`[BookView - handleGuideTextLink] Switching to page ${pageInfo.pageNumber} for offset ${navigationOffset}`);
+        isProgrammaticScroll.current = true;
+        setCurrentPage(pageInfo.pageNumber);
+        refreshImageUrls();
+        setPendingScrollOffsetInPage(pageInfo.offsetInPage);
+        setScrollToGlobalOffset(navigationOffset);
+        setTimeout(() => {
+          isProgrammaticScroll.current = false;
+        }, 300);
+        return;
+      }
+    }
+
+    // 2. Same page: scroll to exact offset
+    if (navigationOffset != null && !isNaN(navigationOffset)) {
+      setScrollToGlobalOffset(navigationOffset);
+    }
+  }, [currentPage, pageBoundaries, refreshImageUrls, fullMarkdownContent]);
+
+  // Effect to fetch whole-book roadmap when entering guide mode
+  useEffect(() => {
+    if (bookId && viewMode === 'guide') {
+      fetchReadingRoadmap();
+    } else if (viewMode !== 'guide') {
+      setGuideError(null);
+    }
+  }, [bookId, fetchReadingRoadmap, viewMode]);
+
+  // Clear floating "Back to Guide" only when user manually navigates pages, NOT when page changed due to "View in original text"
+  const prevPageRef = useRef(currentPage);
+  useEffect(() => {
+    if (navigatingFromGuideTextLinkRef.current) {
+      navigatingFromGuideTextLinkRef.current = false;
+      prevPageRef.current = currentPage;
+      return;
+    }
+    if (prevPageRef.current !== currentPage) {
+      setShowBackToGuide(false);
+      setGuideReturnItemId(null);
+      prevPageRef.current = currentPage;
+    }
+  }, [currentPage]);
+
+  // Persist reading guide scroll position as user scrolls (debounced) so it is remembered per page
+  useEffect(() => {
+    if (viewMode !== 'guide' || typeof currentPage !== 'number') return;
+    let cleanup = () => {};
+    const t = setTimeout(() => {
+      const el = guideScrollContainerRef.current;
+      if (!el) return;
+      const saveGuideScroll = debounce(() => {
+        if (guideScrollContainerRef.current) {
+          setGuideScrollPositionByPage(prev => ({ ...prev, [currentPage]: guideScrollContainerRef.current.scrollTop }));
+        }
+      }, 150);
+      el.addEventListener('scroll', saveGuideScroll, { passive: true });
+      cleanup = () => {
+        el.removeEventListener('scroll', saveGuideScroll);
+        saveGuideScroll.cancel?.();
+      };
+    }, 0);
+    return () => {
+      clearTimeout(t);
+      cleanup();
+    };
+  }, [viewMode, currentPage]);
+
+  // Clear guideScrollToRestoreOnBack when leaving guide (user switched to original), so next guide visit uses per-page scroll
+  useEffect(() => {
+    if (viewMode === 'original' && guideScrollToRestoreOnBack != null) {
+      setGuideScrollToRestoreOnBack(null);
+    }
+    if (viewMode !== 'original') {
+      setGuideJumpSession(null);
+    }
+  }, [viewMode]);
+
+  // Restore book (original) pane scroll when switching from Guide back to Original
+  useEffect(() => {
+    if (viewMode !== 'original' || !bookPaneContainerRef.current) return;
+    if (explicitPaginationInFlightRef.current) return;
+    if (guideJumpAnchorPendingRef.current) return;
+    if (skipBookScrollRestoreOnPageChangeRef.current) {
+      skipBookScrollRestoreOnPageChangeRef.current = false;
+      return;
+    }
+    const saved = bookScrollPositionByPage[currentPage];
+    if (typeof saved !== 'number' || saved <= 0) return;
+    const raf = requestAnimationFrame(() => {
+      if (bookPaneContainerRef.current) {
+        bookPaneContainerRef.current.scrollTop = saved;
+      }
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [viewMode, currentPage, bookScrollPositionByPage]);
+
+  const mainContentAreaRef = useRef(null); // Ref for the main content area (book + view mode)
+
+  useEffect(() => subscribeMobileLayout(setIsMobileView), []);
+  useEffect(() => subscribeWideDesktop(setFontControlsOnBar), []);
+
+  useLayoutEffect(() => {
+    if (!navBarActiveScrollRef || !bumpNavBarScrollSync) {
+      return undefined;
+    }
+    let next = null;
+    if (isMobileView) {
+      next = viewMode === 'guide'
+        ? guideScrollContainerRef.current
+        : bookPaneContainerRef.current;
+    }
+    const prev = navBarActiveScrollRef.current;
+    navBarActiveScrollRef.current = next;
+    if (prev !== next) {
+      bumpNavBarScrollSync();
+    }
+    return () => {
+      if (navBarActiveScrollRef.current) {
+        navBarActiveScrollRef.current = null;
+        bumpNavBarScrollSync();
+      }
+    };
+  }, [
+    viewMode,
+    isMobileView,
+    navBarActiveScrollRef,
+    bumpNavBarScrollSync,
+    guideLoading,
+    readingRoadmap,
+    currentPage,
+  ]);
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -541,7 +2109,7 @@ function BookView() {
     const fetchNotes = async () => {
       if (!bookId) return;
       try {
-        const token = localStorage.getItem('authToken');
+        const token = getStoredAuthToken();
         if (!token) {
           logger.warn("[BookView - fetchNotes] Auth token not found. Cannot fetch notes.");
           setNotes([]); // Clear notes if not authenticated
@@ -564,101 +2132,340 @@ function BookView() {
         const notesData = await response.json();
         // Sort notes by creation date or another relevant field if needed for consistent highlighting
         notesData.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-        setNotes(notesData);
+        try {
+          const ann = await getAnnotations(bookId);
+          const merged = mergeAnnotationsByTimestamp({
+            localBookmarks: ann?.bookmarks || [],
+            localNotes: ann?.notes || [],
+            serverBookmarks: ann?.bookmarks || [],
+            serverNotes: notesData,
+          });
+          setBookmarks(merged.bookmarks);
+          setNotes(merged.notes);
+          await putAnnotations(bookId, merged);
+        } catch (_e) { /* ignore */ }
       } catch (err) {
         logger.error('Error fetching notes:', err);
-        setNotes([]); // Reset notes on error
+        try {
+          const ann = await getAnnotations(bookId);
+          if (ann && Array.isArray(ann.notes)) {
+            setNotes(ann.notes);
+          } else {
+            setNotes([]);
+          }
+        } catch (_e) {
+          setNotes([]);
+        }
       }
     };
 
     fetchNotes();
   }, [bookId]);
 
-  // Effect for handling pagination logic AND highlighting when bookData, currentPage, or notes change
+  // Effect for handling pagination logic AND highlighting when content, currentPage, notes, or guideSearchText change
   useEffect(() => {
-    logger.debug("[BookView - Page Content Effect] Running. Current Page:", currentPage, "Notes count:", notes.length, "PendingScrollOffsetInPage:", pendingScrollOffsetInPage, "PendingScrollToPercentage:", pendingScrollToPercentage, "PageBoundaries Length:", pageBoundaries.length);
-    if (fullMarkdownContent.current && pageBoundaries.length > 0) { // Check pageBoundaries
-      const numPages = totalPages; // Use totalPages from state (derived from pageBoundaries)
+    logger.debug("[BookView - Page Content Effect] Running. Current Page:", currentPage, "Notes count:", notes.length, "PendingScrollOffsetInPage:", pendingScrollOffsetInPage, "PendingScrollToPercentage:", pendingScrollToPercentage);
+    
+    // Recalculate page boundaries whenever the full content changes
+    let boundariesToUse = [];
+    if (fullMarkdownContent) {
+      const newBoundaries = calculatePageBoundaries(fullMarkdownContent, APPROX_CHARS_PER_PAGE);
+      setPageBoundaries(newBoundaries);
+      pageBoundariesRef.current = newBoundaries;
+      setTotalPages(Math.max(1, newBoundaries.length));
+      boundariesToUse = newBoundaries;
+    } else {
+      setPageBoundaries([]);
+      pageBoundariesRef.current = [];
+      setTotalPages(1);
+    }
 
+    // Use locally computed boundaries so we don't rely on stale pageBoundaries state (same run)
+    if (fullMarkdownContent && boundariesToUse.length > 0) {
+      const numPages = boundariesToUse.length;
       const validCurrentPage = Math.max(1, Math.min(currentPage, numPages || 1));
+      
       if (currentPage !== validCurrentPage) {
         logger.warn(`[BookView - Page Content Effect] currentPage ${currentPage} was invalid for numPages ${numPages}. Setting to ${validCurrentPage}`);
-        setCurrentPage(validCurrentPage); 
-        return; 
+        setCurrentPage(validCurrentPage);
+        return;
       }
       
       const pageIndex = validCurrentPage - 1;
-      if (pageIndex < 0 || pageIndex >= pageBoundaries.length) {
-          logger.error(`[BookView - Page Content Effect] Invalid pageIndex ${pageIndex} for pageBoundaries length ${pageBoundaries.length}. CurrentPage: ${currentPage}`);
+      if (pageIndex < 0 || pageIndex >= boundariesToUse.length) {
+          logger.error(`[BookView - Page Content Effect] Invalid pageIndex ${pageIndex} for boundariesToUse length ${boundariesToUse.length}. CurrentPage: ${currentPage}`);
           setHighlightedPageContent("Error: Page data not found.");
           setCurrentPageContent("");
           return;
       }
-      const { start: pageStartGlobalOffset, end: pageEndGlobalOffset } = pageBoundaries[pageIndex];
+      const { start: pageStartGlobalOffset, end: pageEndGlobalOffset } = boundariesToUse[pageIndex];
       
-      const plainPageText = fullMarkdownContent.current.substring(pageStartGlobalOffset, pageEndGlobalOffset);
-      setCurrentPageContent(plainPageText); 
+      const plainPageText = fullMarkdownContent.substring(pageStartGlobalOffset, pageEndGlobalOffset);
+      setCurrentPageContent(plainPageText);
       logger.debug(`[BookView - Page Content Effect] Page ${validCurrentPage}: Global Offset [${pageStartGlobalOffset}-${pageEndGlobalOffset}]. Plain text (len: ${plainPageText.length}): "${plainPageText.substring(0, 100)}..."`);
 
-      // REMOVE NOTE HIGHLIGHTING LOGIC:
-      // The entire block that filters `relevantNotes` and builds `newHighlightedString`
-      // by adding <span class="highlighted-note-text">...</span> is removed.
-      // Instead, just set highlightedPageContent to plainPageText.
-      setHighlightedPageContent(plainPageText);
-      logger.debug(`[BookView - Page Content Effect] Set page content without note highlighting.`);
-      
-      // Conditional scroll to top:
-      if (bookPaneContainerRef.current) {
-        if (pendingScrollOffsetInPage === null && pendingScrollToPercentage === null) {
-            if (!isProgrammaticScroll.current) { 
-                logger.debug("[BookView - Page Content Effect] Conditions met for scroll-to-top. Scrolling to top.");
-                isProgrammaticScroll.current = true; 
-                bookPaneContainerRef.current.scrollTop = 0;
-                setTimeout(() => { 
-                    isProgrammaticScroll.current = false; 
-                    logger.debug("[BookView - Page Content Effect] Reset isProgrammaticScroll from scroll-to-top action.");
-                }, 100); 
-            } else {
-                logger.debug("[BookView - Page Content Effect] Scroll-to-top conditions met, BUT isProgrammaticScroll.current is true. Skipping.");
+      // --- NEW: Highlight text with notes and guide search ---
+      // Filter and sort notes relevant to the current page.
+      const notesOnPage = notes
+        .filter(note =>
+          note.global_character_offset !== null &&
+          note.global_character_offset >= pageStartGlobalOffset &&
+          note.global_character_offset < pageEndGlobalOffset &&
+          note.source_text && note.source_text.length > 0
+        )
+        .sort((a, b) => a.global_character_offset - b.global_character_offset);
+
+      // Prepare highlights array for both notes and guide search
+      const highlights = [];
+
+      // Add note highlights
+      if (notesOnPage.length > 0) {
+        logger.debug(`[BookView - Page Content Effect] Found ${notesOnPage.length} notes on page ${validCurrentPage}.`);
+
+        const sortedNotes = notesOnPage.sort((a, b) => {
+            const a_start = a.global_character_offset;
+            const b_start = b.global_character_offset;
+            if (a_start !== b_start) {
+                return a_start - b_start;
             }
-        } else {
-            logger.debug("[BookView - Page Content Effect] A scroll is pending. Skipping automatic scroll to top.");
+            return (b.source_text?.length || 0) - (a.source_text?.length || 0);
+        });
+
+        for (const note of sortedNotes) {
+          const noteAnchorInPage = note.global_character_offset - pageStartGlobalOffset;
+          const resolvedRange = resolveNoteHighlightRange(
+            plainPageText,
+            noteAnchorInPage,
+            note.source_text
+          );
+          if (!resolvedRange) {
+            continue;
+          }
+          const noteId = note.id || note._id;
+          if (resolvedRange.strategy === 'fallback') {
+            logger.info(
+              `[BookView - Page Content Effect] Note ${noteId} used generous fallback highlight around offset ${note.global_character_offset}.`
+            );
+          }
+          
+          highlights.push({
+            start: resolvedRange.start,
+            end: resolvedRange.end,
+            type: 'note',
+            id: noteId,
+            text: note.source_text
+          });
         }
       }
 
-    } else if (fullMarkdownContent.current && pageBoundaries.length === 0) {
+      // Yellow mark is the opening sentence at the stored start. A later key
+      // quote must not pull the viewport to the end of the section.
+      if (guideJumpSession && guideSearchGlobalOffset !== null && guideSearchGlobalOffset !== undefined) {
+        const guideHighlight = resolveGuideHighlightOnPage({
+          pageMarkdown: plainPageText,
+          pageStartGlobal: pageStartGlobalOffset,
+          startOffset: guideJumpSession.startOffset,
+          endOffset: guideJumpSession.endOffset,
+        });
+        if (guideHighlight) {
+          highlights.push({
+            start: guideHighlight.rawStart,
+            end: guideHighlight.rawEnd,
+            type: 'guide-search',
+            text: plainPageText.substring(guideHighlight.rawStart, guideHighlight.rawEnd),
+          });
+          logger.info(`[BookView - Page Content Effect] Applied guide span highlight ${guideHighlight.rawStart}-${guideHighlight.rawEnd} on page ${validCurrentPage}`);
+        }
+      }
+
+      // Sort all highlights by start position
+      highlights.sort((a, b) => {
+        if (a.start !== b.start) {
+          return a.start - b.start;
+        }
+        return b.end - a.end; // Longer highlights first if same start
+      });
+
+      const sectionStartInPage = guideJumpSession
+        ? markerOffsetInPageMarkdown(plainPageText, pageStartGlobalOffset, guideJumpSession.startOffset)
+        : null;
+      const cutoffInPage = guideJumpSession
+        ? markerOffsetInPageMarkdown(plainPageText, pageStartGlobalOffset, guideJumpSession.endOffset)
+        : null;
+      const startMarkerHtml = '<span class="guide-section-start" data-guide-section-start="1"></span>';
+      const cutoffMarkerHtml = '<span class="roadmap-cutoff-indicator" role="note" aria-label="End of this section">End of this section</span>';
+      const escapeHtml = (text) => String(text || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+      const injections = [];
+      if (sectionStartInPage !== null) {
+        injections.push({ at: sectionStartInPage, html: startMarkerHtml, used: false });
+      }
+      if (cutoffInPage !== null) {
+        injections.push({ at: cutoffInPage, html: cutoffMarkerHtml, used: false });
+      }
+      const buildSegmentText = (start, end, shouldEscape = false) => {
+        if (end <= start) return '';
+        const normalizedStart = Math.max(0, Math.min(start, plainPageText.length));
+        const normalizedEnd = Math.max(normalizedStart, Math.min(end, plainPageText.length));
+        const hits = injections
+          .filter((inj) => !inj.used && inj.at >= normalizedStart && inj.at <= normalizedEnd)
+          .sort((a, b) => a.at - b.at);
+        if (hits.length === 0) {
+          const chunk = plainPageText.substring(normalizedStart, normalizedEnd);
+          return shouldEscape ? escapeHtml(chunk) : chunk;
+        }
+        let cursor = normalizedStart;
+        let out = '';
+        hits.forEach((hit) => {
+          const split = Math.max(cursor, Math.min(hit.at, normalizedEnd));
+          const chunk = plainPageText.substring(cursor, split);
+          out += shouldEscape ? escapeHtml(chunk) : chunk;
+          out += hit.html;
+          hit.used = true;
+          cursor = split;
+        });
+        const tail = plainPageText.substring(cursor, normalizedEnd);
+        out += shouldEscape ? escapeHtml(tail) : tail;
+        return out;
+      };
+      const appendUnusedEdgeMarkers = (html) => {
+        let next = html;
+        injections.forEach((inj) => {
+          if (!inj.used && inj.at === plainPageText.length) {
+            next += inj.html;
+            inj.used = true;
+          }
+        });
+        return next;
+      };
+
+      // Apply highlights to text
+      if (highlights.length > 0) {
+        let highlightedText = '';
+        let lastIndex = 0;
+
+        for (const highlight of highlights) {
+          if (highlight.start < lastIndex) {
+            continue; // Skip overlapping highlights
+          }
+
+          highlightedText += buildSegmentText(lastIndex, highlight.start, false);
+          
+          if (highlight.type === 'note') {
+            const textToHighlight = plainPageText.substring(highlight.start, Math.min(highlight.end, plainPageText.length));
+            if (textToHighlight) {
+              const escapedText = buildSegmentText(highlight.start, Math.min(highlight.end, plainPageText.length), true);
+              highlightedText += `<mark class="note-highlight" data-note-id="${highlight.id}">${escapedText}</mark>`;
+            }
+          } else if (highlight.type === 'guide-search') {
+            const textToHighlight = plainPageText.substring(highlight.start, Math.min(highlight.end, plainPageText.length));
+            if (textToHighlight) {
+              const escapedText = buildSegmentText(highlight.start, Math.min(highlight.end, plainPageText.length), true);
+              highlightedText += `<mark class="guide-search-highlight">${escapedText}</mark>`;
+            }
+          }
+          
+          lastIndex = Math.min(highlight.end, plainPageText.length);
+        }
+
+        if (lastIndex < plainPageText.length) {
+          highlightedText += buildSegmentText(lastIndex, plainPageText.length, false);
+        }
+
+        setHighlightedPageContent(appendUnusedEdgeMarkers(highlightedText));
+      } else {
+        const plainWithMarkers = buildSegmentText(0, plainPageText.length, false);
+        setHighlightedPageContent(appendUnusedEdgeMarkers(plainWithMarkers));
+      }
+      
+      const pageActuallyChanged = lastScrollToTopPageRef.current !== currentPage;
+      const isExplicitPaginationPage =
+        explicitPaginationInFlightRef.current &&
+        explicitPaginationTargetPageRef.current === currentPage;
+
+      if (isExplicitPaginationPage) {
+        logger.debug("[BookView - Page Content Effect] Explicit pagination landed on page", currentPage, ". Forcing scroll to top.");
+        lastScrollToTopPageRef.current = currentPage;
+        isProgrammaticScroll.current = true;
+        const pane = viewMode === 'guide' ? guideScrollContainerRef.current : bookPaneContainerRef.current;
+        if (pane) {
+          pane.scrollTop = 0;
+          requestAnimationFrame(() => {
+            const nextPane = viewMode === 'guide' ? guideScrollContainerRef.current : bookPaneContainerRef.current;
+            if (!nextPane) return;
+            nextPane.scrollTop = 0;
+            requestAnimationFrame(() => {
+              const finalPane = viewMode === 'guide' ? guideScrollContainerRef.current : bookPaneContainerRef.current;
+              if (finalPane) finalPane.scrollTop = 0;
+            });
+          });
+        }
+        if (viewMode === 'guide') {
+          setGuideScrollPositionByPage((prev) => ({ ...prev, [currentPage]: 0 }));
+        } else {
+          setBookScrollPositionByPage((prev) => ({ ...prev, [currentPage]: 0 }));
+        }
+        explicitPaginationInFlightRef.current = false;
+        explicitPaginationTargetPageRef.current = null;
+        setTimeout(() => {
+          isProgrammaticScroll.current = false;
+          logger.debug("[BookView - Page Content Effect] Reset isProgrammaticScroll after explicit pagination top scroll.");
+        }, 120);
+      } else if (bookPaneContainerRef.current && viewMode === 'original') {
+        if (pendingScrollOffsetInPage === null && pendingScrollToPercentage === null) {
+          if (pageActuallyChanged && !isProgrammaticScroll.current) {
+              logger.debug("[BookView - Page Content Effect] Page changed to", currentPage, ". Scrolling to top.");
+              lastScrollToTopPageRef.current = currentPage;
+              isProgrammaticScroll.current = true;
+              bookPaneContainerRef.current.scrollTop = 0;
+              setTimeout(() => {
+                  isProgrammaticScroll.current = false;
+                  logger.debug("[BookView - Page Content Effect] Reset isProgrammaticScroll from scroll-to-top action.");
+              }, 100);
+          } else if (!pageActuallyChanged) {
+              logger.debug("[BookView - Page Content Effect] Same page; not scrolling to top (e.g. note saved).");
+          } else {
+              logger.debug("[BookView - Page Content Effect] Scroll-to-top conditions met, BUT isProgrammaticScroll.current is true. Skipping.");
+          }
+        } else {
+          logger.debug("[BookView - Page Content Effect] A scroll is pending. Skipping automatic scroll to top.");
+        }
+      }
+
+    } else if (fullMarkdownContent && boundariesToUse.length === 0) {
         logger.warn("[BookView - Page Content Effect] fullMarkdownContent exists but pageBoundaries is empty. This might be initial load. Displaying placeholder or first chunk.");
-        // Fallback: display first chunk if boundaries aren't ready (should be brief)
-        const tempEndOffset = Math.min(APPROX_CHARS_PER_PAGE, fullMarkdownContent.current.length);
-        const tempPageText = fullMarkdownContent.current.substring(0, tempEndOffset);
+        const tempEndOffset = Math.min(APPROX_CHARS_PER_PAGE, fullMarkdownContent.length);
+        const tempPageText = fullMarkdownContent.substring(0, tempEndOffset);
         setCurrentPageContent(tempPageText);
         setHighlightedPageContent(tempPageText);
-        if (totalPages !== 1) setTotalPages(1); // Temporary total pages
-        if (currentPage !== 1) setCurrentPage(1); // Temporary current page
-    } else { // No fullMarkdownContent.current or other invalid state
+        if (totalPages !== 1) setTotalPages(1);
+        if (currentPage !== 1) setCurrentPage(1);
+    } else {
       logger.debug("[BookView - Page Content Effect] No fullMarkdownContent or pageBoundaries not ready. Clearing page content.");
       setCurrentPageContent('');
       setHighlightedPageContent('');
-      // setTotalPages(1); // Keep totalPages as is, or reset if book becomes invalid
-      // setCurrentPage(1); 
     }
-  // Add pendingScrollToPercentage to the dependency array
-  }, [bookData, currentPage, notes, pendingScrollOffsetInPage, pendingScrollToPercentage, pageBoundaries, totalPages]); // Added pageBoundaries and totalPages
+  }, [fullMarkdownContent, currentPage, notes, pendingScrollOffsetInPage, pendingScrollToPercentage, guideSearchText, guideSearchGlobalOffset, guideJumpSession, scrollToGlobalOffset, viewMode]);
 
 
   // Effect to apply initial scroll once content is ready
   useEffect(() => {
-    if (initialScrollTop !== null && bookPaneContainerRef.current && highlightedPageContent) {
+    const state = getEffectiveScrollState();
+    if (initialScrollTop !== null && state?.active && highlightedPageContent) {
       logger.info(`[BookView - InitialScrollEffect] Applying initial scroll top: ${initialScrollTop}`);
       isProgrammaticScroll.current = true;
-      bookPaneContainerRef.current.scrollTop = initialScrollTop;
+      state.active.scrollTop = initialScrollTop;
       setInitialScrollTop(null); // Clear after applying
       setTimeout(() => {
         isProgrammaticScroll.current = false;
         logger.debug("[BookView - InitialScrollEffect] Reset isProgrammaticScroll after initial scroll.");
       }, 150); // Delay to allow scroll to settle and prevent immediate sync issues
     }
-  }, [initialScrollTop, highlightedPageContent]); // Depends on highlightedPageContent to ensure page is rendered
+  }, [initialScrollTop, highlightedPageContent, getEffectiveScrollState]); // Depends on highlightedPageContent to ensure page is rendered
 
   useEffect(() => {
     setPageInput(String(currentPage));
@@ -672,14 +2479,29 @@ function BookView() {
     if (event) event.preventDefault();
     const pageNum = parseInt(pageInput, 10);
     if (!isNaN(pageNum) && pageNum >= 1 && pageNum <= totalPages) {
+      if (pageNum === currentPage) {
+        setPageInput(String(currentPage));
+        return;
+      }
+      beginExplicitPagination(pageNum);
       setCurrentPage(pageNum);
+      // Refresh signed URLs when page changes
+      refreshImageUrls();
     } else {
       setPageInput(String(currentPage)); 
       alert(`Please enter a page number between 1 and ${totalPages}.`);
     }
   };
 
-  const handleTextSelect = ({ text: textFromBookPane, rangeDetails }) => { // MODIFIED SIGNATURE
+  const handleTextSelect = (payload) => {
+    if (!payload || typeof payload !== 'object') {
+      setSelectedBookText(null);
+      setSelectedGlobalCharOffset(null);
+      setSelectedScrollPercentage(null);
+      setSelectionAnchor(null);
+      return;
+    }
+    const { text: textFromBookPane, rangeDetails, clientRect } = payload;
     // const selection = window.getSelection(); // REMOVE THIS LINE
 
     // MODIFIED CONDITION: Use rangeDetails directly
@@ -687,8 +2509,10 @@ function BookView() {
       setSelectedBookText(null);
       setSelectedGlobalCharOffset(null);
       setSelectedScrollPercentage(null);
+      setSelectionAnchor(null);
       return;
     }
+    setSelectionAnchor(clientRect || null);
 
     // const range = selection.getRangeAt(0); // REMOVE THIS LINE
     const pageContainerElement = bookPaneContainerRef.current;
@@ -807,10 +2631,11 @@ function BookView() {
         // Get current page's actual start offset from boundaries
         let currentPageStartOffset = 0; // Default for safety
         const pageIndex = currentPage - 1;
-        if (pageBoundaries.length > 0 && pageIndex >= 0 && pageIndex < pageBoundaries.length) {
-            currentPageStartOffset = pageBoundaries[pageIndex].start;
+        const boundariesSource = pageBoundariesRef.current.length > 0 ? pageBoundariesRef.current : pageBoundaries;
+        if (boundariesSource.length > 0 && pageIndex >= 0 && pageIndex < boundariesSource.length) {
+            currentPageStartOffset = boundariesSource[pageIndex].start;
         } else {
-            logger.warn(`[BookView - handleTextSelect] pageBoundaries not ready or invalid currentPage for offset calculation. Using fallback. CurrentPage: ${currentPage}, Boundaries Length: ${pageBoundaries.length}`);
+            logger.warn(`[BookView - handleTextSelect] pageBoundaries not ready or invalid currentPage for offset calculation. Using fallback. CurrentPage: ${currentPage}, Boundaries Length: ${boundariesSource.length}`);
             currentPageStartOffset = (currentPage - 1) * APPROX_CHARS_PER_PAGE; // Fallback
         }
 
@@ -827,8 +2652,9 @@ function BookView() {
         // Fallback globalOffset calculation
         let fallbackPageStartOffset = (currentPage - 1) * APPROX_CHARS_PER_PAGE;
         const pageIndex = currentPage - 1;
-        if (pageBoundaries.length > 0 && pageIndex >= 0 && pageIndex < pageBoundaries.length) {
-            fallbackPageStartOffset = pageBoundaries[pageIndex].start;
+        const boundariesSource = pageBoundariesRef.current.length > 0 ? pageBoundariesRef.current : pageBoundaries;
+        if (boundariesSource.length > 0 && pageIndex >= 0 && pageIndex < boundariesSource.length) {
+            fallbackPageStartOffset = boundariesSource[pageIndex].start;
         }
         const fallbackGlobalOffset = fallbackPageStartOffset + startInPageRendered; 
         setSelectedGlobalCharOffset(fallbackGlobalOffset);
@@ -851,35 +2677,163 @@ function BookView() {
     }
   };
 
-  const handleNoteClick = (globalCharOffsetOfNote) => {
-    if (globalCharOffsetOfNote !== null && globalCharOffsetOfNote !== undefined) {
-      setScrollToGlobalOffset(globalCharOffsetOfNote);
+  const handleDeleteNote = async (noteIdToDelete) => {
+    if (!window.confirm("Are you sure you want to delete this note?")) {
+      return;
+    }
+    logger.info(`[BookView - handleDeleteNote] Attempting to delete note ID: ${noteIdToDelete}`);
+    try {
+      const token = getStoredAuthToken();
+      if (!token) {
+        alert("Authentication token not found.");
+        return;
+      }
+
+      if (!navigator.onLine || isOfflineSnapshot) {
+        setNotes((prev) => prev.filter((n) => (n._id || n.id) !== noteIdToDelete));
+        try {
+          const ann = await getAnnotations(bookId);
+          const nextNotes = (ann?.notes || []).filter((n) => (n._id || n.id) !== noteIdToDelete);
+          await putAnnotations(bookId, { bookmarks: ann?.bookmarks || [], notes: nextNotes });
+          if (isLocalId(noteIdToDelete)) {
+            await removePendingCreateNote(noteIdToDelete);
+          } else {
+            await addOutboxEntry({
+              type: 'delete_note',
+              bookId,
+              payload: { noteId: noteIdToDelete },
+            });
+          }
+          await refreshOutboxCount();
+        } catch (_e) { /* ignore */ }
+        return;
+      }
+
+      const response = await fetch(`/api/notes/${noteIdToDelete}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: "Failed to delete note." }));
+        throw new Error(errorData.detail);
+      }
+      setNotes(prevNotes => prevNotes.filter(note => (note._id || note.id) !== noteIdToDelete));
+      logger.info(`Note with ID ${noteIdToDelete} deleted successfully.`);
+    } catch (err) {
+      logger.error('Error deleting note:', err);
+      alert(`Error deleting note: ${err.message}`);
+    }
+  };
+
+  const handleHighlightClick = (noteId) => {
+    const note = notes.find(n => (n._id || n.id) === noteId);
+    if (note) {
+      setActiveNoteForModal(note);
+    } else {
+      logger.warn(`[BookView - handleHighlightClick] Note with ID ${noteId} not found.`);
+    }
+  };
+
+  const handleNoteClick = (navigationTarget) => {
+    if (typeof navigationTarget === 'number') {
+      if (navigationTarget !== null && navigationTarget !== undefined) {
+        setScrollToGlobalOffset(navigationTarget);
+      }
+    } else if (typeof navigationTarget === 'object' && navigationTarget !== null && navigationTarget.pageNumber !== undefined) {
+      const targetPage = navigationTarget.pageNumber;
+      if (targetPage >= 1 && targetPage <= totalPages) {
+        logger.info(`[BookView - handleNoteClick] Navigating to page ${targetPage} from note click.`);
+        isProgrammaticScroll.current = true; // Prevent scroll sync issues
+        setCurrentPage(targetPage);
+        refreshImageUrls(); // Refresh signed URLs when page changes
+        // The useEffect for currentPage changes will handle scrolling to top of the new page
+        // and resetting isProgrammaticScroll.current.
+        // Explicit scroll to top here might be redundant if page content effect handles it,
+        // but can be added for immediate feedback if needed:
+        if (bookPaneContainerRef.current) {
+          bookPaneContainerRef.current.scrollTop = 0;
+        }
+        // Reset isProgrammaticScroll after a delay, similar to other programmatic scrolls
+        setTimeout(() => {
+          isProgrammaticScroll.current = false;
+          logger.debug("[BookView - handleNoteClick page nav] Reset isProgrammaticScroll.");
+        }, 150);
+      } else {
+        logger.warn(`[BookView - handleNoteClick] Invalid page number ${targetPage} from note click.`);
+      }
     }
   };
   
   const handleNewNoteSaved = (newNote) => {
     logger.debug("[BookView - handleNewNoteSaved] Received new note:", newNote);
-    if (newNote && newNote.id) { 
+    const newNoteId = newNote ? (newNote.id || newNote._id) : null;
+
+    if (newNote && newNoteId) {
       setNotes(prevNotes => {
-        const noteExists = prevNotes.some(note => note.id === newNote.id);
+        const noteExists = prevNotes.some(note => (note.id || note._id) === newNoteId);
         if (noteExists) {
-            logger.warn("[BookView - handleNewNoteSaved] Note ID", newNote.id, "already exists in state. Not adding again.");
+            logger.warn("[BookView - handleNewNoteSaved] Note ID", newNoteId, "already exists in state. Not adding again.");
             return prevNotes;
         }
         const updatedNotes = [...prevNotes, newNote].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-        logger.debug("[BookView - handleNewNoteSaved] Updated notes state with new note:", updatedNotes.map(n => n.id));
+        logger.debug("[BookView - handleNewNoteSaved] Updated notes state with new note:", updatedNotes.map(n => (n.id || n._id)));
         return updatedNotes;
       });
+      setNotesLLMPopupMode(null);
+      setSelectedBookText(null);
+      setSelectedGlobalCharOffset(null);
+      setSelectedScrollPercentage(null);
+      setSelectionAnchor(null);
     } else {
         logger.warn("[BookView - handleNewNoteSaved] Received invalid newNote object or note without ID:", newNote);
     }
   };
 
+  const handleOfflineNoteSave = async (noteData) => {
+    const clientId = newLocalId();
+    const note = {
+      id: clientId,
+      _id: clientId,
+      book_id: bookId,
+      content: noteData.content,
+      page_number: noteData.page_number,
+      source_text: noteData.source_text,
+      scroll_percentage: noteData.scroll_percentage,
+      global_character_offset: noteData.global_character_offset,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      _localClientId: clientId,
+    };
+    setNotes((prev) => [...prev, note].sort((a, b) => new Date(a.created_at) - new Date(b.created_at)));
+    try {
+      const ann = await getAnnotations(bookId);
+      await putAnnotations(bookId, {
+        bookmarks: ann?.bookmarks || [],
+        notes: [...(ann?.notes || []), note],
+      });
+      await addOutboxEntry({
+        type: 'create_note',
+        bookId,
+        payload: { clientId, ...noteData },
+      });
+      await refreshOutboxCount();
+    } catch (e) {
+      logger.error('[BookView - handleOfflineNoteSave]', e);
+    }
+    setNotesLLMPopupMode(null);
+  };
+
   // Effect for scrolling to a note when scrollToGlobalOffset changes
   useEffect(() => {
-    if (scrollToGlobalOffset === null || !fullMarkdownContent.current || pageBoundaries.length === 0) { // Check pageBoundaries
+    if (guideJumpAnchorPendingRef.current && scrollToGlobalOffset !== null) {
+      setScrollToGlobalOffset(null);
+      return;
+    }
+    if (viewMode !== 'original' || scrollToGlobalOffset === null || !fullMarkdownContent || pageBoundaries.length === 0) { // Check pageBoundaries
       if (scrollToGlobalOffset !== null) {
-        logger.debug(`[ScrollToNoteEffect] Aborting: scrollToGlobalOffset=${scrollToGlobalOffset}, fullMarkdownContent.current=${!!fullMarkdownContent.current}, pageBoundaries.length=${pageBoundaries.length}`);
+        logger.debug(`[ScrollToNoteEffect] Aborting: viewMode=${viewMode}, scrollToGlobalOffset=${scrollToGlobalOffset}, fullMarkdownContent=${!!fullMarkdownContent}, pageBoundaries.length=${pageBoundaries.length}`);
       }
       return;
     }
@@ -923,6 +2877,7 @@ function BookView() {
     if (targetPageNum !== currentPage && targetPageNum !== -1) { // Ensure targetPageNum is valid
       logger.info(`[ScrollToNoteEffect] Target page ${targetPageNum} is different from current page ${currentPage}. Setting current page and pending offset.`);
       setCurrentPage(targetPageNum);
+      refreshImageUrls(); // Refresh signed URLs when page changes
       // The offsetWithinTargetPage is already calculated based on the raw markdown of that page.
       // The pendingScrollEffect will need to use this raw offset to find the visual scroll position.
       setPendingScrollOffsetInPage(offsetWithinTargetPage); 
@@ -1012,7 +2967,15 @@ function BookView() {
               
               const highlightRange = document.createRange();
               highlightRange.setStart(textNode, startOffsetInNodeRendered);
-              highlightRange.setEnd(textNode, Math.min(nodeRenderedLength, startOffsetInNodeRendered + 5)); 
+              const remainingNodeText = nodeTextContent.slice(startOffsetInNodeRendered);
+              const sentenceEndMatch = remainingNodeText.match(/[.!?](\s|$)/);
+              let highlightLen = 80;
+              if (sentenceEndMatch && typeof sentenceEndMatch.index === 'number') {
+                highlightLen = Math.max(20, sentenceEndMatch.index + 1);
+              } else {
+                highlightLen = Math.max(20, Math.min(120, remainingNodeText.length));
+              }
+              highlightRange.setEnd(textNode, Math.min(nodeRenderedLength, startOffsetInNodeRendered + highlightLen));
 
               const highlightSpan = document.createElement('span');
               highlightSpan.className = 'highlighted-note-scroll-target'; 
@@ -1030,7 +2993,7 @@ function BookView() {
                 const scrollTopTarget = Math.max(0, spanOffsetTop - 20); 
                 bookElement.scrollTop = scrollTopTarget;
                 highlightSpan.style.transition = 'background-color 0.5s ease-out';
-                highlightSpan.style.backgroundColor = 'rgba(255, 255, 0, 0.5)'; 
+                highlightSpan.style.backgroundColor = 'var(--color-highlight-bg)'; 
                 setTimeout(() => { if (highlightSpan) { highlightSpan.style.backgroundColor = ''; } }, 1500); 
 
               } catch (e) {
@@ -1040,7 +3003,7 @@ function BookView() {
                     const markerSpan = document.createElement("span");
                     markerSpan.className = 'highlighted-note-scroll-target-marker';
                     markerSpan.style.outline = "2px solid red"; 
-                    markerSpan.style.backgroundColor = "rgba(255, 0, 0, 0.2)";
+                    markerSpan.style.backgroundColor = 'var(--color-error-bg)';
                     range.insertNode(markerSpan); 
                     scrollTargetHighlightRef.current = markerSpan;
                     let markerOffsetTop = 0;
@@ -1066,6 +3029,7 @@ function BookView() {
             logger.warn(`[ScrollToNoteEffect] Could not find exact node for rendered offset ${targetRenderedOffsetInPage}. Scrolling to top.`);
             isProgrammaticScroll.current = true; bookElement.scrollTop = 0; 
         }
+        setBookScrollPositionByPage(prev => ({ ...prev, [currentPage]: bookElement.scrollTop }));
         const timer = setTimeout(() => { isProgrammaticScroll.current = false; logger.debug("[ScrollToNoteEffect] Reset isProgrammaticScroll."); }, 300); 
         setScrollToGlobalOffset(null); 
         return () => { 
@@ -1084,13 +3048,20 @@ function BookView() {
         setScrollToGlobalOffset(null);
     }
 
-  }, [scrollToGlobalOffset, fullMarkdownContent, currentPage, currentPageContent, pageBoundaries]); // Added pageBoundaries
+  }, [scrollToGlobalOffset, fullMarkdownContent, currentPage, currentPageContent, pageBoundaries, viewMode]); // Added pageBoundaries
 
 
   useEffect(() => {
+    if (viewMode !== 'original') {
+      return;
+    }
+    if (guideJumpAnchorPendingRef.current && pendingScrollOffsetInPage !== null) {
+      setPendingScrollOffsetInPage(null);
+      return;
+    }
     // This effect handles scrolling when a page changes due to a note click (scrollToGlobalOffset)
     // pendingScrollOffsetInPage is the RAW character offset within the NEWLY loaded currentPageContent
-    if (pendingScrollOffsetInPage !== null && bookPaneContainerRef.current && currentPageContent.length > 0 && pageBoundaries.length > 0) {
+    if (pendingScrollOffsetInPage !== null && bookPaneContainerRef.current && (currentPageContent.length > 0 || pendingScrollOffsetInPage === 0) && pageBoundaries.length > 0) {
       const bookElement = bookPaneContainerRef.current;
       
       // Map pendingScrollOffsetInPage (raw) to a rendered offset for TreeWalker
@@ -1179,20 +3150,74 @@ function BookView() {
           bookElement.scrollTop = 0;
       }
 
+      setBookScrollPositionByPage(prev => ({ ...prev, [currentPage]: bookElement.scrollTop }));
       setTimeout(() => { isProgrammaticScroll.current = false; }, 300);
       setPendingScrollOffsetInPage(null); 
     } else if (pendingScrollOffsetInPage !== null && bookPaneContainerRef.current && currentPageContent.length === 0 && pendingScrollOffsetInPage === 0) {
         isProgrammaticScroll.current = true;
         bookPaneContainerRef.current.scrollTop = 0;
+        setBookScrollPositionByPage(prev => ({ ...prev, [currentPage]: 0 }));
         setTimeout(() => { isProgrammaticScroll.current = false; }, 300);
         setPendingScrollOffsetInPage(null);
     }
-  }, [currentPageContent, pendingScrollOffsetInPage, pageBoundaries]); // Added pageBoundaries
+  }, [currentPageContent, pendingScrollOffsetInPage, pageBoundaries, currentPage, viewMode]); // Added pageBoundaries, currentPage for setBookScrollPositionByPage
+
+  // Scroll the stored section start to the top of the book pane. Do not
+  // center a later quote; that landed the reader near the end of the section.
+  useEffect(() => {
+    if (explicitPaginationInFlightRef.current) {
+      return undefined;
+    }
+    if (viewMode !== 'original' || guideSearchGlobalOffset === null || guideSearchGlobalOffset === undefined) {
+      return undefined;
+    }
+    if (!bookPaneContainerRef.current || !highlightedPageContent) {
+      return undefined;
+    }
+    const epochAtSchedule = bookPaneScrollEpochRef.current;
+    const scrollTimeout = setTimeout(() => {
+      if (bookPaneScrollEpochRef.current !== epochAtSchedule) return;
+      if (explicitPaginationInFlightRef.current) return;
+      const pane = bookPaneContainerRef.current;
+      const startElement = pane?.querySelector('.guide-section-start');
+      if (!pane || !startElement) {
+        guideJumpAnchorPendingRef.current = false;
+        logger.warn('[BookView - GuideSearchScroll] Section start anchor was not on this page.');
+        return;
+      }
+      const paneRect = pane.getBoundingClientRect();
+      const startRect = startElement.getBoundingClientRect();
+      const nextTop = pane.scrollTop + (startRect.top - paneRect.top) - 16;
+      isProgrammaticScroll.current = true;
+      pane.scrollTop = Math.max(0, nextTop);
+      setBookScrollPositionByPage((prev) => ({ ...prev, [currentPage]: pane.scrollTop }));
+      guideJumpAnchorPendingRef.current = false;
+      logger.info('[BookView - GuideSearchScroll] Scrolled to the section start.');
+      setTimeout(() => {
+        isProgrammaticScroll.current = false;
+      }, 300);
+    }, 200);
+
+    return () => clearTimeout(scrollTimeout);
+  }, [guideSearchGlobalOffset, highlightedPageContent, viewMode, currentPage]);
+
+  // Yellow start highlight fades. The section-end marker stays with guideJumpSession.
+  useEffect(() => {
+    if (!guideSearchText && guideSearchGlobalOffset === null) return undefined;
+    const cleanupTimer = setTimeout(() => {
+      setGuideSearchText(null);
+      setGuideSearchGlobalOffset(null);
+    }, 8000);
+    return () => clearTimeout(cleanupTimer);
+  }, [guideSearchText, guideSearchGlobalOffset]);
 
   useEffect(() => {
     // This effect applies scrolling when a pendingScrollToPercentage is set,
     // typically after a page change initiated by selecting a bookmark.
     // It waits for currentPageContent to be updated, indicating the new page is rendered.
+    if (viewMode !== 'original') {
+      return undefined;
+    }
     if (pendingScrollToPercentage !== null && bookPaneContainerRef.current && (currentPageContent.length > 0 || pendingScrollToPercentage === 0) ) {
       const element = bookPaneContainerRef.current;
       logger.info(`[BookView - PendingScrollPercentageEffect] Applying scroll to percentage: ${pendingScrollToPercentage} on page ${currentPage}`);
@@ -1216,7 +3241,6 @@ function BookView() {
       // Reset pending scroll percentage
       setPendingScrollToPercentage(null);
       // Reset programmatic scroll flag after a short delay
-      // This delay should be longer than any potential debounce in syncScroll
       const timer = setTimeout(() => { 
         isProgrammaticScroll.current = false; 
         logger.debug("[BookView - PendingScrollPercentageEffect] Reset isProgrammaticScroll to false.");
@@ -1225,122 +3249,81 @@ function BookView() {
     } else if (pendingScrollToPercentage !== null) {
       logger.debug(`[BookView - PendingScrollPercentageEffect] Conditions not met for scroll: pendingScrollToPercentage=${pendingScrollToPercentage}, bookPaneContainerRef.current=${!!bookPaneContainerRef.current}, currentPageContent.length=${currentPageContent.length}`);
     }
-  }, [currentPageContent, pendingScrollToPercentage, currentPage]); // Dependencies remain the same
+  }, [currentPageContent, pendingScrollToPercentage, currentPage, viewMode]); // Dependencies remain the same
 
-
-  const syncScroll = useCallback(
-    debounce((scrollingPaneRef, targetPaneRef) => {
-      // if (isProgrammaticScroll.current) { // Original check, might be too simple
-      //   return;
-      // }
-
-      if (!scrollingPaneRef.current || !targetPaneRef.current) return;
-
-      const scrollingElement = scrollingPaneRef.current;
-      const targetElement = targetPaneRef.current;
-
-      // If the pane being scrolled is not actually scrollable, don't attempt to sync.
-      if (scrollingElement.scrollHeight <= scrollingElement.clientHeight) return;
-      
-      const scrollPercentage = scrollingElement.scrollTop / (scrollingElement.scrollHeight - scrollingElement.clientHeight);
-      
-      let targetScrollTop;
-      if (targetElement.scrollHeight > targetElement.clientHeight) {
-        targetScrollTop = scrollPercentage * (targetElement.scrollHeight - targetElement.clientHeight);
-      } else {
-        // If target is not scrollable, decide where to "place" it based on source scroll.
-        // e.g., if source is scrolled past halfway, show bottom of target, else top.
-        targetScrollTop = scrollPercentage > 0.5 ? targetElement.scrollHeight : 0;
-      }
-
-      // Only scroll if the difference is significant, to avoid jitter
-      if (Math.abs(targetElement.scrollTop - targetScrollTop) > 5) { 
-        // If a major programmatic scroll (like a bookmark jump) is already in progress,
-        // this syncScroll is a secondary adjustment. It should occur, but not
-        // take over the isProgrammaticScroll flag from the primary operation.
-        const primaryScrollInProgress = isProgrammaticScroll.current;
-
-        if (!primaryScrollInProgress) {
-            // If no primary scroll is happening, this sync is its own programmatic scroll.
-            isProgrammaticScroll.current = true;
-        }
-        
-        targetElement.scrollTop = targetScrollTop;
-
-        if (!primaryScrollInProgress) {
-            // Only let syncScroll reset the flag if it was the one to set it.
-            setTimeout(() => { isProgrammaticScroll.current = false; }, 50); 
-        }
-      }
-    }, 50), // Debounce time
-    [] // No dependencies, as it uses refs and isProgrammaticScroll.current
-  );
-
-  useEffect(() => {
-    const bookElement = bookPaneContainerRef.current; // Use container ref
-    const noteElement = notePaneContainerRef.current; // Use container ref
-
-    if (bookElement && noteElement) {
-      const debouncedBookScroll = () => syncScroll(bookPaneContainerRef, notePaneContainerRef);
-      const debouncedNoteScroll = () => syncScroll(notePaneContainerRef, bookPaneContainerRef);
-
-      bookElement.addEventListener('scroll', debouncedBookScroll);
-      noteElement.addEventListener('scroll', debouncedNoteScroll);
-
-      return () => {
-        bookElement.removeEventListener('scroll', debouncedBookScroll);
-        noteElement.removeEventListener('scroll', debouncedNoteScroll);
-        debouncedBookScroll.cancel(); 
-        debouncedNoteScroll.cancel();
-      };
+  const readingPositionPayload = useCallback((page, scrollTop, scrollEl) => {
+    const position = { page, scrollTop };
+    const boundary = pageBoundariesRef.current[page - 1];
+    if (!boundary) return position;
+    let charOffset = boundary.start;
+    const useFraction = viewMode === 'original'
+      && scrollEl
+      && scrollTop > 0
+      && scrollEl.scrollHeight > scrollEl.clientHeight;
+    if (useFraction) {
+      const fraction = Math.min(1, scrollTop / (scrollEl.scrollHeight - scrollEl.clientHeight));
+      const span = Math.max(0, boundary.end - boundary.start - 1);
+      charOffset = boundary.start + Math.round(fraction * span);
     }
-  }, [syncScroll]);
+    position.charOffset = charOffset;
+    return position;
+  }, [viewMode]);
 
-  // Debounced function to save reading position
+  // Debounced function to save reading position (primarily for scroll)
   const debouncedSaveReadingPosition = useCallback(
-    debounce((bookIdToSave, pageToSave, scrollTopToSave) => {
-      if (bookIdToSave && typeof pageToSave === 'number' && typeof scrollTopToSave === 'number') {
-        const position = { page: pageToSave, scrollTop: scrollTopToSave };
-        localStorage.setItem(`readingPalLastPosition_${bookIdToSave}`, JSON.stringify(position));
-        logger.debug(`[BookView - SavePosition] Saved position for book ${bookIdToSave}: Page ${pageToSave}, ScrollTop ${scrollTopToSave}`);
+    debounce((bookIdToSave, position) => {
+      if (bookIdToSave && position && typeof position.page === 'number' && typeof position.scrollTop === 'number') {
+        setStoredReadingPosition(bookIdToSave, position);
+        logger.debug(`[BookView - SavePosition] Saved position for book ${bookIdToSave}: Page ${position.page}, ScrollTop ${position.scrollTop}, Offset ${position.charOffset}`);
       }
     }, 1000), // Debounce for 1 second
-    [] // No dependencies, relies on arguments
+    []
   );
 
-  // Effect to save reading position on currentPage change or scroll
+  // Effect to save reading position on scroll and page change
   useEffect(() => {
-    const bookElement = bookPaneContainerRef.current;
+    const tracked = getEffectiveScrollState();
+    const trackedElements = tracked?.containers || [];
 
     const handleScroll = () => {
-      if (bookElement && !isProgrammaticScroll.current && bookId) {
-        // Only save if scroll was user-initiated and bookId is valid
-        debouncedSaveReadingPosition(bookId, currentPage, bookElement.scrollTop);
+      const state = getEffectiveScrollState();
+      if (state?.active && !isProgrammaticScroll.current && bookId) {
+        debouncedSaveReadingPosition(
+          bookId,
+          readingPositionPayload(currentPage, state.active.scrollTop, state.active),
+        );
       }
     };
 
-    if (bookElement) {
-      bookElement.addEventListener('scroll', handleScroll);
+    // On initial mount, keep the stored offset. A later page change records the new page.
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      lastSavedPageRef.current = currentPage;
+    } else if (bookId && currentPage && lastSavedPageRef.current !== currentPage) {
+      lastSavedPageRef.current = currentPage;
+      const boundary = pageBoundariesRef.current[currentPage - 1];
+      const existing = getStoredReadingPosition(bookId);
+      const position = readingPositionPayload(currentPage, 0, null);
+      if (
+        boundary &&
+        existing &&
+        Number.isFinite(existing.charOffset) &&
+        existing.charOffset >= boundary.start &&
+        existing.charOffset < boundary.end
+      ) {
+        position.charOffset = existing.charOffset;
+      }
+      setStoredReadingPosition(bookId, position);
+      logger.debug(`[BookView - PageChange] Saved page ${currentPage} offset ${position.charOffset} for book ${bookId}`);
     }
 
-    // Save when currentPage changes too (e.g., via pagination buttons)
-    if (bookId && bookElement) {
-       // We might want to save immediately on page change rather than just on next scroll
-       // However, scrollTop might not be stable yet.
-       // The scroll event listener should cover changes after page load.
-       // If user clicks "Next Page", then scrolls, it will be saved.
-       // If they click "Next Page" and immediately refresh, the scrollTop might be 0 for the new page.
-       // Let's also call save on currentPage change, assuming scrollTop is somewhat stable or 0.
-       debouncedSaveReadingPosition(bookId, currentPage, bookElement.scrollTop);
-    }
+    trackedElements.forEach((el) => el.addEventListener('scroll', handleScroll, { passive: true }));
 
     return () => {
-      if (bookElement) {
-        bookElement.removeEventListener('scroll', handleScroll);
-      }
-      debouncedSaveReadingPosition.cancel(); // Cancel any pending saves on unmount/cleanup
+      trackedElements.forEach((el) => el.removeEventListener('scroll', handleScroll));
+      debouncedSaveReadingPosition.cancel();
     };
-  }, [bookId, currentPage, debouncedSaveReadingPosition]); // Listen to bookId and currentPage
+  }, [bookId, currentPage, debouncedSaveReadingPosition, getEffectiveScrollState, readingPositionPayload, viewMode, readingRoadmap]);
 
 
   const handleBookmarkSelect = (event) => {
@@ -1380,11 +3363,16 @@ function BookView() {
         } else {
           setPendingScrollToPercentage(0);
         }
+        if (viewMode !== 'original') {
+          setViewMode('original');
+        }
         setCurrentPage(selectedBookmark.page_number);
+        refreshImageUrls(); // Refresh signed URLs when page changes
       } else {
         logger.debug(`[BookView - handleBookmarkSelect] Already on target page ${currentPage}. Scrolling directly.`);
-        if (bookPaneContainerRef.current) {
-          const element = bookPaneContainerRef.current;
+        const state = getEffectiveScrollState();
+        if (state?.active) {
+          const element = state.active;
           const targetScroll = selectedBookmark.scroll_percentage !== null && selectedBookmark.scroll_percentage !== undefined ? selectedBookmark.scroll_percentage : 0;
           if (element.scrollHeight > element.clientHeight) {
             element.scrollTop = targetScroll * (element.scrollHeight - element.clientHeight);
@@ -1393,7 +3381,7 @@ function BookView() {
           }
           logger.debug(`[BookView - handleBookmarkSelect] Scrolled directly. Target scroll percentage: ${targetScroll}`);
         } else {
-          logger.warn("[BookView - handleBookmarkSelect] bookPaneContainerRef.current is null. Cannot scroll directly.");
+          logger.warn("[BookView - handleBookmarkSelect] No active scroll container. Cannot scroll directly.");
         }
         setTimeout(() => { isProgrammaticScroll.current = false; }, 100);
       }
@@ -1406,11 +3394,25 @@ function BookView() {
   };
 
   const handlePreviousPage = () => {
-    setCurrentPage((prev) => Math.max(1, prev - 1));
+    const newPage = Math.max(1, currentPage - 1);
+    if (newPage === currentPage) {
+      return;
+    }
+    beginExplicitPagination(newPage);
+    setCurrentPage(newPage);
+    // Refresh signed URLs when page changes
+    refreshImageUrls();
   };
 
   const handleNextPage = () => {
-    setCurrentPage((prev) => Math.min(totalPages, prev + 1));
+    const newPage = Math.min(totalPages, currentPage + 1);
+    if (newPage === currentPage) {
+      return;
+    }
+    beginExplicitPagination(newPage);
+    setCurrentPage(newPage);
+    // Refresh signed URLs when page changes
+    refreshImageUrls();
   };
 
   const openAddBookmarkModal = () => {
@@ -1424,15 +3426,12 @@ function BookView() {
   };
 
   const handleSaveBookmark = async () => {
-    if (!newBookmarkName.trim()) {
-      setBookmarkError("Bookmark name cannot be empty.");
-      return;
-    }
     setBookmarkError(null); // Clear error if any
 
     let currentScrollPercentage = 0; // Default to 0
-    if (bookPaneContainerRef.current) {
-      const { scrollTop, scrollHeight, clientHeight } = bookPaneContainerRef.current;
+    const state = getEffectiveScrollState();
+    if (state?.active) {
+      const { scrollTop, scrollHeight, clientHeight } = state.active;
       if (scrollHeight > clientHeight) { // Avoid division by zero if not scrollable
         currentScrollPercentage = scrollTop / (scrollHeight - clientHeight); // Value between 0.0 and 1.0
       } else if (scrollHeight === clientHeight && scrollHeight > 0) { // Content fits perfectly or is empty but scrollable
@@ -1442,20 +3441,47 @@ function BookView() {
 
     const bookmarkData = {
       book_id: bookId,
-      name: newBookmarkName.trim(),
+      name: newBookmarkName.trim() || null, // Allow empty name - backend will generate default
       page_number: currentPage, // Assumes currentPage state is correctly maintained
       scroll_percentage: currentScrollPercentage,
+      global_character_offset: selectedGlobalCharOffset || null, // Include global character offset for line calculation
     };
 
     logger.debug("Attempting to save bookmark with data:", bookmarkData);
 
     try {
-      const token = localStorage.getItem('authToken');
+      const token = getStoredAuthToken();
       if (!token) {
         setBookmarkError("Authentication token not found. Please log in to save bookmarks.");
         logger.warn("[BookView - handleSaveBookmark] Auth token not found.");
         return;
       }
+
+      if (!navigator.onLine || isOfflineSnapshot) {
+        const clientId = newLocalId();
+        const localBookmark = {
+          ...bookmarkData,
+          id: clientId,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          _localClientId: clientId,
+        };
+        setBookmarks((prev) => [...prev, localBookmark].sort((a, b) => new Date(a.created_at) - new Date(b.created_at)));
+        try {
+          const ann = await getAnnotations(bookId);
+          const next = [...(ann?.bookmarks || []), localBookmark];
+          await putAnnotations(bookId, { bookmarks: next, notes: ann?.notes || [] });
+          await addOutboxEntry({
+            type: 'create_bookmark',
+            bookId,
+            payload: { clientId, ...bookmarkData },
+          });
+          await refreshOutboxCount();
+        } catch (_e) { /* ignore */ }
+        closeAddBookmarkModal();
+        return;
+      }
+
       const response = await fetch('/api/bookmarks/', {
         method: 'POST',
         headers: {
@@ -1477,8 +3503,6 @@ function BookView() {
       }
 
       const savedBookmark = await response.json();
-      // Optionally, refresh bookmarks list here if displaying them on BookView
-      // setBookmarks(prevBookmarks => [...prevBookmarks, savedBookmark].sort((a, b) => new Date(a.created_at) - new Date(b.created_at)));
       logger.info("Bookmark saved successfully:", savedBookmark);
       closeAddBookmarkModal();
       fetchBookmarks(); // Refresh bookmarks list after saving a new one
@@ -1488,13 +3512,307 @@ function BookView() {
     }
   };
 
-  const toggleNotePaneVisibility = () => {
-    if (isMobileView) {
-      setShowNotesPanelOnMobile(prev => !prev);
-    } else {
-      setIsNotePaneVisible(prev => !prev);
+  // --- UPDATED: Handler for reformatting content ---
+  const handleReformatPage = async () => {
+    if (serverOffline) {
+      alert('Reformatting requires an internet connection.');
+      return;
+    }
+    const reformatTarget = selectedBookText ? "the selected text" : `page ${currentPage}`;
+    const confirmMessage = `Are you sure you want to reformat ${reformatTarget}? This will permanently replace the content with an AI-generated version and cannot be undone.`;
+
+    if (!window.confirm(confirmMessage)) {
+        return;
+    }
+
+    setIsReformatting(true);
+    setReformatError(null);
+
+    try {
+        const token = getStoredAuthToken();
+        if (!token) {
+            throw new Error("Authentication token not found. Please log in.");
+        }
+
+        const payload = {};
+        if (selectedBookText && selectedGlobalCharOffset !== null) {
+            payload.selected_text = selectedBookText;
+            payload.global_char_offset = selectedGlobalCharOffset;
+        }
+
+        const response = await fetch(`/api/books/${bookId}/reformat-page/${currentPage}`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload),
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
+        }
+
+        const updatedBook = await response.json();
+        
+        if (updatedBook && updatedBook.markdown_content) {
+            logger.info("[BookView - handleReformatPage] Successfully received reformatted content.");
+            // Update the full markdown content state. This will trigger the useEffect
+            // that recalculates page boundaries and updates the current page's content.
+            setFullMarkdownContent(updatedBook.markdown_content);
+            
+            // Clear selection after reformatting
+            setSelectedBookText(null);
+            setSelectedGlobalCharOffset(null);
+            setSelectionAnchor(null);
+            
+        } else {
+            throw new Error("Reformat operation did not return new content.");
+        }
+
+    } catch (err) {
+        logger.error("Failed to reformat content:", err);
+        setReformatError(err.message);
+        alert(`Error reformatting content: ${err.message}`);
+    } finally {
+        setIsReformatting(false);
     }
   };
+
+  const isGuideMode = viewMode === 'guide';
+  const showTypeControlsInMenu = isMobileView || !fontControlsOnBar;
+  const handleSwitchToOriginalFromGuide = useCallback(() => {
+    if (guideScrollContainerRef.current) {
+      setGuideScrollPositionByPage((prev) => ({
+        ...prev,
+        [currentPage]: guideScrollContainerRef.current.scrollTop,
+      }));
+    }
+    setViewMode('original');
+  }, [currentPage]);
+
+  const [pageScrollFraction, setPageScrollFraction] = useState(0);
+  const [pageCanScroll, setPageCanScroll] = useState(false);
+
+  useEffect(() => {
+    let detach = () => {};
+    let raf = 0;
+    const bind = () => {
+      detach();
+      const el = viewMode === 'guide'
+        ? guideScrollContainerRef.current
+        : bookPaneContainerRef.current;
+      if (!el) return false;
+      const update = () => {
+        const denom = el.scrollHeight - el.clientHeight;
+        if (denom <= 0) {
+          setPageCanScroll(false);
+          setPageScrollFraction(0);
+          return;
+        }
+        setPageCanScroll(true);
+        setPageScrollFraction(Math.min(1, Math.max(0, el.scrollTop / denom)));
+      };
+      update();
+      el.addEventListener('scroll', update, { passive: true });
+      const observer = new ResizeObserver(update);
+      observer.observe(el);
+      detach = () => {
+        el.removeEventListener('scroll', update);
+        observer.disconnect();
+      };
+      return true;
+    };
+    const attempt = (left) => {
+      if (bind()) return;
+      if (left <= 0) return;
+      raf = requestAnimationFrame(() => attempt(left - 1));
+    };
+    attempt(8);
+    return () => {
+      cancelAnimationFrame(raf);
+      detach();
+    };
+  }, [viewMode, currentPage, isMobileView, guideLoading, readingRoadmap, currentPageContent]);
+
+  const safeTotalPages = Math.max(1, totalPages || 1);
+  const ringFull = safeTotalPages <= 1 && !pageCanScroll;
+  const progressFraction = ringFull
+    ? 1
+    : Math.min(1, Math.max(0, ((currentPage || 1) - 1 + pageScrollFraction) / safeTotalPages));
+  const bookTitle = bookData?.title || bookData?.original_filename || 'Book';
+
+  useEffect(() => {
+    if (!setNavBarExtra) {
+      return undefined;
+    }
+    setNavBarExtra(
+      <div className="reader-nav-chrome">
+        <div className="reader-crumb">
+          <Link to="/" className="reader-crumb-link">Book List</Link>
+          <span className="reader-crumb-sep" aria-hidden="true">/</span>
+          <span className="reader-crumb-title" title={bookTitle}>{bookTitle}</span>
+          {viewMode === 'guide' && (
+            <>
+              <span className="reader-crumb-sep" aria-hidden="true">/</span>
+              <span className="reader-crumb-guide">Guide</span>
+            </>
+          )}
+        </div>
+        <ReaderProgressRing
+          fraction={progressFraction}
+          caption={`${currentPage} / ${safeTotalPages}`}
+          accessibleName={`Page ${currentPage} of ${safeTotalPages}`}
+        />
+      </div>,
+    );
+    return () => setNavBarExtra(null);
+  }, [setNavBarExtra, viewMode, bookTitle, progressFraction, currentPage, safeTotalPages]);
+
+  const toggleViewMode = () => {
+    if (isGuideMode) {
+      if (guideScrollContainerRef.current) {
+        setGuideScrollPositionByPage((prev) => ({
+          ...prev,
+          [currentPage]: guideScrollContainerRef.current.scrollTop,
+        }));
+      }
+      setViewMode('original');
+    } else {
+      if (bookPaneContainerRef.current) {
+        setBookScrollPositionByPage((prev) => ({ ...prev, [currentPage]: bookPaneContainerRef.current.scrollTop }));
+        bookPaneContainerRef.current.scrollTop = 0;
+      }
+      setViewMode('guide');
+    }
+    setShowBackToGuide(false);
+    setGuideReturnItemId(null);
+  };
+
+  const viewModeSwitchEl = (
+    <button
+      type="button"
+      className={`view-mode-switch ${isGuideMode ? 'is-guide' : 'is-original'}`}
+      onClick={toggleViewMode}
+      role="switch"
+      aria-checked={isGuideMode}
+      aria-label={`Switch to ${isGuideMode ? 'Original Text' : 'Reading Guide'} mode`}
+      title={`Current mode: ${isGuideMode ? 'Reading Guide' : 'Original Text'}. Click to switch.`}
+    >
+      <span className="view-mode-switch-track" aria-hidden="true">
+        <span className="view-mode-switch-label view-mode-switch-label--guide">Guide</span>
+        <span className="view-mode-switch-label view-mode-switch-label--original">Original</span>
+      </span>
+      <span className="view-mode-switch-thumb" aria-hidden="true" />
+    </button>
+  );
+
+  const floatingToolbarStyle = useMemo(() => {
+    if (!bookPaneAreaFrame && !isMobileView) return undefined;
+    if (isMobileView) {
+      return {
+        position: 'fixed',
+        top: 'auto',
+        bottom: 0,
+        left: 0,
+        width: '100%',
+        zIndex: 1200,
+      };
+    }
+    return {
+      position: 'fixed',
+      top: FLOATING_TOOLBAR_TOP_PX,
+      left: bookPaneAreaFrame.left,
+      width: bookPaneAreaFrame.width,
+      zIndex: 1200,
+    };
+  }, [bookPaneAreaFrame, isMobileView]);
+
+  useEffect(() => {
+    if (!isMobileView || !notesLLMPopupMode) {
+      document.documentElement.style.removeProperty('--keyboard-inset');
+      return undefined;
+    }
+    const viewport = window.visualViewport;
+    if (!viewport) return undefined;
+    const apply = () => {
+      const inset = Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop);
+      document.documentElement.style.setProperty('--keyboard-inset', `${Math.round(inset)}px`);
+    };
+    apply();
+    viewport.addEventListener('resize', apply);
+    viewport.addEventListener('scroll', apply);
+    return () => {
+      viewport.removeEventListener('resize', apply);
+      viewport.removeEventListener('scroll', apply);
+      document.documentElement.style.removeProperty('--keyboard-inset');
+    };
+  }, [isMobileView, notesLLMPopupMode]);
+
+  const collapseBookToolbar = useCallback(() => {
+    setBookControlsExpandedPersist(false);
+    setIsBookViewMenuOpen(false);
+  }, [setBookControlsExpandedPersist]);
+
+  const expandBookToolbar = useCallback(() => {
+    setBookControlsExpandedPersist(true);
+  }, [setBookControlsExpandedPersist]);
+
+  useLayoutEffect(() => {
+    let cancelled = false;
+    let rafId = 0;
+    let teardown = () => {};
+
+    const bind = () => {
+      const onScroll = () => updateScrollToTopVisibility();
+      window.addEventListener('scroll', onScroll, { passive: true });
+      window.addEventListener('resize', onScroll);
+
+      const { containers: panes } = getTrackedScrollContainers();
+      panes.forEach((p) => p.addEventListener('scroll', onScroll, { passive: true }));
+      const ros = panes.map((p) => {
+        const ro = new ResizeObserver(onScroll);
+        ro.observe(p);
+        return ro;
+      });
+      onScroll();
+
+      teardown = () => {
+        panes.forEach((p) => p.removeEventListener('scroll', onScroll));
+        window.removeEventListener('scroll', onScroll);
+        window.removeEventListener('resize', onScroll);
+        ros.forEach((ro) => ro.disconnect());
+      };
+      return panes.length > 0;
+    };
+
+    const attempt = (attemptsLeft) => {
+      if (cancelled) return;
+      teardown();
+      teardown = () => {};
+      const ok = bind();
+      if (!ok && attemptsLeft > 0) {
+        rafId = requestAnimationFrame(() => attempt(attemptsLeft - 1));
+      }
+    };
+
+    attempt(viewMode === 'guide' ? 40 : 12);
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(rafId);
+      teardown();
+    };
+  }, [
+    viewMode,
+    currentPage,
+    readingRoadmap,
+    guideLoading,
+    highlightedPageContent,
+    getTrackedScrollContainers,
+    updateScrollToTopVisibility,
+  ]);
 
   if (loading) return <div style={{ padding: '20px' }}>Loading book...</div>;
   if (error) return <div style={{ padding: '20px', color: 'red' }}>Error loading book: {error}</div>;
@@ -1504,7 +3822,7 @@ function BookView() {
         <h2>Book Not Found</h2>
         <p>The book with ID "{bookId}" could not be found.</p>
         <div style={{ marginTop: '20px' }}>
-          <Link to="/">Go back to the Book List</Link> | <Link to="/upload">Upload a New PDF</Link>
+          <Link to="/">Go back to the Book List</Link> | <Link to="/upload">Upload a New Book</Link>
         </div>
       </div>
     );
@@ -1521,12 +3839,12 @@ function BookView() {
           <p style={{ color: 'red' }}>Processing failed.</p>
         )}
         <div style={{ marginTop: '20px' }}>
-          <Link to="/">Go back to the Book List</Link> | <Link to="/upload">Upload a New PDF</Link>
+          <Link to="/">Go back to the Book List</Link> | <Link to="/upload">Upload a New Book</Link>
         </div>
       </div>
     );
   }
-  if (bookData.status === 'completed' && !fullMarkdownContent.current) {
+  if (bookData.status === 'completed' && !fullMarkdownContent) {
     return (
       <div style={{ padding: '20px', color: 'orange', textAlign: 'center' }}>
         <h2>{bookData.title || bookData.original_filename}</h2>
@@ -1540,237 +3858,509 @@ function BookView() {
 
   return (
     <div
-      className="book-view-container"
+      className={`book-view-container${isMobileView ? ' is-phone-reader' : ''}`}
       ref={bookViewContainerRef}
-      style={{ flexDirection: isMobileView ? 'column' : 'row' }} // ADD/MODIFY THIS STYLE PROP
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'flex-start',
+        flex: '1 1 0%',
+        height: '100%',
+        minHeight: 0,
+        overflow: 'hidden',
+      }}
     >
-        {/* Add Bookmark Modal - Rendered conditionally */}
-        {showAddBookmarkModal && (
-          <div className="modal-overlay">
-            <div className="modal-content">
-              <h2>Add Bookmark</h2>
-              <input
-                type="text"
-                value={newBookmarkName}
-                onChange={(e) => setNewBookmarkName(e.target.value)}
-                placeholder="Enter bookmark name"
-                className="bookmark-name-input"
-                aria-label="Bookmark name"
-              />
-              {bookmarkError && <p className="error-message">{bookmarkError}</p>}
-              <div className="modal-actions">
-                <button onClick={handleSaveBookmark} className="button-primary">Save</button>
-                <button onClick={closeAddBookmarkModal} className="button-secondary">Cancel</button>
-              </div>
-            </div>
-          </div>
-        )}
-
-      {/* Manage Bookmarks Modal - ADD THIS */}
-      {showManageBookmarksModal && (
-        <div className="modal-overlay">
-          <div className="modal-content manage-bookmarks-modal">
-            <h2>Manage Bookmarks</h2>
-            {bookmarks.length === 0 ? (
-              <p>No bookmarks to manage.</p>
-            ) : (
-              <ul className="manage-bookmarks-list">
-                {bookmarks.map(bookmark => (
-                  <li key={bookmark.id} className="manage-bookmark-item">
-                    <span>
-                      {bookmark.name ? `${bookmark.name} (P${bookmark.page_number})` : `Page ${bookmark.page_number} (Unnamed)`}
-                    </span>
-                    <button
-                      onClick={() => handleDeleteBookmark(bookmark.id)}
-                      className="delete-button delete-bookmark-button"
-                      title="Delete this bookmark"
-                    >
-                      ✕
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-            <div className="modal-actions">
-              <button onClick={() => setShowManageBookmarksModal(false)} className="button-secondary">Close</button>
-            </div>
-          </div>
+      {serverOffline && (
+        <div
+          role="status"
+          className="theme-offline-banner"
+          style={{
+            width: '100%',
+            padding: '8px 16px',
+            borderBottom: '1px solid var(--color-warning-text)',
+            fontSize: '14px',
+            flexShrink: 0,
+            marginBottom: 0,
+          }}
+        >
+          {outboxPendingCount > 0
+            ? 'Offline — edits will sync when you’re back online.'
+            : (isOfflineSnapshot
+              ? 'Offline — showing cached book.'
+              : 'Offline — this tab can keep reading current content, but uncached books require one online load first.')}
         </div>
       )}
-
+      {/* Main Content Area (Book/Guide and Notes) */}
+      <div
+        className="main-content-area"
+        ref={mainContentAreaRef} // Ref for the resizer context
+        style={{
+          flex: '1 1 0%',
+          flexDirection: isMobileView ? 'column' : 'row',
+          minHeight: 0,
+          overflow: 'hidden',
+          display: 'flex',
+          minWidth: !isMobileView ? 0 : undefined,
+        }}
+      >
         {/* Book Pane Area */}
         <div 
           className="book-pane-area"
           ref={bookPaneAreaRef} // Ref for the resizable area
           style={{
-            flexBasis: !isMobileView && isNotePaneVisible ? bookPaneFlexBasis : '100%', // Desktop width, or full if mobile/notes hidden
+            flex: '1 1 0%',
             width: isMobileView ? '100%' : undefined, // Full width on mobile
-            height: '100%', // Occupy full height of its flex container part
-            flexShrink: 0,
+            minHeight: 0,
+            minWidth: 0,
             display: 'flex',
             flexDirection: 'column',
             overflow: 'hidden',
-            position: isMobileView ? 'relative' : undefined, // Needed if note pane is absolute child for some reason
+            position: 'relative',
           }}
         >
           {/* .book-pane-wrapper is the existing structure inside book-pane-area */}
           <div className="book-pane-wrapper">
-            {/* --- MODIFIED Controls Header for Book Pane --- */}
-            <div className="book-pane-controls-header">
-              {/* Left: Bookmark Dropdown Menu */}
-              <div className="bookmark-menu-container" ref={bookmarkMenuRef}>
-                <button 
-                  onClick={() => setIsBookmarkMenuOpen(prev => !prev)} 
-                  className="control-button bookmark-menu-button"
-                  aria-haspopup="true"
-                  aria-expanded={isBookmarkMenuOpen}
+            <div
+              className="book-pane-container"
+            >
+              {(() => {
+                const readerChrome = (
+                <div
+                  ref={bookToolbarWrapperRef}
+                  className={`book-floating-toolbar-shell${isMobileView ? ' is-phone-shell' : ' is-desktop-shell'}`}
+                  style={isMobileView ? floatingToolbarStyle : undefined}
                 >
-                  Bookmarks <span className={`arrow ${isBookmarkMenuOpen ? 'up' : 'down'}`}></span>
-                </button>
-                {isBookmarkMenuOpen && (
-                  <div className="bookmark-dropdown-menu">
-                    <button 
-                      onClick={() => { openAddBookmarkModal(); setIsBookmarkMenuOpen(false); }} 
-                      className="dropdown-item control-button" // Added control-button for consistent styling
-                    >
-                      Add Bookmark
-                    </button>
-                    {bookmarks.length > 0 && (
-                      <div className="dropdown-item-select-container"> {/* Wrapper for select */}
-                        <label htmlFor="jump-to-bookmark-select" className="sr-only">Jump to Bookmark</label>
-                        <select
-                          id="jump-to-bookmark-select"
-                          onChange={(e) => { handleBookmarkSelect(e); setIsBookmarkMenuOpen(false); }}
-                          className="bookmark-select dropdown-item-select control-button" // Added control-button
-                          defaultValue=""
-                          aria-label="Jump to bookmark"
-                        >
-                          <option value="" disabled>Jump to Bookmark...</option>
-                          {bookmarks.map((bookmark, index) => (
-                            <option key={bookmark.id} value={bookmark.id}>
-                              {bookmark.name ? `${bookmark.name} (P${bookmark.page_number})` : `Page ${bookmark.page_number} (Unnamed)`}
-                            </option>
-                          ))}
-                        </select>
+                  <div className={`book-floating-toolbar ${isMobileView ? 'is-phone-bar' : 'is-desktop-bar'}`}>
+                    <div className="book-floating-toolbar-panel">
+                      <div className="book-pane-controls-header">
+                        <div className="left-controls-group">
+                          <div className="book-view-menu-container" ref={bookViewMenuRef}>
+                            <button
+                              ref={bookViewMenuButtonRef}
+                              type="button"
+                              onClick={() => setIsBookViewMenuOpen((prev) => !prev)}
+                              className="control-button book-view-menu-button"
+                              aria-haspopup="true"
+                              aria-expanded={isBookViewMenuOpen}
+                            >
+                              Menu <span className={`arrow ${isBookViewMenuOpen ? 'up' : 'down'}`} />
+                            </button>
+                            {isBookViewMenuOpen && bookViewMenuPopperStyle
+                              ? createPortal(
+                                <div
+                                  ref={bookViewMenuPortalRef}
+                                  className="book-view-dropdown-menu book-view-dropdown-menu--portal"
+                                  style={bookViewMenuPopperStyle}
+                                >
+                                  {bookmarks.length > 0 && (
+                                    <div className="dropdown-item-select-container">
+                                      <label htmlFor="jump-to-bookmark-select-menu" className="sr-only">Jump to Bookmark</label>
+                                      <select
+                                        id="jump-to-bookmark-select-menu"
+                                        onChange={(e) => { handleBookmarkSelect(e); setIsBookViewMenuOpen(false); }}
+                                        className="bookmark-select dropdown-item-select control-button"
+                                        defaultValue=""
+                                        aria-label="Jump to bookmark"
+                                      >
+                                        <option value="" disabled>Jump to Bookmark...</option>
+                                        {bookmarks.map((bookmark) => (
+                                          <option key={bookmark.id} value={bookmark.id}>
+                                            {bookmark.name ? `${bookmark.name} (P${bookmark.page_number})` : `Page ${bookmark.page_number} (Unnamed)`}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => { setShowManageBookmarksModal(true); setIsBookViewMenuOpen(false); }}
+                                    className="dropdown-item control-button"
+                                  >
+                                    Manage Bookmarks
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => { handleReformatPage(); setIsBookViewMenuOpen(false); }}
+                                    className="dropdown-item control-button"
+                                    disabled={isReformatting || serverOffline}
+                                    title={selectedBookText ? 'Reformat selected text with AI.' : 'Reformat current page with AI. This cannot be undone.'}
+                                  >
+                                    {isReformatting ? 'Reformatting...' : (selectedBookText ? 'Reformat Selection' : 'Reformat Page')}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => { setShowAllNotesModal(true); setIsBookViewMenuOpen(false); }}
+                                    className="dropdown-item control-button"
+                                  >
+                                    Review Notes
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => { openAddBookmarkModal(); setIsBookViewMenuOpen(false); }}
+                                    className="dropdown-item control-button"
+                                  >
+                                    Add Bookmark
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => { setNotesLLMPopupMode('note'); setIsBookViewMenuOpen(false); }}
+                                    className="dropdown-item control-button"
+                                  >
+                                    Add note
+                                  </button>
+                                  {showTypeControlsInMenu && (
+                                    <div className="dropdown-font-controls">
+                                      <span className="dropdown-font-controls-label">Text size</span>
+                                      <div className="font-controls-group">
+                                        <button type="button" onClick={decreaseFontSize} className="font-control-btn" title="Decrease font size">A-</button>
+                                        <span className="font-controls-value">{fontSize}px</span>
+                                        <button type="button" onClick={increaseFontSize} className="font-control-btn" title="Increase font size">A+</button>
+                                      </div>
+                                      <span className="dropdown-font-controls-label">Line spacing</span>
+                                      <div className="font-controls-group">
+                                        <button type="button" onClick={decreaseLineHeight} className="font-control-btn" title="Decrease line spacing">LH-</button>
+                                        <span className="font-controls-value">{lineHeight.toFixed(1)}</span>
+                                        <button type="button" onClick={increaseLineHeight} className="font-control-btn" title="Increase line spacing">LH+</button>
+                                      </div>
+                                    </div>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => { setNotesLLMPopupMode('llm'); setIsBookViewMenuOpen(false); }}
+                                    className="dropdown-item control-button"
+                                  >
+                                    Ask LLM
+                                  </button>
+                                </div>,
+                                document.body,
+                              )
+                              : null}
+                          </div>
+                          {viewModeSwitchEl}
+                          <button
+                            type="button"
+                            onClick={openAddBookmarkModal}
+                            className="control-button reader-tool-inline"
+                            title="Add a bookmark at current location"
+                          >
+                            Add Bookmark
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setNotesLLMPopupMode('note')}
+                            className="control-button reader-tool-inline"
+                            title="Add a note at current selection or location"
+                          >
+                            Add note
+                          </button>
+                        </div>
+                        {totalPages > 1 && (
+                          <div className="pagination-controls header-pagination">
+                            <button type="button" onClick={handlePreviousPage} disabled={currentPage === 1} className="control-button">
+                              <span className="page-nav-long">Previous</span>
+                              <span className="page-nav-short">Prev</span>
+                            </button>
+                            <form onSubmit={handleGoToPage} className="page-input-form">
+                              <input
+                                type="number"
+                                value={pageInput}
+                                onChange={handlePageInputChange}
+                                onBlur={handleGoToPage}
+                                min="1"
+                                max={totalPages}
+                                className="page-input"
+                                aria-label={`Page ${currentPage} of ${totalPages}`}
+                              />
+                              <span className="page-nav-total">/ {totalPages}</span>
+                            </form>
+                            <button type="button" onClick={handleNextPage} disabled={currentPage === totalPages} className="control-button">
+                              Next
+                            </button>
+                          </div>
+                        )}
+                        {totalPages <= 1 && <div className="pagination-controls-placeholder" />}
+                        <div className="right-controls-group reader-tool-inline">
+                          <div className="font-controls-group">
+                            <button type="button" onClick={decreaseFontSize} className="font-control-btn" title="Decrease font size">A-</button>
+                            <span className="font-controls-value">{fontSize}px</span>
+                            <button type="button" onClick={increaseFontSize} className="font-control-btn" title="Increase font size">A+</button>
+                            <span className="font-controls-separator" />
+                            <button type="button" onClick={decreaseLineHeight} className="font-control-btn" title="Decrease line spacing">LH-</button>
+                            <span className="font-controls-value">{lineHeight.toFixed(1)}</span>
+                            <button type="button" onClick={increaseLineHeight} className="font-control-btn" title="Increase line spacing">LH+</button>
+                          </div>
+                        </div>
                       </div>
-                    )}
-                    <button 
-                      onClick={() => { setShowManageBookmarksModal(true); setIsBookmarkMenuOpen(false); }} 
-                      className="dropdown-item control-button" // Added control-button
+                    </div>
+                    <button
+                      type="button"
+                      className="control-button book-toolbar-toggle-btn book-toolbar-toggle-btn--floating"
+                      onClick={bookControlsExpanded ? collapseBookToolbar : expandBookToolbar}
+                      aria-expanded={bookControlsExpanded}
+                      aria-label={bookControlsExpanded ? 'Hide full toolbar' : 'Show full toolbar'}
+                      title={bookControlsExpanded ? 'Hide full toolbar' : 'Show full toolbar'}
                     >
-                      Manage Bookmarks
+                      {bookControlsExpanded ? '▶' : '◀'}
                     </button>
                   </div>
-                )}
-              </div>
-
-              {/* Center: Pagination Controls - MOVED HERE */}
-              {totalPages > 1 && (
-                <div className="pagination-controls header-pagination"> {/* Added header-pagination class */}
-                  <button onClick={handlePreviousPage} disabled={currentPage === 1} className="control-button">
-                    Previous
-                  </button>
-                  <form onSubmit={handleGoToPage} className="page-input-form">
-                    <span> Page </span>
-                    <input
-                      type="number"
-                      value={pageInput}
-                      onChange={handlePageInputChange}
-                      onBlur={handleGoToPage} 
-                      min="1"
-                      max={totalPages}
-                      className="page-input"
-                    />
-                    <span> of {totalPages} </span>
-                  </form>
-                  <button onClick={handleNextPage} disabled={currentPage === totalPages} className="control-button">
-                    Next
-                  </button>
                 </div>
+                );
+                if (isMobileView) {
+                  return floatingToolbarStyle ? createPortal(readerChrome, document.body) : null;
+                }
+                return readerChrome;
+              })()}
+
+              <div
+                className={`book-pane-body${viewMode === 'guide' ? ' book-pane-body--guide-scroll' : ''}`}
+                ref={bookPaneContainerRef}
+              >
+              {viewMode === 'guide' ? (
+                <ReadingGuidePane
+                  roadmap={readingRoadmap}
+                  guidesList={guidesList}
+                  activeGuideId={activeGuideId}
+                  maxGuides={MAX_READING_GUIDES}
+                  onSwitchGuide={handleSwitchGuide}
+                  onCreateGuide={handleCreateGuide}
+                  onDeleteGuide={handleDeleteGuide}
+                  completedIds={completedRoadmapIds}
+                  onGenerateRoadmap={handleGenerateRoadmap}
+                  onToggleProgress={handleToggleRoadmapProgress}
+                  isLoading={guideLoading}
+                  error={guideError}
+                  isVisible={true}
+                  hasRoadmap={hasRoadmap}
+                  isGenerating={isGeneratingGuide}
+                  serverActionsDisabled={serverOffline}
+                  onSendCardChat={handleSendCardChat}
+                  onLoadCardChat={handleLoadCardChat}
+                  onClearCardChat={handleClearCardChat}
+                  onGuideTextLink={(textLink) => {
+                    const scrollTop = guideScrollContainerRef.current?.scrollTop ?? 0;
+                    setGuideScrollPositionByPage((prev) => ({ ...prev, [currentPage]: scrollTop }));
+                    setGuideScrollToRestoreOnBack(scrollTop);
+                    setGuideReturnItemId(textLink.sourceItemId != null ? String(textLink.sourceItemId) : null);
+                    navigatingFromGuideTextLinkRef.current = true;
+                    setShowBackToGuide(true);
+                    setViewMode('original');
+                    handleGuideTextLink(textLink);
+                  }}
+                  onGenerateGraph={handleGenerateCardGraph}
+                  graphLoadingById={graphLoadingById}
+                  onGenerateAlternativeReading={handleGenerateAlternativeReading}
+                  onBulkGenerateRoadmap={handleBulkRoadmapGenerate}
+                  alternativeLoadingById={alternativeLoadingById}
+                  onGenerateOutsiderGuide={handleGenerateOutsiderGuide}
+                  outsiderLoadingById={outsiderLoadingById}
+                  roadmapBulkJob={roadmapBulkJob}
+                  onSwitchToOriginal={handleSwitchToOriginalFromGuide}
+                  scrollContainerRef={guideScrollContainerRef}
+                  scrollPositionToRestore={guideScrollToRestoreOnBack ?? guideScrollPositionByPage[currentPage] ?? 0}
+                  hideHeader={isMobileView && viewMode === 'guide'}
+                  mobileChromeHidden={mobileChromeHidden}
+                  embedInMainArea={true}
+                  focusItemId={guideReturnItemId}
+                  onRoadmapReturnFocusDone={handleRoadmapReturnFocusDone}
+                />
+              ) : (
+                <>
+                {guideSectionEndNotice && (
+                  <p className="roadmap-section-end-notice" role="note">
+                    {guideSectionEndNotice}
+                  </p>
+                )}
+                <BookPane
+                  markdownContent={highlightedPageContent}
+                  imageUrls={bookData.image_urls}
+                  onTextSelect={handleTextSelect}
+                  onHighlightClick={handleHighlightClick}
+                  fontSize={fontSize}
+                  lineHeight={lineHeight}
+                />
+                </>
               )}
-              {/* Placeholder for pagination if totalPages <= 1 to maintain layout balance */}
-              {totalPages <= 1 && <div className="pagination-controls-placeholder"></div>}
-
-
-              {/* Right: Toggle Notes Button */}
-              <div className="right-controls-group"> {/* New wrapper for right-aligned items */}
-                <button onClick={toggleNotePaneVisibility} className="control-button">
-                  {isMobileView
-                    ? (showNotesPanelOnMobile ? 'Hide Notes' : 'Show Notes')
-                    : (isNotePaneVisible ? 'Hide Notes' : 'Show Notes')}
-                </button>
               </div>
+              {/* Floating "Back to Reading Guide" button when user navigated from guide */}
+              {viewMode === 'original' && selectionAnchor && !notesLLMPopupMode && (
+                <ReaderSelectionBar
+                  anchor={selectionAnchor}
+                  scrollerRef={bookPaneContainerRef}
+                  onNote={() => setNotesLLMPopupMode('note')}
+                  onAsk={() => setNotesLLMPopupMode('llm')}
+                  onDismiss={() => setSelectionAnchor(null)}
+                />
+              )}
+              {viewMode === 'original' && showBackToGuide && (
+                <button
+                  type="button"
+                  className="back-to-guide-floating-btn"
+                  onClick={() => {
+                    if (bookPaneContainerRef.current) {
+                      setBookScrollPositionByPage((prev) => ({ ...prev, [currentPage]: bookPaneContainerRef.current.scrollTop }));
+                      bookPaneContainerRef.current.scrollTop = 0;
+                    }
+                    setViewMode('guide');
+                    setShowBackToGuide(false);
+                  }}
+                >
+                  <span className="back-to-guide-label-long">Back to Reading Guide</span>
+                  <span className="back-to-guide-label-short">Guide</span>
+                </button>
+              )}
+              {showScrollToTopButton &&
+                typeof document !== 'undefined' &&
+                createPortal(
+                  <button
+                    type="button"
+                    className={`scroll-to-top-floating-btn ${viewMode === 'original' && showBackToGuide ? 'with-back-guide-btn' : ''}`}
+                    onClick={handleScrollToTop}
+                    aria-label="Scroll to top"
+                    title="Scroll to top"
+                  >
+                    <span className="scroll-to-top-floating-btn__icon" aria-hidden="true">
+                      ▲
+                    </span>
+                  </button>,
+                  document.body,
+                )}
             </div>
-            {/* --- END OF MODIFIED Controls Header --- */}
-
-            {/* The BookPane container itself */}
-            <div className="book-pane-container" ref={bookPaneContainerRef}>
-              <BookPane
-                markdownContent={highlightedPageContent} 
-                imageUrls={bookData.image_urls}
-                onTextSelect={handleTextSelect}
-              />
-            </div>
-            {/* The original pagination block was here and is now removed */}
           </div>
         </div>
 
-        {/* Resizer Handle - Conditionally Render */}
-        {isNotePaneVisible && !isMobileView && ( // MODIFIED THIS CONDITION
-          <div className="resizer-handle" onMouseDown={handleMouseDownOnResizer}></div>
-        )}
+    </div> {/* End of main-content-area */}
 
-        {/* Desktop: Note Pane Area - side-by-side */}
-        {!isMobileView && isNotePaneVisible && (
-          <div
-            className="note-pane-area" // Existing class for desktop
-            style={{
-              flexGrow: 1,
-              flexShrink: 1,
-              flexBasis: '0%', // Grow to fill remaining space from bookPaneFlexBasis
-              display: 'flex',
-              flexDirection: 'column',
-              overflow: 'hidden',
-              borderLeft: '1px solid #ccc', // Always has left border on desktop
-            }}
-          >
-            <div className="note-pane-wrapper">
-              <div className="note-pane-container" ref={notePaneContainerRef}>
-                <NotePane
-                  bookId={bookId}
-                  selectedBookText={selectedBookText}
-                  selectedScrollPercentage={selectedScrollPercentage}
-                  selectedGlobalCharOffset={selectedGlobalCharOffset}
-                  onNoteClick={handleNoteClick}
-                  onNewNoteSaved={handleNewNoteSaved}
-                  // No mobile-specific props needed for desktop version
-                />
-              </div>
-            </div>
-          </div>
-        )}
+    <ReaderDialog
+      open={notesLLMPopupMode === 'note'}
+      onOpenChange={(next) => {
+        if (!next) setNotesLLMPopupMode(null);
+      }}
+      title="Add note"
+      size="content"
+      variant={isMobileView ? 'sheet' : 'center'}
+      className="note-llm-popup-modal"
+      bodyClassName="modal-body-scrollable"
+    >
+      <NotePane
+        bookId={bookId}
+        selectedBookText={selectedBookText}
+        selectedScrollPercentage={selectedScrollPercentage}
+        selectedGlobalCharOffset={selectedGlobalCharOffset}
+        currentPage={currentPage}
+        currentPageContent={currentPageContent}
+        onNewNoteSaved={handleNewNoteSaved}
+        offline={serverOffline}
+        onOfflineNoteSave={handleOfflineNoteSave}
+        mode="note"
+        embedInModal
+        onClose={() => setNotesLLMPopupMode(null)}
+      />
+    </ReaderDialog>
 
-        {/* Mobile: Note Pane Area - Overlay */}
-        {isMobileView && showNotesPanelOnMobile && (
-          <div className="note-pane-area-mobile-overlay"> {/* New class for overlay styling */}
-            {/* The wrapper and container structure can be similar if NotePane is self-contained */}
-            <div className="note-pane-wrapper">
-              <div className="note-pane-container" ref={notePaneContainerRef}> {/* Still need ref for scrolling */}
-                <NotePane
-                  bookId={bookId}
-                  selectedBookText={selectedBookText}
-                  selectedScrollPercentage={selectedScrollPercentage}
-                  selectedGlobalCharOffset={selectedGlobalCharOffset}
-                  onNoteClick={handleNoteClick}
-                  onNewNoteSaved={handleNewNoteSaved}
-                  isMobileContext={true} // Indicate mobile overlay context
-                  onClosePane={toggleNotePaneVisibility} // Pass the toggle function to close
-                />
-              </div>
-            </div>
-          </div>
-        )}
-    </div>
+    <ReaderDialog
+      open={notesLLMPopupMode === 'llm'}
+      onOpenChange={(next) => {
+        if (!next) setNotesLLMPopupMode(null);
+      }}
+      title="Ask LLM"
+      size="content"
+      variant={isMobileView ? 'sheet' : 'center'}
+      className="note-llm-popup-modal"
+      bodyClassName="modal-body-scrollable"
+    >
+      <NotePane
+        bookId={bookId}
+        selectedBookText={selectedBookText}
+        selectedScrollPercentage={selectedScrollPercentage}
+        selectedGlobalCharOffset={selectedGlobalCharOffset}
+        currentPage={currentPage}
+        currentPageContent={currentPageContent}
+        onNewNoteSaved={handleNewNoteSaved}
+        offline={serverOffline}
+        onOfflineNoteSave={handleOfflineNoteSave}
+        mode="llm"
+        embedInModal
+        onClose={() => setNotesLLMPopupMode(null)}
+      />
+    </ReaderDialog>
+
+    <ReaderDialog
+      open={showAddBookmarkModal}
+      onOpenChange={(next) => {
+        if (!next) closeAddBookmarkModal();
+      }}
+      title="Add Bookmark"
+      size="compact"
+    >
+      <input
+        type="text"
+        value={newBookmarkName}
+        onChange={(e) => setNewBookmarkName(e.target.value)}
+        placeholder="Enter bookmark name (optional - default: Page X, Line Y)"
+        className="bookmark-name-input"
+        aria-label="Bookmark name"
+      />
+      {bookmarkError && <p className="error-message">{bookmarkError}</p>}
+      <div className="modal-actions">
+        <button onClick={handleSaveBookmark} className="button-primary">Save</button>
+        <button onClick={closeAddBookmarkModal} className="button-secondary">Cancel</button>
+      </div>
+    </ReaderDialog>
+
+    <ReaderDialog
+      open={showManageBookmarksModal}
+      onOpenChange={(next) => {
+        if (!next) setShowManageBookmarksModal(false);
+      }}
+      title="Manage Bookmarks"
+      size="content"
+      className="manage-bookmarks-modal"
+    >
+      {bookmarks.length === 0 ? (
+        <p>No bookmarks to manage.</p>
+      ) : (
+        <ul className="manage-bookmarks-list">
+          {bookmarks.map(bookmark => (
+            <li key={bookmark.id} className="manage-bookmark-item">
+              <span>
+                {bookmark.name ? `${bookmark.name} (P${bookmark.page_number})` : `Page ${bookmark.page_number} (Unnamed)`}
+              </span>
+              <button
+                onClick={() => handleDeleteBookmark(bookmark.id)}
+                className="delete-button delete-bookmark-button"
+                title="Delete this bookmark"
+              >
+                ✕
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="modal-actions">
+        <button onClick={() => setShowManageBookmarksModal(false)} className="button-secondary">Close</button>
+      </div>
+    </ReaderDialog>
+
+    {showAllNotesModal && (
+      <AllNotesModal
+        notes={notes}
+        onClose={() => setShowAllNotesModal(false)}
+        onNoteClick={handleNoteClick}
+        onDeleteNote={handleDeleteNote}
+      />
+    )}
+
+    {activeNoteForModal && (
+      <NoteDisplayModal
+        note={activeNoteForModal}
+        onClose={() => setActiveNoteForModal(null)}
+        onDelete={(noteId) => {
+          handleDeleteNote(noteId);
+          setActiveNoteForModal(null); // Close modal after deletion is initiated
+        }}
+      />
+    )}
+  </div> // End of book-view-container
   );
 }
 

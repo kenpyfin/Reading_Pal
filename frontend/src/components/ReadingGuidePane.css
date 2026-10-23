@@ -1,0 +1,1575 @@
+/* frontend/src/components/ReadingGuidePane.css */
+.reading-guide-pane {
+  display: flex;
+  flex-direction: column; /* Key change for vertical layout */
+  height: 100%;
+  background-color: var(--color-bg-elevated); /* Light background */
+  border-right: 1px solid var(--color-border-light); /* Separator from book pane */
+  box-sizing: border-box;
+  overflow: hidden; /* Prevent parent from scrolling, children will scroll */
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+  font-size: 0.85rem;
+  line-height: 1.48;
+}
+
+.reading-guide-pane.visible {
+  /* Styles when visible, if needed for transitions, etc. */
+}
+
+/* When embedded as main content (replaces BookPane) */
+.reading-guide-pane.reading-guide-pane-embed {
+  border-right: none;
+  background-color: var(--color-bg-elevated);
+}
+
+.reading-guide-top-container {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  min-height: 0;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background-color: var(--color-bg-elevated);
+  transition: transform 0.3s ease, opacity 0.3s ease;
+}
+
+.reading-guide-pane-embed .reading-guide-top-container {
+  background-color: var(--color-bg-elevated); /* Match embed background */
+}
+
+.reading-guide-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.switch-to-original-btn {
+  background-color: var(--color-text-subtle);
+  color: var(--color-on-accent);
+  border: none;
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9em;
+}
+.switch-to-original-btn:hover {
+  background-color: var(--color-text-subtle);
+}
+
+.reading-guide-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 15px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  background-color: var(--color-bg-elevated);
+  flex-shrink: 0;
+}
+
+.reading-guide-header h3 {
+  margin: 0;
+  font-size: 1.1em;
+  color: var(--color-text);
+}
+
+.close-guide-pane-btn {
+  background: none;
+  border: none;
+  font-size: 1.5em;
+  font-weight: bold;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  padding: 0 5px;
+  line-height: 1;
+}
+.close-guide-pane-btn:hover {
+  color: var(--color-text);
+}
+
+/* New styles for the actions area (generate button) */
+.reading-guide-actions {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  flex-shrink: 0;
+  display: block;
+  background-color: var(--color-bg-elevated);
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0; /* Safari: allow flex row to shrink inside narrow panes */
+}
+
+.reading-guide-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+}
+
+.reading-guide-toolbar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+.reading-guide-overflow {
+  position: relative;
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.reading-guide-overflow-trigger {
+  border: 1px solid var(--color-input-border);
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  min-width: 36px;
+}
+
+.reading-guide-overflow-trigger:hover {
+  background: var(--color-bg-hover);
+}
+
+.reading-guide-overflow-trigger[aria-expanded='true'] {
+  background: var(--color-bg-hover);
+  border-color: var(--color-primary);
+}
+
+.reading-guide-overflow-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 200;
+  min-width: 220px;
+  padding: 4px 0;
+  border-radius: 8px;
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-elevated);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+}
+
+.reading-guide-overflow-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--color-text);
+  padding: 8px 14px;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.reading-guide-overflow-item:hover:not(:disabled) {
+  background: var(--color-bg-hover);
+}
+
+.reading-guide-overflow-item:disabled {
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+}
+
+.reading-guide-toolbar-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 0 auto;
+  min-width: 0;
+  width: 100%;
+}
+
+.reading-guide-toolbar-progress .progress-text {
+  display: inline;
+  margin-bottom: 0;
+  white-space: nowrap;
+  font-size: 0.8rem;
+  flex-shrink: 0;
+}
+
+.reading-guide-toolbar-progress .progress-bar {
+  flex: 1;
+  min-width: 0;
+  height: 6px;
+}
+
+.reading-guide-pane-embed .reading-guide-actions {
+  background-color: var(--color-bg-elevated); /* Match embed background */
+  max-width: 100%;
+}
+
+.reading-guide-pane-embed .reading-guide-actions--below-merged-nav {
+  padding-left: max(12px, env(safe-area-inset-left, 0px));
+  padding-right: max(12px, env(safe-area-inset-right, 0px));
+}
+
+.reading-guide-progress {
+  flex: 1 0 100%;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.progress-text {
+  display: block;
+  font-size: 0.82rem;
+  color: var(--color-text-secondary);
+  margin-bottom: 4px;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+.progress-bar {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--color-bg-hover);
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  max-width: 100%;
+  background: var(--color-primary);
+  border-radius: inherit;
+  transition: width 0.2s ease;
+}
+
+.generate-guide-btn {
+  background-color: var(--color-primary);
+  color: var(--color-on-accent);
+  border: none;
+  padding: 8px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9em;
+  flex: 1 1 0%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.generate-guide-btn:hover {
+  background-color: var(--color-primary-hover);
+}
+
+.generate-guide-btn:disabled {
+  background-color: var(--color-border);
+  cursor: not-allowed;
+}
+
+.generate-shortcuts-btn {
+  background-color: var(--color-text-subtle);
+}
+
+.generate-shortcuts-btn:hover {
+  background-color: var(--color-text-subtle);
+}
+
+.reading-guide-content {
+  overflow-y: auto; /* Allow content to scroll */
+  flex-grow: 1; /* Content area takes remaining space */
+  min-height: 0; /* Let flex item shrink so overflow-y applies here; otherwise the outer book pane scrolls only */
+  font-size: 0.9em; /* Adjust base font size for guide content */
+  line-height: 1.5;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+}
+
+.reading-guide-inner-content {
+  padding: 10px 12px;
+}
+
+/* Wide screens: same widescreen column as the original text, with at least 48px on each side. */
+@media (min-width: 769px) {
+  .reading-guide-inner-content {
+    box-sizing: border-box;
+    width: var(--reader-column, min(1200px, calc(100% - 96px)));
+    max-width: var(--reader-column, min(1200px, calc(100% - 96px)));
+    margin-left: auto;
+    margin-right: auto;
+  }
+}
+
+.reading-guide-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: min(40vh, 280px);
+  padding: 24px 16px;
+  text-align: center;
+}
+
+.reading-guide-empty-state-text {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.reading-guide-empty-state-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  width: min(100%, 260px);
+}
+
+.reading-guide-empty-state-primary {
+  flex: none;
+  width: 100%;
+}
+
+.reading-guide-empty-state-hint {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--color-text-secondary);
+  line-height: 1.4;
+}
+
+/* Style for the actual guide text display */
+.guide-text-content {
+  white-space: pre-wrap; /* Preserve line breaks and spaces from the LLM response */
+  word-wrap: break-word; /* Ensure long words don't overflow */
+  color: var(--color-text); /* Standard text color */
+}
+
+
+/* Remove old list-based styles if no longer applicable */
+/* .reading-guide-content ul { ... } */
+/* .guide-item { ... } */
+/* .guide-item-button { ... } */
+/* .guide-item-title { ... } */
+/* .guide-item-page { ... } */
+/* .guide-item-summary { ... } */
+
+.reading-guide-content .error-message {
+  color: var(--color-danger); /* Bootstrap danger color */
+}
+
+/* Mobile specific adjustments if needed, can also be handled in BookView.css @media query */
+@media (max-width: 768px), (max-height: 500px) and (orientation: landscape) {
+  .reading-guide-top-container {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    transition: transform 0.3s ease, opacity 0.3s ease;
+    background-color: var(--color-bg-elevated);
+    border-bottom: 1px solid var(--color-border-subtle);
+  }
+
+  .reading-guide-top-container.top-hidden {
+    transform: translateY(-100%);
+    opacity: 0;
+    pointer-events: none;
+    /* Maintain height to avoid content jump */
+  }
+
+  .reading-guide-inner-content {
+    width: auto;
+    max-width: none;
+    margin-left: 0;
+    margin-right: 0;
+    padding: 8px; /* Reduced from 15px */
+    padding-top: 15px;
+  }
+
+  .roadmap-signpost-tag,
+  .roadmap-takeaway-callout,
+  .roadmap-reading-prominent,
+  .roadmap-thought-process {
+    margin-left: 10px;
+  }
+
+  .roadmap-card {
+    padding: 10px;
+    margin-bottom: 12px;
+  }
+
+  .reading-guide-header h3 {
+    font-size: 1em;
+  }
+  .generate-guide-btn {
+    font-size: 0.9em;
+    padding: 6px 10px;
+  }
+}
+
+/* Optional: add a small visual indicator to the handle */
+.structure-resizer-handle::before {
+  content: '•••'; /* Three dots or similar character */
+  font-size: 8px;
+  line-height: 8px;
+  color: var(--color-text-muted);
+  letter-spacing: 2px;
+}
+
+
+.structure-item {
+  padding: 5px 8px; /* Slightly more padding for touch/click */
+  cursor: pointer;
+  border-radius: 3px;
+  transition: background-color 0.2s ease-in-out, color 0.2s ease-in-out;
+  white-space: nowrap; /* Prevent text wrapping for single line items */
+  overflow: hidden;
+  text-overflow: ellipsis; /* Add ellipsis for very long headings */
+}
+
+.structure-item:hover,
+.structure-item:focus {
+  background-color: var(--color-bg-hover); /* Lighter hover for better text visibility */
+  color: var(--color-primary-hover); /* Highlight color on hover/focus */
+  outline: none;
+}
+
+/* Styling for different heading levels */
+.structure-item.level-1 {
+  font-weight: 600; /* Slightly bolder for top level */
+  /* padding-left is handled by inline style in JS */
+}
+
+.structure-item.level-2 {
+  /* font-weight: 500; */
+  /* padding-left is handled by inline style in JS */
+}
+
+.structure-item.level-3 {
+  color: var(--color-text-secondary); /* Slightly muted color for deeper levels */
+  /* padding-left is handled by inline style in JS */
+}
+
+/* Add more levels if necessary */
+.structure-item.level-4,
+.structure-item.level-5,
+.structure-item.level-6 {
+  color: var(--color-text-subtle);
+  font-size: 0.95em; /* Smaller font for very deep levels */
+}
+
+/* Styles for structured guide sections */
+.structured-guide {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.roadmap-tree.structured-guide {
+  gap: 8px;
+}
+
+.guide-section {
+  border: 1px solid var(--color-border-light);
+  border-radius: 6px;
+  padding: 8px 10px;
+  background-color: var(--color-bg-elevated);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.guide-section-title {
+  margin: 0 0 6px 0;
+  font-size: 1.05em;
+  font-weight: 600;
+  color: var(--color-primary-hover);
+  border-bottom: 2px solid var(--color-border-light);
+  padding-bottom: 4px;
+}
+
+.guide-section-key-takeaway {
+  margin: 0 0 8px 0;
+  font-style: italic;
+  color: var(--color-text-secondary);
+  font-size: 0.95em;
+  padding-left: 4px;
+  border-left: 3px solid var(--color-primary);
+}
+
+.guide-section-content {
+  margin-bottom: 8px;
+  line-height: 1.55;
+}
+
+.guide-section-link {
+  background-color: var(--color-primary);
+  color: var(--color-on-accent);
+  border: none;
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.85em;
+  margin-top: 8px;
+  transition: background-color 0.2s ease-in-out, transform 0.1s ease-in-out;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.guide-section-link:hover {
+  background-color: var(--color-primary-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 123, 255, 0.3);
+}
+
+.guide-section-link:active {
+  background-color: var(--color-primary-dark);
+  transform: translateY(0);
+}
+
+.guide-section-link:focus {
+  outline: 2px solid var(--color-primary-hover);
+  outline-offset: 2px;
+}
+
+.guide-section-link.secondary {
+  background-color: var(--color-text-subtle);
+}
+
+.guide-section-link.secondary:hover {
+  background-color: var(--color-text-subtle);
+}
+
+.link-icon {
+  font-size: 1em;
+  display: inline-block;
+}
+
+/* Text link highlight in original text */
+.text-link-highlight {
+  background-color: var(--color-highlight-bg);
+  padding: 2px 0;
+  transition: background-color 0.5s ease-out;
+  border-radius: 2px;
+}
+
+/* Link preview tooltip */
+.link-preview-tooltip {
+  max-width: 400px;
+  pointer-events: none;
+}
+
+.tooltip-content {
+  background-color: var(--color-text);
+  color: var(--color-on-accent);
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-size: 0.85em;
+  line-height: 1.4;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.tooltip-context-before,
+.tooltip-context-after {
+  color: var(--color-border);
+  font-style: italic;
+  font-size: 0.9em;
+}
+
+.tooltip-preview {
+  margin: 4px 0;
+  font-weight: 500;
+}
+
+.tooltip-arrow {
+  position: absolute;
+  bottom: -6px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-top: 6px solid var(--color-text);
+}
+
+.guide-section-preview {
+  margin-top: 8px;
+  padding: 8px;
+  background-color: var(--color-bg-hover);
+  border-left: 3px solid var(--color-primary);
+  border-radius: 3px;
+  font-size: 0.85em;
+  color: var(--color-text-subtle);
+  font-style: italic;
+}
+
+.roadmap-card {
+  margin-bottom: 10px;
+  border-color: var(--color-border-light);
+  box-shadow: 0 2px 8px rgba(31, 45, 61, 0.08);
+}
+
+.roadmap-card--completed {
+  margin-bottom: 6px;
+  box-shadow: none;
+}
+
+.roadmap-card--completed .roadmap-title {
+  color: var(--color-text-subtle);
+  font-weight: 500;
+}
+
+.roadmap-card--active {
+  border-color: var(--color-primary);
+  box-shadow: inset 3px 0 0 var(--color-primary);
+}
+
+.roadmap-field-label {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-subtle);
+  margin-bottom: 4px;
+}
+
+.roadmap-signpost-block {
+  margin: 2px 0 8px 16px;
+}
+
+.roadmap-takeaway-block {
+  margin: 4px 0 8px 16px;
+}
+
+.roadmap-takeaway-body {
+  line-height: 1.45;
+  font-size: 0.9em;
+  color: var(--color-text-subtle);
+}
+
+.roadmap-reading-summary-block,
+.roadmap-reading-bullets-block {
+  margin-bottom: 10px;
+}
+
+.roadmap-thought-process {
+  margin: 6px 0 10px 16px;
+  padding: 10px 12px 10px;
+  background: linear-gradient(180deg, var(--color-info-bg) 0%, var(--color-bg-hover) 100%);
+  border: 1px solid var(--color-info-bg);
+  border-left: 4px solid var(--color-primary);
+  border-radius: 6px;
+  box-shadow: 0 1px 4px rgba(13, 110, 253, 0.12);
+}
+
+.roadmap-thought-steps {
+  margin: 6px 0 0 1.1em;
+  padding: 0;
+  line-height: 1.5;
+  font-size: 0.95em;
+  color: var(--color-text);
+}
+
+.roadmap-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.roadmap-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.roadmap-expand-btn {
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--color-border-light);
+  border-radius: 4px;
+  background: var(--color-bg-elevated);
+  cursor: pointer;
+}
+
+.roadmap-expand-spacer {
+  width: 22px;
+  height: 22px;
+  display: inline-block;
+}
+
+.roadmap-checkbox-label input {
+  width: 17px;
+  height: 17px;
+}
+
+.roadmap-title {
+  margin: 0;
+  border-bottom: none;
+  padding-bottom: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+.roadmap-hub-badge {
+  display: inline-flex;
+  align-items: center;
+  background: var(--color-warning-bg);
+  border: 1px solid var(--color-warning-bg);
+  color: var(--color-warning-text);
+  padding: 2px 6px;
+  border-radius: 12px;
+  font-size: 0.75em;
+  font-weight: 700;
+  line-height: 1.2;
+  margin-left: 8px;
+  white-space: nowrap;
+}
+
+.roadmap-signpost,
+.roadmap-signpost-tag {
+  margin: 2px 0 8px 46px;
+  font-style: italic;
+  color: var(--color-text-secondary);
+  font-size: 0.78rem;
+  line-height: 1.35;
+  overflow-wrap: break-word;
+}
+
+.roadmap-signpost-tag {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.roadmap-takeaway-callout {
+  margin: 8px 0 10px 16px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-primary);
+  color: var(--color-text);
+}
+
+.roadmap-takeaway-callout .roadmap-takeaway-body {
+  color: var(--color-text);
+  font-size: 0.92em;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.roadmap-thought-thread {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+
+.roadmap-thought-step {
+  position: relative;
+  display: grid;
+  grid-template-columns: 14px 1fr;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: 2px 0 12px;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+
+.roadmap-thought-step::before {
+  content: "";
+  position: absolute;
+  left: 6px;
+  top: 12px;
+  bottom: 0;
+  width: 2px;
+  background: var(--color-border-light);
+}
+
+.roadmap-thought-thread li:last-child .roadmap-thought-step::before {
+  display: none;
+}
+
+.roadmap-thought-marker {
+  width: 8px;
+  height: 8px;
+  margin-top: 0.35em;
+  border-radius: 50%;
+  background: var(--color-border);
+  position: relative;
+  z-index: 1;
+}
+
+.roadmap-thought-step.is-active .roadmap-thought-marker {
+  background: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-info-bg);
+}
+
+.roadmap-thought-step.is-active .roadmap-thought-step-text {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.roadmap-thought-step-text {
+  color: var(--color-text-secondary);
+  line-height: 1.45;
+  overflow-wrap: break-word;
+}
+
+.roadmap-secondary-drawers {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.roadmap-secondary-drawer {
+  border-style: solid;
+  border-color: var(--color-border);
+  background: var(--color-bg);
+}
+
+.roadmap-secondary-drawer .guide-section-link {
+  margin-top: 8px;
+}
+
+.reading-guide-progress-cluster {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1 0 100%;
+  min-width: 0;
+  width: 100%;
+}
+
+.reading-guide-jump {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.reading-guide-jump-current {
+  flex-shrink: 0;
+  border: 1px solid var(--color-border-light);
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.reading-guide-jump-dots {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.reading-guide-jump-dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--color-border);
+  background: transparent;
+  cursor: pointer;
+}
+
+.reading-guide-jump-dot.is-done {
+  background: var(--color-text-muted);
+  border-color: var(--color-text-muted);
+}
+
+.reading-guide-jump-dot.is-active {
+  width: 10px;
+  height: 10px;
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.markdown-table-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+  -webkit-overflow-scrolling: touch;
+  margin-bottom: 1em;
+}
+
+.markdown-table-scroll table {
+  width: max-content;
+  min-width: 100%;
+  margin-bottom: 0;
+}
+
+@media (max-width: 768px), (max-height: 500px) and (orientation: landscape) {
+  .reading-guide-jump-dot {
+    width: 44px;
+    height: 44px;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    position: relative;
+  }
+
+  .reading-guide-jump-dot::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    border: 1px solid var(--color-border);
+    background: transparent;
+    transform: translate(-50%, -50%);
+  }
+
+  .reading-guide-jump-dot.is-done::after {
+    background: var(--color-text-muted);
+    border-color: var(--color-text-muted);
+  }
+
+  .reading-guide-jump-dot.is-active {
+    width: 44px;
+    height: 44px;
+  }
+
+  .reading-guide-jump-dot.is-active::after {
+    width: 12px;
+    height: 12px;
+    background: var(--color-primary);
+    border-color: var(--color-primary);
+  }
+
+  .roadmap-card-actions--compact {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .roadmap-primary-action,
+  .roadmap-card-more > summary {
+    width: 100%;
+    min-height: 44px;
+    box-sizing: border-box;
+  }
+
+  .roadmap-card-more > summary {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    background: var(--color-bg-elevated);
+    color: var(--color-text);
+    font-weight: 600;
+  }
+
+  .roadmap-card-more-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-top: 8px;
+  }
+
+  .roadmap-card-more-panel .guide-section-link {
+    min-height: 44px;
+  }
+}
+
+.roadmap-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.roadmap-subtitle {
+  margin: 0 0 6px 0;
+  font-size: 0.9em;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.roadmap-reading {
+  margin: 8px 0;
+  padding: 8px 10px;
+  background: var(--color-bg-hover);
+  border: 1px solid var(--color-info-bg);
+  border-radius: 6px;
+}
+
+.roadmap-reading-prominent {
+  /* Legacy "How to read" block — unused under Option A; kept for dead-CSS tolerance */
+  margin: 6px 0 10px 16px;
+  padding: 10px 12px 10px;
+  background: linear-gradient(180deg, var(--color-info-bg) 0%, var(--color-bg-hover) 100%);
+  border: 1px solid var(--color-info-bg);
+  border-left: 4px solid var(--color-primary);
+  box-shadow: 0 1px 4px rgba(13, 110, 253, 0.12);
+}
+
+.roadmap-reading-heading {
+  font-size: 0.98em;
+  letter-spacing: 0.01em;
+}
+
+.roadmap-reading-summary {
+  margin: 0 0 8px 0;
+  color: var(--color-text);
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+.roadmap-alternative-reading-content,
+.roadmap-outsider-guide-content,
+.roadmap-takeaway-body {
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+.roadmap-reading-bullets {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.roadmap-reading-bullets li {
+  margin: 3px 0;
+}
+
+.roadmap-alternative-reading {
+  margin-top: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: var(--color-bg);
+}
+
+.roadmap-alternative-reading summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.roadmap-alternative-reading-content {
+  margin-top: 8px;
+}
+
+.roadmap-alternative-reading-stats {
+  margin: 0 0 8px 0;
+  font-size: 0.82em;
+  color: var(--color-text-muted);
+  overflow-wrap: break-word;
+}
+
+.roadmap-alternative-reading-content p {
+  margin: 0;
+}
+
+.roadmap-outsider-guide {
+  margin-top: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: var(--color-bg);
+}
+
+.roadmap-outsider-guide summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.roadmap-outsider-guide-content {
+  margin-top: 8px;
+}
+
+.roadmap-outsider-guide-stats {
+  margin: 0 0 8px 0;
+  font-size: 0.82em;
+  color: var(--color-text-muted);
+  overflow-wrap: break-word;
+}
+
+.roadmap-outsider-guide-content p {
+  margin: 0;
+}
+
+.roadmap-quote {
+  margin: 8px 0;
+  padding: 10px 12px;
+  border-left: 4px solid var(--color-primary);
+  background: var(--color-bg-hover);
+  color: var(--color-text-secondary);
+  overflow-wrap: break-word;
+  word-break: break-word;
+  white-space: pre-wrap;
+  font-style: italic;
+  font-size: 0.92em;
+  line-height: 1.5;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.roadmap-children {
+  margin-top: 8px;
+}
+
+.roadmap-graph-wrap {
+  margin-top: 10px;
+}
+
+.roadmap-graph-preview-btn {
+  padding: 0;
+  margin: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-bg-elevated);
+  width: 100%;
+  cursor: zoom-in;
+  overflow: hidden;
+}
+
+.roadmap-graph-preview-btn:hover {
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.14);
+}
+
+.roadmap-graph-image {
+  width: 100%;
+  max-height: 320px;
+  object-fit: contain;
+  border: none;
+  border-radius: 0;
+  background: var(--color-bg-elevated);
+  display: block;
+}
+
+.roadmap-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 26, 34, 0.52);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2600;
+  padding: 20px;
+}
+
+.roadmap-image-modal {
+  width: min(1100px, 100%);
+  max-height: 92vh;
+  background: var(--color-bg-elevated);
+  border-radius: 10px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
+  padding: 12px 12px 14px;
+}
+
+.roadmap-image-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.roadmap-image-modal-header h4 {
+  margin: 0;
+  color: var(--color-text);
+  font-size: 1rem;
+}
+
+.roadmap-modal-close {
+  border: none;
+  background: transparent;
+  font-size: 1.6em;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--color-text-muted);
+}
+
+.roadmap-image-modal-body {
+  width: 100%;
+  max-height: calc(92vh - 56px);
+  overflow: auto;
+  border: 1px solid var(--color-border-light);
+  border-radius: 8px;
+  background: var(--color-bg-elevated);
+}
+
+.roadmap-graph-image-large {
+  width: 100%;
+  height: auto;
+  display: block;
+  object-fit: contain;
+}
+
+.roadmap-bulk-choice-modal {
+  width: min(400px, 100%);
+  max-height: 92vh;
+  background: var(--color-bg-elevated);
+  border-radius: 10px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
+  padding: 14px 16px 16px;
+}
+
+.roadmap-bulk-choice-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.roadmap-bulk-choice-modal-header h4 {
+  margin: 0;
+  color: var(--color-text);
+  font-size: 1.05rem;
+}
+
+.roadmap-bulk-choice-hint {
+  margin: 0 0 14px;
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+  line-height: 1.4;
+}
+
+.roadmap-bulk-choice-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.roadmap-bulk-choice-btn {
+  border: none;
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-size: 0.95rem;
+  cursor: pointer;
+  color: var(--color-on-accent);
+  text-align: center;
+}
+
+.roadmap-bulk-choice-btn--graph {
+  background-color: var(--color-primary);
+}
+
+.roadmap-bulk-choice-btn--graph:hover {
+  background-color: var(--color-primary-hover);
+}
+
+.roadmap-bulk-choice-btn--shortcut {
+  background-color: var(--color-text-subtle);
+}
+
+.roadmap-bulk-choice-btn--shortcut:hover {
+  background-color: var(--color-text-subtle);
+}
+
+.roadmap-bulk-choice-btn--outsider {
+  background-color: var(--color-primary);
+}
+
+.roadmap-bulk-choice-btn--outsider:hover {
+  background-color: var(--color-primary-hover);
+}
+
+.roadmap-bulk-choice-footer {
+  margin-top: 14px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.roadmap-bulk-cancel-btn {
+  border: 1px solid var(--color-input-border);
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  border-radius: 6px;
+  padding: 8px 16px;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.roadmap-bulk-cancel-btn:hover {
+  background: var(--color-bg-hover);
+}
+
+.reading-guide-switcher {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.reading-guide-angle-capsule {
+  flex: 0 1 auto;
+  max-width: 42%;
+  min-width: 0;
+  border: 1px solid var(--color-input-border);
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 0.78rem;
+  line-height: 1.3;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.reading-guide-angle-capsule.has-angle {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.reading-guide-angle-capsule:hover {
+  background: var(--color-bg-hover);
+}
+
+.rt-PopoverContent.prompt-config-popover,
+.prompt-config-popover {
+  width: min(340px, calc(100vw - 24px));
+  max-height: min(70vh, 520px);
+  overflow: auto;
+  background: var(--color-bg);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-lg);
+}
+
+.prompt-config-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.prompt-config-preset {
+  border: 1px solid var(--color-input-border);
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.prompt-config-preset.is-selected {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.prompt-config-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.prompt-config-advanced-toggle,
+.prompt-config-close {
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  padding: 0;
+  font-size: 0.78rem;
+  cursor: pointer;
+  text-align: left;
+}
+
+.prompt-config-close {
+  font-size: 1.1rem;
+  line-height: 1;
+  color: var(--color-text);
+}
+
+.prompt-config-preview {
+  line-height: 1.4;
+}
+
+.reading-guide-select {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--color-input-border);
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  font-size: 0.9rem;
+}
+
+.generate-guide-btn--secondary {
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  border: 1px solid var(--color-input-border);
+}
+
+.reading-guide-new-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+  font-size: 0.9rem;
+}
+
+.reading-guide-new-field input,
+.reading-guide-new-field textarea {
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid var(--color-input-border);
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  font-family: inherit;
+}
+
+.roadmap-card-chat-modal {
+  width: min(520px, 100%);
+  max-height: min(85vh, 640px);
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg-elevated);
+  border-radius: 10px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+}
+
+.roadmap-card-chat-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  flex-shrink: 0;
+}
+
+.roadmap-card-chat-modal-header h4 {
+  margin: 0;
+  font-size: 1rem;
+  color: var(--color-text);
+  line-height: 1.35;
+  min-width: 0;
+}
+
+.roadmap-card-chat-modal-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+  padding: 12px 14px 14px;
+  overflow: hidden;
+}
+
+.roadmap-card-chat-hint,
+.roadmap-card-chat-empty {
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+  margin: 0 0 8px;
+}
+
+.roadmap-card-chat-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-height: 120px;
+  max-height: min(50vh, 400px);
+  overflow-y: auto;
+  margin-bottom: 10px;
+}
+
+.roadmap-card-chat-message {
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 0.9rem;
+}
+
+.roadmap-card-chat-message--user {
+  background: var(--color-primary-muted, rgba(0, 100, 200, 0.12));
+  align-self: flex-end;
+  margin-left: 12%;
+}
+
+.roadmap-card-chat-message--assistant {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border-subtle);
+  margin-right: 8%;
+}
+
+.roadmap-card-chat-role {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  margin-bottom: 4px;
+}
+
+.roadmap-card-chat-content {
+  line-height: 1.45;
+}
+
+.roadmap-card-chat-compose {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.roadmap-card-chat-input {
+  width: 100%;
+  resize: vertical;
+  min-height: 48px;
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid var(--color-input-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: inherit;
+}
+
+.roadmap-card-chat-compose-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.roadmap-card-chat-error {
+  margin: 0 0 8px;
+}
+
+/* Appended for mobile merged NavBar + guide (see apply_navbar_guide_merge.py) */
+@media (max-width: 768px), (max-height: 500px) and (orientation: landscape) {
+  .reading-guide-actions--below-merged-nav {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    flex-shrink: 0;
+    background-color: var(--color-bg-elevated);
+    border-bottom: 1px solid var(--color-border-subtle);
+    transition: transform 0.3s ease, opacity 0.3s ease;
+  }
+
+  .reading-guide-actions--below-merged-nav.chrome-hidden {
+    transform: translateY(-100%);
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .reading-guide-pane-embed .reading-guide-actions--below-merged-nav {
+    background-color: var(--color-bg-elevated);
+  }
+}

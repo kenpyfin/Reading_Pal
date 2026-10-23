@@ -24,8 +24,10 @@ app = FastAPI(title="Reading Pal Backend API")
 # It's used by Authlib to store temporary states (e.g., OAuth state parameter)
 SECRET_KEY_MAIN = os.getenv("SECRET_KEY", "a_very_secret_key_that_should_be_changed_in_production_main")
 if SECRET_KEY_MAIN == "a_very_secret_key_that_should_be_changed_in_production_main":
-    print("WARNING: main.py: SECRET_KEY is using its default insecure value. "
-          "Please generate a strong, unique key and set it in your .env file for production environments.")
+    logger.warning(
+        "main.py: SECRET_KEY is using its default insecure value. "
+        "Please set a strong, unique key in .env for production."
+    )
 app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY_MAIN)
 logger.info(f"SessionMiddleware initialized with SECRET_KEY_MAIN: {'********' if SECRET_KEY_MAIN and SECRET_KEY_MAIN != 'a_very_secret_key_that_should_be_changed_in_production_main' else 'USING_DEFAULT_OR_UNSET'}")
 
@@ -38,25 +40,20 @@ app.add_middleware(
     allow_credentials=True, # Important for cookies
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Total-Count"],  # Book list pagination total; readable from fetch() cross-origin
 )
 
 # Get environment variables
 BACKEND_PORT = int(os.getenv("BACKEND_PORT", 8000)) # Read BACKEND_PORT, default to 8000 if not set
 
-# Add print statements to debug the port value
-print(f"DEBUG: Raw BACKEND_PORT env var: {os.getenv('BACKEND_PORT')}")
-print(f"DEBUG: Parsed BACKEND_PORT for Uvicorn: {BACKEND_PORT}")
+logger.debug("Raw BACKEND_PORT env var: %s", os.getenv("BACKEND_PORT"))
+logger.debug("Parsed BACKEND_PORT for Uvicorn: %s", BACKEND_PORT)
 
 
-# Mount static files directory for images
-# This path must match the IMAGES_PATH configured in .env and docker-compose
-# It should be the CONTAINER path, which is correctly set in docker-compose.yml
-images_path = os.getenv("IMAGES_PATH")
-if images_path and os.path.exists(images_path):
-    app.mount("/images", StaticFiles(directory=images_path), name="images")
-    logger.info(f"Serving static images from {images_path} at /images")
-else:
-    logger.warning(f"IMAGES_PATH not set or directory not found: {images_path}. Static image serving disabled.")
+# Note: We don't mount /images statically anymore
+# - App images are served through /api/books/images/app/ (requires authentication)
+# - Public images are served by the image_server at /images/public/
+# This ensures app images are only accessible through authenticated API calls
 
 # Mount static files directory for markdown (optional, but good for debugging/direct access)
 # This path must match the MARKDOWN_PATH configured in .env and docker-compose

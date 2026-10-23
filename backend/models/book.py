@@ -24,7 +24,7 @@ def serialize_objectid(v: ObjectId) -> str:
 # --- REMOVE ImageInfoForDB class ---
 # class ImageInfoForDB(BaseModel):
 #     filename: str # The final, sanitized filename stored on disk and used for serving
-#     original_path_in_markdown: str # The exact path string as it appeared in the raw markdown from magic_pdf
+#     original_path_in_markdown: str # The exact path string as it appeared in raw markdown before rewriting
 
 class Book(BaseModel):
     # Use Annotated and BeforeValidator for Pydantic v2 ObjectId handling

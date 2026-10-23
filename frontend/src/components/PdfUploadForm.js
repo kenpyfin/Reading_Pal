@@ -1,15 +1,29 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom'; // Import useNavigate
+import { getAuthHeaders } from '../utils/authRequest';
 
-// Define timeout duration for upload in milliseconds
-const UPLOAD_TIMEOUT_MS = 60000; // 60 seconds
+// Timeout for upload initiation only (returns job_id; MinerU runs in background).
+const UPLOAD_TIMEOUT_MS = 600000; // 10 minutes — large scans need time to reach pdf_service
 
 function PdfUploadForm() {
   const [selectedFile, setSelectedFile] = useState(null);
   const [title, setTitle] = useState('');
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState(null);
+  const [netOnline, setNetOnline] = useState(
+    typeof navigator !== 'undefined' ? navigator.onLine : true
+  );
   const navigate = useNavigate(); // Get the navigate function
+
+  useEffect(() => {
+    const sync = () => setNetOnline(navigator.onLine);
+    window.addEventListener('online', sync);
+    window.addEventListener('offline', sync);
+    return () => {
+      window.removeEventListener('online', sync);
+      window.removeEventListener('offline', sync);
+    };
+  }, []);
 
   const handleFileChange = (event) => {
     setSelectedFile(event.target.files[0]);
@@ -21,8 +35,12 @@ function PdfUploadForm() {
   };
 
   const handleUpload = async () => {
+    if (!netOnline) {
+      setError('Upload requires an internet connection.');
+      return;
+    }
     if (!selectedFile) {
-      setError("Please select a PDF file.");
+      setError("Please select a supported ebook/document file.");
       return;
     }
 
@@ -41,27 +59,19 @@ function PdfUploadForm() {
     let timeoutId = null;
 
     // --- MODIFICATION START: Add Authorization Header ---
-    const rawToken = localStorage.getItem('authToken');
-    if (!rawToken) {
+    const authHeaders = getAuthHeaders();
+    if (!authHeaders) {
         console.error("[PdfUploadForm] No auth token found for upload.");
         setError("Authentication token not found. Please log in again.");
         setUploading(false);
         return;
     }
-    let token = rawToken.trim().replace(/(\r\n|\n|\r)/gm, "");
-    if (!token || token === "null" || token === "undefined") {
-        console.error(`[PdfUploadForm] Invalid auth token for upload. Sanitized token: '${token}'`);
-        setError("Authentication token is invalid. Please log in again.");
-        setUploading(false);
-        return;
-    }
-    console.log(`[PdfUploadForm] Using token for upload: '${token.substring(0,20)}...'`);
 
     const requestHeaders = {
         // 'Content-Type': 'multipart/form-data' is NOT set here.
         // The browser will automatically set it correctly with the boundary
         // when FormData is used as the body.
-        'Authorization': `Bearer ${token}`
+        ...authHeaders,
     };
     // --- MODIFICATION END ---
 
@@ -113,7 +123,10 @@ function PdfUploadForm() {
       // Check if the error is an AbortError (due to timeout)
       if (err.name === 'AbortError') {
           console.error('Upload aborted due to timeout:', err);
-          setError(`Upload timed out after ${UPLOAD_TIMEOUT_MS / 1000} seconds. Please check your connection and try again.`);
+          setError(
+            `Upload timed out after ${UPLOAD_TIMEOUT_MS / 1000} seconds while starting processing. ` +
+              'Large files may need longer; try again or check pdf_service logs.'
+          );
       } else {
           console.error('Upload failed:', err);
           setError(`Upload failed: ${err.message || 'Unknown error'}`);
@@ -129,21 +142,26 @@ function PdfUploadForm() {
   return (
     // --- Use consistent styling from BookList ---
     <div className="book-list-container"> {/* Reuse container style */}
-      <h2>Upload New PDF</h2>
-      {error && <p style={{ color: 'red', textAlign: 'center', marginBottom: '15px' }}>{error}</p>}
+      <h2>Upload New Book</h2>
+      {!netOnline && (
+        <p className="theme-offline-banner" style={{ textAlign: 'center' }}>
+          Upload requires a connection to the server. You can still read cached books from the book list.
+        </p>
+      )}
+      {error && <p className="theme-error-text" style={{ textAlign: 'center', marginBottom: '15px' }}>{error}</p>}
 
       {/* Form Fields Styling */}
       <div style={{ marginBottom: '15px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-        <label htmlFor="pdf-file" style={{ marginBottom: '5px', fontWeight: '500' }}>Choose PDF File:</label>
+        <label htmlFor="pdf-file" style={{ marginBottom: '5px', fontWeight: '500' }}>Choose ebook/document file:</label>
         <input
           type="file"
           id="pdf-file"
-          accept=".pdf"
+          accept=".pdf,.epub,.mobi,.azw,.azw3,.docx,.txt,.html,.htm"
           onChange={handleFileChange}
-          disabled={uploading}
-          style={{ border: '1px solid #ccc', padding: '8px', borderRadius: '4px', maxWidth: '400px', width: '100%' }}
+          disabled={uploading || !netOnline}
+          style={{ border: '1px solid var(--color-input-border)', padding: '8px', borderRadius: '4px', maxWidth: '400px', width: '100%', backgroundColor: 'var(--color-input-bg)', color: 'var(--color-text)' }}
         />
-        {selectedFile && <p style={{ fontSize: '0.9em', marginTop: '5px', color: '#555' }}>Selected: {selectedFile.name}</p>}
+        {selectedFile && <p style={{ fontSize: '0.9em', marginTop: '5px', color: 'var(--color-text-muted)' }}>Selected: {selectedFile.name}</p>}
       </div>
 
       <div style={{ marginBottom: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
@@ -154,31 +172,28 @@ function PdfUploadForm() {
           value={title}
           onChange={handleTitleChange}
           placeholder="Leave blank to use filename"
-          disabled={uploading}
-          style={{ border: '1px solid #ccc', padding: '8px', borderRadius: '4px', maxWidth: '400px', width: '100%' }}
+          disabled={uploading || !netOnline}
+          style={{ border: '1px solid var(--color-input-border)', padding: '8px', borderRadius: '4px', maxWidth: '400px', width: '100%', backgroundColor: 'var(--color-input-bg)', color: 'var(--color-text)' }}
         />
       </div>
 
-      {/* Button Styling */}
-      <div style={{ textAlign: 'center' }}> {/* Center the button */}
+      <div style={{ textAlign: 'center' }}>
         <button
           onClick={handleUpload}
-          disabled={!selectedFile || uploading}
-          // --- Reuse button style from BookList upload link ---
+          disabled={!selectedFile || uploading || !netOnline}
+          className="pdf-upload-submit-btn"
           style={{
             display: 'inline-block',
             padding: '10px 20px',
-            backgroundColor: (!selectedFile || uploading) ? '#ccc' : '#007bff', // Grey out when disabled
-            color: 'white',
+            backgroundColor: (!selectedFile || uploading || !netOnline) ? 'var(--color-border)' : 'var(--color-primary)',
+            color: 'var(--color-on-accent)',
             textDecoration: 'none',
-            border: 'none', // Remove default border
+            border: 'none',
             borderRadius: '5px',
             fontWeight: '500',
-            cursor: (!selectedFile || uploading) ? 'not-allowed' : 'pointer', // Change cursor when disabled
+            cursor: (!selectedFile || uploading || !netOnline) ? 'not-allowed' : 'pointer',
             transition: 'background-color 0.2s ease-in-out',
           }}
-          onMouseOver={(e) => { if (!(!selectedFile || uploading)) e.currentTarget.style.backgroundColor = '#0056b3'; }} // Hover effect only if enabled
-          onMouseOut={(e) => { if (!(!selectedFile || uploading)) e.currentTarget.style.backgroundColor = '#007bff'; }} // Restore color on mouse out
         >
           {uploading ? 'Uploading...' : 'Upload and Process'}
         </button>

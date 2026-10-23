@@ -4,8 +4,13 @@
 import asyncio # Import asyncio
 import os
 import logging
-import requests # Import requests
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, status, Body, Response, Depends, Request
+import hmac
+import hashlib
+import time
+import urllib.parse
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, status, Body, Response, Depends, Request, Query
+from fastapi.responses import FileResponse
+from pathlib import Path
 from typing import List, Optional, Dict, Any 
 from bson import ObjectId # Keep ObjectId import
 from bson.errors import InvalidId # Import InvalidId
@@ -18,31 +23,80 @@ from backend.models.book import Book
 from backend.db.mongodb import (
     save_book,
     get_book,
-    get_books, 
-    get_book_by_job_id, 
-    update_book, 
+    get_books,
+    count_books,
+    get_book_by_job_id,
+    find_active_book_by_user_and_sanitized_title,
+    update_book,
     delete_book_record, # Add delete_book_record
     get_database
 )
 from backend.auth.auth_handler import auth_handler_instance # For decoding JWT
+from backend.services.llm_service import llm_service # For Reading Guide (Import instance)
+from backend.services.page_boundaries import (
+    APPROX_CHARS_PER_PAGE_FOR_GUIDE,
+    _calculate_page_boundaries,
+)
+from backend.services.pdf_client import process_document_with_service
+import json # For parsing LLM response for Reading Guide
+
+# Import new model and DB functions for page-specific reading guides
+from backend.models.reading_guide import (
+    ReadingGuidePageInDB,
+    ReadingGuideInDB,
+    ReadingGuideProgressUpdate,
+    ReadingGuideCreateBody,
+    ReadingGuideSummary,
+    GuideCardChatPostBody,
+    GuideCardChatResponse,
+    GuideChatMessage,
+    LEGACY_GUIDE_ID,
+    MAX_READING_GUIDES_PER_BOOK,
+    MAX_CUSTOM_REQUIREMENTS_LEN,
+)
+from backend.db.mongodb import (
+    upsert_reading_guide_page,
+    get_reading_guide_page,
+    upsert_reading_guide,
+    get_reading_guide,
+    get_reading_guide_by_id,
+    get_reading_guide_progress,
+    update_reading_guide_progress,
+    list_reading_guides,
+    count_reading_guides,
+    create_reading_guide,
+    delete_reading_guide,
+    update_reading_guide_metadata,
+    delete_all_card_chats_for_guide,
+    get_card_chat_messages,
+    save_card_chat_messages,
+    clear_card_chat,
+)
+import uuid
+
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+SUPPORTED_BOOK_EXTENSIONS = {
+    ".pdf",
+    ".epub",
+    ".mobi",
+    ".azw",
+    ".azw3",
+    ".docx",
+    ".txt",
+    ".html",
+    ".htm",
+}
+
+
 # Dependency to get current user_id from token
 async def get_current_user_id(request: Request) -> str:
-    # Log all incoming headers for deep debugging
-    logger.info(f"get_current_user_id: All request headers for {request.url.path}: {dict(request.headers)}")
-
     auth_header = request.headers.get("Authorization")
-    debug_auth_header = request.headers.get("X-Debug-Auth-Header-Seen") # Get the debug header
-    # Log the received headers (or lack thereof) at INFO level for better visibility
-    logger.info(f"get_current_user_id: Specifically checking 'Authorization' header: '{auth_header}'")
-    logger.info(f"get_current_user_id: Specifically checking 'X-Debug-Auth-Header-Seen' header: '{debug_auth_header}'")
 
     if not auth_header:
-        logger.info(f"get_current_user_id: Authorization header is missing or empty for request to: {request.url.path}. Raising 401.")
-        # logger.warning("get_current_user_id: Authorization header missing.") # Original warning was removed, this info log replaces it for this path
+        logger.warning("get_current_user_id: Authorization header is missing for %s", request.url.path)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated", # This is the detail the client will see
@@ -51,7 +105,7 @@ async def get_current_user_id(request: Request) -> str:
     
     parts = auth_header.split()
     if parts[0].lower() != "bearer" or len(parts) == 1 or len(parts) > 2:
-        logger.warning(f"get_current_user_id: Invalid Authorization header format: {auth_header}")
+        logger.warning("get_current_user_id: Invalid Authorization header format for %s", request.url.path)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token format",
@@ -116,65 +170,75 @@ def sanitize_filename(filename: str) -> str:
         sanitized = "sanitized_file"
     return sanitized
 
-# --- Helper function for PDF service call (keep as is) ---
-async def call_pdf_service_upload(file: UploadFile, title: Optional[str]):
-    if not PDF_CLIENT_URL:
-        logger.error("PDF_CLIENT_URL environment variable is not set.")
-        raise HTTPException(status_code=500, detail="PDF processing service URL is not configured.")
-
-    pdf_service_upload_url = f"{PDF_CLIENT_URL}/process-pdf"
-    logger.info(f"Forwarding PDF to PDF service at {pdf_service_upload_url}")
-
-    file_content = await file.read()
-    files = {'file': (file.filename, file_content, file.content_type)}
-    data = {'title': title} if title else {}
-
+# --- Helper function for document service call ---
+async def call_document_service_upload(file: UploadFile, title: Optional[str]):
     try:
-        def send_to_pdf_service():
-            response = requests.post(pdf_service_upload_url, files=files, data=data)
-            response.raise_for_status()
-            return response.json()
-
-        response_data = await run_in_threadpool(send_to_pdf_service)
-        logger.info(f"Received response from PDF service upload: {response_data}")
+        response_data = await run_in_threadpool(process_document_with_service, file, title)
+        logger.info(f"Received response from document service upload: {response_data}")
         return response_data
-
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error connecting to PDF service during upload: {e}")
-        raise HTTPException(status_code=503, detail=f"Could not connect to PDF processing service: {e}")
+    except ValueError as e:
+        logger.error("Document service configuration error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+    except RuntimeError as e:
+        logger.error("Error connecting to document service during upload: %s", e)
+        raise HTTPException(status_code=503, detail=f"Could not connect to document processing service: {e}")
     except Exception as e:
-        logger.error(f"Error in PDF service call: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Error calling PDF service: {e}")
+        logger.error(f"Error in document service call: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error calling document service: {e}")
 
 
 @router.post("/upload", response_model=Book)
-async def upload_pdf(
+async def upload_document(
     file: UploadFile = File(...),
     title: str = Form(None),
     current_user_id: str = Depends(get_current_user_id)
 ):
     """
-    Uploads a PDF file for the current user, sends it to the processing service to start background processing,
-    saves the initial book record with job_id and status, and returns the book data.
+    Uploads a supported document for the current user, sends it to the processing
+    service to start background processing, saves the initial book record with
+    job_id/status, and returns the new book data.
     """
     logger.info(f"Received upload request for file: {file.filename}")
     try:
-        processed_data = await call_pdf_service_upload(file, title)
+        file_ext = os.path.splitext(file.filename or "")[1].lower()
+        if file_ext not in SUPPORTED_BOOK_EXTENSIONS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Unsupported book format. "
+                    f"Supported formats: {', '.join(sorted(SUPPORTED_BOOK_EXTENSIONS))}"
+                ),
+            )
+
+        book_title = title if title else os.path.splitext(file.filename or "")[0]
+        sanitized_book_title = sanitize_filename(book_title)
+
+        existing_book = await find_active_book_by_user_and_sanitized_title(
+            current_user_id, sanitized_book_title
+        )
+        if existing_book:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "A book with this title already exists in your library. "
+                    "Cancel or delete it first, or choose a different title."
+                ),
+            )
+
+        processed_data = await call_document_service_upload(file, title)
 
         if not processed_data or not processed_data.get("success"):
-             error_detail = processed_data.get("message", "PDF processing initiation failed")
-             logger.error(f"PDF service initiation failed: {error_detail}")
+             error_detail = processed_data.get("message", "Document processing initiation failed")
+             logger.error(f"Document service initiation failed: {error_detail}")
              raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=error_detail)
 
         job_id = processed_data.get("job_id")
-        initial_status = processed_data.get("status", "pending")
+        # Track active pipeline work as processing (pdf_service returns pending at enqueue time).
+        initial_status = "processing" if job_id else processed_data.get("status", "pending")
 
         if not job_id:
-            logger.error("PDF service did not return a job_id.")
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="PDF processing service failed to return a job ID.")
-
-        book_title = title if title else os.path.splitext(file.filename)[0]
-        sanitized_book_title = sanitize_filename(book_title)
+            logger.error("Document service did not return a job_id.")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Document processing service failed to return a job ID.")
 
         # --- Prepare data using the Book model structure, matching DB schema ---
         # REMOVE id=None from the constructor
@@ -229,14 +293,21 @@ async def upload_pdf(
     except HTTPException as http_exc:
         raise http_exc
     except Exception as e:
-        logger.error(f"Unexpected error during PDF upload: {e}", exc_info=True)
+        logger.error(f"Unexpected error during document upload: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An unexpected error occurred during upload: {e}")
 
 
 @router.get("/", response_model=List[Book], response_model_by_alias=False)
-async def list_books(current_user_id: str = Depends(get_current_user_id)):
+async def list_books(
+    response: Response,
+    current_user_id: str = Depends(get_current_user_id),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+):
     """
     Retrieves a list of books for the current user, excluding those with 'failed' status.
+    Supports pagination via skip/limit. Total count for the current filter is returned in
+    the X-Total-Count response header (for the book list UI).
     Setting response_model_by_alias=False ensures that if the Book model
     has a field named 'id' (e.g., id: SomeType = Field(alias='_id')),
     the output JSON key will be 'id', not '_id'.
@@ -259,9 +330,17 @@ async def list_books(current_user_id: str = Depends(get_current_user_id)):
             "processing_error": 1
         }
 
-        # Filter books by the current user_id and status
-        books_docs = await get_books(filter={"user_id": current_user_id, "status": {"$ne": "failed"}}, projection=projection)
-        logger.info(f"Fetched {len(books_docs)} book documents from DB for user {current_user_id} (excluding failed).")
+        book_filter = {"user_id": current_user_id, "status": {"$ne": "failed"}}
+        total = await count_books(book_filter)
+        response.headers["X-Total-Count"] = str(total)
+
+        books_docs = await get_books(
+            filter=book_filter, projection=projection, skip=skip, limit=limit
+        )
+        logger.info(
+            f"Fetched {len(books_docs)} book documents from DB for user {current_user_id} "
+            f"(excluding failed, skip={skip}, limit={limit}, total={total})."
+        )
 
         # The list_books function currently constructs dictionaries with an "id" key.
         # When response_model=List[Book] and response_model_by_alias=False are used:
@@ -364,27 +443,17 @@ async def get_book_by_id(book_id: str, current_user_id: str = Depends(get_curren
 
             markdown_content = await run_in_threadpool(check_and_read_markdown, container_markdown_path)
 
-            # Log raw markdown content before replacement
+            # Replace /images/app/ and /api/books/images/app/ paths in markdown with signed URLs
             if isinstance(markdown_content, str) and not markdown_content.startswith("Error:"):
-                logger.info(f"Get endpoint: Book ID {book_id} - Raw markdown before replacement (first 500 chars): {markdown_content[:500]}")
-                # Log a few image paths found in raw markdown for direct comparison
-                raw_md_img_paths = re.findall(r"!\[[^\]]*\]\(([^)]+)\)", markdown_content)
-                raw_html_img_paths = re.findall(r"<img [^>]*src\s*=\s*['\"]([^'\"]+)['\"][^>]*>", markdown_content)
-                logger.info(f"Get endpoint: Book ID {book_id} - Image paths in RAW markdown (MD syntax): {raw_md_img_paths[:5]}")
-                logger.info(f"Get endpoint: Book ID {book_id} - Image paths in RAW markdown (MD syntax): {raw_md_img_paths[:5]}")
-                logger.info(f"Get endpoint: Book ID {book_id} - Image paths in RAW markdown (HTML syntax): {raw_html_img_paths[:5]}")
-            
-            # --- REMOVE THE ENTIRE IMAGE PATH REWRITING BLOCK ---
-            # if markdown_content and isinstance(markdown_content, str) and book.processed_images_info:
-            #    ... (all the re.subn logic) ...
-            # elif markdown_content and isinstance(markdown_content, str) and not book.processed_images_info:
-            #    logger.info(f"Get endpoint: Book {book_id} has markdown content but no processed_images_info. Skipping new replacement logic.")
-            logger.info(f"Get endpoint: Markdown content for book {book_id} is now assumed to have web-ready image paths from the file itself.")
+                markdown_content = _sign_app_image_urls_in_markdown(markdown_content)
+                logger.info(f"Get endpoint: Replaced image paths in markdown with signed URLs for book {book_id}")
 
 
     if book.status == 'completed' and book.image_filenames:
-         image_urls_for_response = [f"/images/{filename}" for filename in book.image_filenames if filename]
-         logger.info(f"Get endpoint: Generated {len(image_urls_for_response)} image URLs for response model from image_filenames.")
+         # App images (from PDF processing) are stored in /images/app/ subdirectory
+         # Generate signed URLs that expire after 1 hour to prevent direct URL access
+         image_urls_for_response = [generate_signed_image_url(filename) for filename in book.image_filenames if filename]
+         logger.info(f"Get endpoint: Generated {len(image_urls_for_response)} signed image URLs for response model from image_filenames (app images).")
     elif book.status == 'completed' and not book.image_filenames:
          logger.info(f"Get endpoint: Book ID {book_id} completed but no image filenames stored.")
     elif book.status != 'completed':
@@ -411,6 +480,50 @@ async def get_book_by_id(book_id: str, current_user_id: str = Depends(get_curren
 
     logger.info(f"Get endpoint: Returning book data for ID {book_id}")
     return book
+
+@router.post("/{book_id}/refresh-image-urls")
+async def refresh_image_urls(book_id: str, current_user_id: str = Depends(get_current_user_id)):
+    """
+    Refreshes signed URLs for all images in the book's markdown content.
+    Returns the markdown content with fresh signed URLs.
+    This is called when user navigates pages to ensure URLs don't expire.
+    """
+    logger.info(f"Refresh image URLs request for book ID: {book_id} by user {current_user_id}")
+    
+    book_data_doc = await get_book(book_id, current_user_id)
+    if not book_data_doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found or not owned by user")
+    
+    book = Book.model_validate(book_data_doc)
+    
+    # Read markdown content
+    markdown_content = None
+    if book.status == 'completed' and book.markdown_filename:
+        container_markdown_path = os.path.join(CONTAINER_MARKDOWN_PATH, book.markdown_filename)
+        
+        def read_markdown_file(path):
+            if os.path.exists(path) and os.path.isfile(path):
+                try:
+                    with open(path, 'r', encoding='utf-8') as f:
+                        return f.read()
+                except Exception as file_read_error:
+                    logger.error(f"Error reading markdown file {path}: {file_read_error}")
+                    return f"Error: Could not read processed content. {file_read_error}"
+            else:
+                logger.error(f"Markdown file not found at container path: {path}")
+                return "Error: Processed content file not found."
+        
+        markdown_content = await run_in_threadpool(read_markdown_file, container_markdown_path)
+    
+    if not markdown_content or isinstance(markdown_content, str) and markdown_content.startswith("Error:"):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Markdown content not found")
+    
+    # Replace app image paths with fresh signed URLs
+    if isinstance(markdown_content, str):
+        markdown_content = _sign_app_image_urls_in_markdown(markdown_content)
+        logger.info(f"Refreshed signed URLs in markdown for book {book_id}")
+    
+    return {"markdown_content": markdown_content}
 
 
 # --- Add this helper function if it's not already present in this file ---
@@ -503,15 +616,365 @@ async def get_book_status_by_job_id(job_id: str) -> Dict[str, Any]:
 # --- Pydantic model for PDF Service Callback ---
 class PDFServiceImageInfo(BaseModel):
     filename: str # This is the final, sanitized filename that the PDF service saved the image as.
-    path: str # This is the original path of the image as embedded in the raw markdown by magic_pdf (e.g., "images/figure1.png" or an absolute path if magic_pdf used that)
+    path: str # Original image path as embedded in raw markdown prior to path rewriting.
 
 class PDFServiceCallbackData(BaseModel):
     job_id: str
     status: str # "completed" or "failed"
     message: Optional[str] = None
     file_path: Optional[str] = None # Full path to markdown file on PDF service
-    images: Optional[List[PDFServiceImageInfo]] = []
+    images: List[PDFServiceImageInfo] = Field(default_factory=list)
     processing_error: Optional[str] = None
+
+
+def _extract_image_filenames_from_markdown(markdown_path: str) -> List[str]:
+    """Fallback for legacy callbacks without image metadata."""
+    if not markdown_path or not os.path.exists(markdown_path):
+        return []
+    try:
+        with open(markdown_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        matches = re.findall(r"!\[[^\]]*\]\(([^)]+)\)", content or "")
+        filenames: List[str] = []
+        for image_path in matches:
+            rel = _extract_app_image_relative_path(image_path)
+            if rel:
+                filenames.append(rel)
+        # Preserve insertion order while deduplicating
+        return list(dict.fromkeys(filenames))
+    except Exception as exc:
+        logger.warning(f"Failed to extract image filenames from markdown fallback: {exc}")
+        return []
+
+# Pydantic Models for Reading Guide - OLD, TO BE REMOVED
+# class ReadingGuideItem(BaseModel):
+# title: str
+# summary: str
+# estimated_page: int
+
+# class ReadingGuideResponse(BaseModel):
+# guide: List[ReadingGuideItem]
+
+
+class ReadingGuideGenerateBody(BaseModel):
+    """Optional body for POST reading-guide; guide_type controls brevity."""
+    guide_type: Optional[str] = Field(default="summary", description="summary, comprehensive, or quick_reference")
+
+
+
+def _extract_heading_sections(markdown: str, page_start: int, page_end: int) -> List[Dict[str, Any]]:
+    """
+    Extract sections based on markdown headings that overlap the given page range.
+    Returns list of {"text": str, "level": int, "start_offset": int, "end_offset": int}.
+    Offsets are global (relative to full markdown). Sections are content from one heading to the next.
+    If no headings fall in range, returns empty list (caller should use single page chunk).
+    """
+    if not markdown or page_start < 0 or page_end > len(markdown) or page_start >= page_end:
+        return []
+    heading_re = re.compile(r"^(#+)\s+(.*)$")
+    headings: List[Dict[str, Any]] = []
+    current_offset = 0
+    lines = markdown.split("\n")
+    for line in lines:
+        match = heading_re.match(line)
+        if match:
+            level = len(match.group(1))
+            text = match.group(2).strip()
+            headings.append({"text": text, "level": level, "start_offset": current_offset})
+        current_offset += len(line) + 1
+    if not headings:
+        return []
+    # Assign end_offset for each heading (start of next heading or end of document)
+    total_len = len(markdown)
+    for i in range(len(headings)):
+        if i + 1 < len(headings):
+            headings[i]["end_offset"] = headings[i + 1]["start_offset"]
+        else:
+            headings[i]["end_offset"] = total_len
+    # Filter to sections that overlap [page_start, page_end]
+    overlapping = [
+        h for h in headings
+        if h["start_offset"] < page_end and h["end_offset"] > page_start
+    ]
+    logger.info(f"[_extract_heading_sections] Found {len(headings)} headings, {len(overlapping)} overlap page [{page_start}, {page_end}].")
+    return overlapping
+
+
+def _extract_whole_book_heading_nodes(markdown: str) -> List[Dict[str, Any]]:
+    """
+    Extract heading-aligned nodes across the entire markdown with offsets and snippets.
+    Heuristically skips obvious non-content front matter segments.
+    """
+    if not markdown:
+        return []
+    heading_re = re.compile(r"^(#{1,6})\s+(.*)$")
+    lines = markdown.split("\n")
+    headings: List[Dict[str, Any]] = []
+    offset = 0
+    for line in lines:
+        m = heading_re.match(line)
+        if m:
+            headings.append({
+                "level": len(m.group(1)),
+                "title": m.group(2).strip(),
+                "start_offset": offset,
+            })
+        offset += len(line) + 1
+    if not headings:
+        snippet = markdown[:700]
+        return [{
+            "id": "s1",
+            "level": 1,
+            "title": "Book content",
+            "start_offset": 0,
+            "end_offset": len(markdown),
+            "snippet": snippet,
+        }]
+
+    nodes: List[Dict[str, Any]] = []
+    for i, h in enumerate(headings):
+        start = h["start_offset"]
+        end = headings[i + 1]["start_offset"] if i + 1 < len(headings) else len(markdown)
+        title = h["title"]
+        content = markdown[start:end]
+        # Quick deterministic non-book-content skip at extraction stage.
+        low = f"{title}\n{content[:500]}".lower()
+        if any(token in low for token in ["copyright", "all rights reserved", "isbn", "published by", "table of contents"]):
+            continue
+        nodes.append({
+            "id": f"s{i + 1}",
+            "level": h["level"],
+            "title": title,
+            "start_offset": start,
+            "end_offset": end,
+            "snippet": content[:700],
+        })
+    return nodes
+
+
+def _find_roadmap_item(items: List[Dict[str, Any]], item_id: str) -> Optional[Dict[str, Any]]:
+    for item in items or []:
+        if item.get("id") == item_id:
+            return item
+        child = _find_roadmap_item(item.get("children") or [], item_id)
+        if child:
+            return child
+    return None
+
+
+def _set_roadmap_item_graph(items: List[Dict[str, Any]], item_id: str, graph_url: str) -> bool:
+    for item in items or []:
+        if item.get("id") == item_id:
+            item["graph_image_url"] = graph_url
+            return True
+        if _set_roadmap_item_graph(item.get("children") or [], item_id, graph_url):
+            return True
+    return False
+
+
+def _set_roadmap_item_alternative_reading(
+    items: List[Dict[str, Any]],
+    item_id: str,
+    alternative_reading: str,
+    source_word_count: Optional[int] = None,
+    shortcut_word_count: Optional[int] = None,
+) -> bool:
+    for item in items or []:
+        if item.get("id") == item_id:
+            item["alternative_reading"] = alternative_reading
+            item["alternative_source_word_count"] = source_word_count
+            item["alternative_word_count"] = shortcut_word_count
+            return True
+        if _set_roadmap_item_alternative_reading(
+            item.get("children") or [],
+            item_id,
+            alternative_reading,
+            source_word_count,
+            shortcut_word_count,
+        ):
+            return True
+    return False
+
+
+def _set_roadmap_item_outsider_guide(
+    items: List[Dict[str, Any]],
+    item_id: str,
+    outsider_guide: str,
+    source_word_count: Optional[int] = None,
+    outsider_word_count: Optional[int] = None,
+) -> bool:
+    for item in items or []:
+        if item.get("id") == item_id:
+            item["outsider_guide"] = outsider_guide
+            item["outsider_source_word_count"] = source_word_count
+            item["outsider_word_count"] = outsider_word_count
+            return True
+        if _set_roadmap_item_outsider_guide(
+            item.get("children") or [],
+            item_id,
+            outsider_guide,
+            source_word_count,
+            outsider_word_count,
+        ):
+            return True
+    return False
+
+
+def _extract_graph_filepath(graph_image_url: Optional[str]) -> Optional[str]:
+    """Normalize stored graph URL/path to relative filepath under /images/app/."""
+    if not graph_image_url or not isinstance(graph_image_url, str):
+        return None
+
+    parsed = urllib.parse.urlparse(graph_image_url)
+    path = parsed.path or graph_image_url
+
+    if path.startswith("/api/books/images/app/"):
+        return path.replace("/api/books/images/app/", "", 1).lstrip("/")
+    if path.startswith("/images/app/"):
+        return path.replace("/images/app/", "", 1).lstrip("/")
+
+    # Backward-compatible fallback: treat non-URL values as relative file paths.
+    if "://" not in graph_image_url and not graph_image_url.startswith("data:"):
+        return graph_image_url.lstrip("/")
+    return None
+
+
+def _refresh_roadmap_graph_urls(items: List[Dict[str, Any]]) -> None:
+    """Recursively replace stored graph path/URL with a fresh signed URL."""
+    for item in items or []:
+        filepath = _extract_graph_filepath(item.get("graph_image_url"))
+        if filepath:
+            item["graph_image_url"] = generate_signed_image_url(filepath)
+        _refresh_roadmap_graph_urls(item.get("children") or [])
+
+
+def _guide_to_response_dict(guide: ReadingGuideInDB) -> Dict[str, Any]:
+    guide_dict = guide.model_dump(by_alias=True)
+    items = guide_dict.get("items") or []
+    _refresh_roadmap_graph_urls(items)
+    guide_dict["items"] = items
+    return guide_dict
+
+
+async def _load_book_markdown(book: Book) -> str:
+    if not CONTAINER_MARKDOWN_PATH or not book.markdown_filename:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Server configuration error.",
+        )
+    markdown_file_path = os.path.join(CONTAINER_MARKDOWN_PATH, book.markdown_filename)
+
+    def read_file_sync(path):
+        if not os.path.exists(path):
+            return None
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+
+    full_markdown = await run_in_threadpool(read_file_sync, markdown_file_path)
+    if not full_markdown:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Markdown content not found.")
+    return full_markdown
+
+
+async def _load_book_for_roadmap(book_id: str, user_id: str) -> Book:
+    if not ObjectId.is_valid(book_id):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid book ID format.")
+    book_data_doc = await get_book(book_id, user_id)
+    if not book_data_doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found or not owned by user")
+    try:
+        book = Book.model_validate(book_data_doc)
+    except Exception as e:
+        logger.error(f"Failed to validate book for roadmap: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Invalid book data.")
+    if book.status != "completed" or not book.markdown_filename:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Book processing not complete or markdown unavailable",
+        )
+    return book
+
+
+async def _user_guide_prompts(user_id: Optional[str]) -> Dict[str, Optional[str]]:
+    if not user_id:
+        return {"generation_prompt": None, "format_prompt": None}
+    from backend.db.mongodb import get_user_prompt_overrides
+
+    return await get_user_prompt_overrides(user_id)
+
+
+async def _generate_roadmap_items(
+    full_markdown: str,
+    custom_requirements: Optional[str] = None,
+    prompt_depth: Optional[str] = None,
+    prompt_emphasis: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    prompts = await _user_guide_prompts(user_id)
+    roadmap_items = await llm_service.generate_roadmap(
+        full_markdown,
+        custom_requirements=custom_requirements,
+        prompt_depth=prompt_depth,
+        prompt_emphasis=prompt_emphasis,
+        generation_prompt=prompts.get("generation_prompt"),
+        format_prompt=prompts.get("format_prompt"),
+    )
+    if roadmap_items:
+        return [item.model_dump() for item in roadmap_items]
+
+    from backend.services.knowledge_mapper import KnowledgeMapper
+
+    mapper = KnowledgeMapper()
+    heading_nodes = mapper.flatten_document_sections_for_roadmap(full_markdown)
+    if not heading_nodes:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No valid book content sections found.")
+
+    return [
+        {
+            "id": n["id"],
+            "title": n["title"],
+            "purpose": None,
+            "takeaway": (n.get("snippet") or "")[:500],
+            "thought_process": [],
+            "reading_summary": (n.get("snippet") or "")[:280],
+            "reading_bullets": [],
+            "preview_text": (n.get("snippet") or "")[:250],
+            "start_offset": n["start_offset"],
+            "end_offset": n["end_offset"],
+            "level": 1,
+            "children": [],
+            "key_term": None,
+            "enriched": False,
+            "hub_score": int(n.get("hub_score", 0)),
+            "key_quote": None,
+        }
+        for n in heading_nodes
+    ]
+
+
+def _sanitize_custom_requirements(raw: Optional[str]) -> Optional[str]:
+    if raw is None:
+        return None
+    trimmed = str(raw).strip()
+    if not trimmed:
+        return None
+    if len(trimmed) > MAX_CUSTOM_REQUIREMENTS_LEN:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"custom_requirements must be at most {MAX_CUSTOM_REQUIREMENTS_LEN} characters.",
+        )
+    return trimmed
+
+
+def _default_guide_name(existing_count: int) -> str:
+    return f"Guide {existing_count + 1}"
+
+
+async def _get_guide_or_404(book_id: str, user_id: str, guide_id: str) -> ReadingGuideInDB:
+    guide = await get_reading_guide_by_id(book_id=book_id, user_id=user_id, guide_id=guide_id)
+    if not guide:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reading roadmap not found.")
+    return guide
 
 
 @router.post("/callback", status_code=status.HTTP_200_OK)
@@ -578,7 +1041,14 @@ async def pdf_processing_callback(payload: PDFServiceCallbackData = Body(...)):
             update_data["processing_error"] = "Processing reported as completed by PDF service, but no markdown file path was provided."
             update_data["markdown_filename"] = None # Ensure it's cleared
 
-        image_filenames = [img_info.filename for img_info in payload.images if img_info and img_info.filename] if payload.images else []
+        image_filenames = [img_info.filename for img_info in payload.images if img_info and img_info.filename]
+        if not image_filenames and update_data.get("markdown_filename") and CONTAINER_MARKDOWN_PATH:
+            markdown_path = os.path.join(CONTAINER_MARKDOWN_PATH, update_data["markdown_filename"])
+            image_filenames = _extract_image_filenames_from_markdown(markdown_path)
+            if image_filenames:
+                logger.info(
+                    f"Callback: Recovered {len(image_filenames)} image filenames from markdown fallback."
+                )
         update_data["image_filenames"] = image_filenames
         logger.info(f"Callback: Extracted {len(image_filenames)} image filenames.")
 
@@ -739,11 +1209,1020 @@ async def delete_book_route(book_id: str, current_user_id: str = Depends(get_cur
 
     deleted_count = await delete_book_record(book_id, current_user_id)
     if not deleted_count:
-        logger.warning(f"Delete: No book record found to delete with ID: {book_id} for user {current_user_id}, or delete operation failed in DB (already deleted or not owned?).")
-        # Still return 204 as the resource is gone or not accessible to this user.
-    else:
-        logger.info(f"Successfully deleted book record with ID: {book_id} for user {current_user_id} from database.")
+        logger.warning(
+            f"Delete: No book record deleted for ID: {book_id} user {current_user_id} "
+            "(not found, not owned, or DB delete failed)."
+        )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Book not found or could not be deleted.",
+        )
 
+    logger.info(
+        f"Successfully deleted book record with ID: {book_id} for user {current_user_id} from database."
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
-# ... (rest of the file) ...
+
+@router.get("/features", response_model=Dict[str, bool])
+async def get_features():
+    """
+    Returns the status of various feature flags.
+    """
+    rewrite_enabled = os.getenv("FEATURE_FLAG_ENABLE_REWRITE", "false").lower() == "true"
+    return {"rewrite_enabled": rewrite_enabled}
+
+
+class ReformatPayload(BaseModel):
+    selected_text: Optional[str] = None
+    global_char_offset: Optional[int] = None
+
+@router.post("/{book_id}/reformat-page/{page_number}", response_model=Book)
+async def reformat_page_content(book_id: str, page_number: int, payload: ReformatPayload = Body(default=ReformatPayload()), current_user_id: str = Depends(get_current_user_id)):
+    """
+    Reformats either a selection of text or a single page of the book's markdown content using an LLM.
+    This action overwrites the existing markdown file with the updated full content.
+    """
+    rewrite_enabled = os.getenv("FEATURE_FLAG_ENABLE_REWRITE", "false").lower() == "true"
+    if not rewrite_enabled:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Feature not available")
+        
+    logger.info(f"User {current_user_id} requested to reformat content for book {book_id}, page {page_number}")
+
+    # 1. Get book from DB and validate
+    book_data_doc = await get_book(book_id, current_user_id)
+    if not book_data_doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found or not owned by user")
+    
+    book = Book.model_validate(book_data_doc)
+
+    if book.status != 'completed' or not book.markdown_filename:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Book content is not available for reformatting.")
+
+    if not CONTAINER_MARKDOWN_PATH:
+        logger.error("CONTAINER_MARKDOWN_PATH is not set. Cannot read or write markdown file.")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Server storage is not configured.")
+
+    # 2. Read current markdown file
+    markdown_file_path = os.path.join(CONTAINER_MARKDOWN_PATH, book.markdown_filename)
+    logger.info(f"Reading content from {markdown_file_path} for page-reformat.")
+    
+    try:
+        def read_file_sync(path):
+            with open(path, 'r', encoding='utf-8') as f:
+                return f.read()
+        full_content = await run_in_threadpool(read_file_sync, markdown_file_path)
+    except FileNotFoundError:
+        logger.error(f"Markdown file not found at {markdown_file_path} for book {book_id}")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Markdown file not found.")
+
+    content_to_reformat = ""
+    is_selection_reformat = False
+    # Store the length of the text that will be replaced.
+    original_selection_len_for_splicing = 0
+
+    if payload and payload.selected_text and payload.global_char_offset is not None:
+        is_selection_reformat = True
+        offset = payload.global_char_offset
+        # The length of the text from the frontend reflects the user's selection length.
+        text_len_from_frontend = len(payload.selected_text)
+        
+        # Basic validation for the offset.
+        if not (0 <= offset < len(full_content)):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid character offset provided.")
+        
+        # Define the slice of original content to be replaced, using frontend's length as a guide.
+        end_offset_of_original = min(offset + text_len_from_frontend, len(full_content))
+        content_to_reformat = full_content[offset:end_offset_of_original]
+        original_selection_len_for_splicing = len(content_to_reformat) # This is the length we'll replace.
+        
+        # Log a warning if there's a mismatch, but don't error out.
+        if content_to_reformat != payload.selected_text:
+            logger.warning(f"Reformat selection mismatch for book {book_id}. Frontend text differs from backend content at offset {offset}. Proceeding with backend content for reformatting.")
+            logger.debug(f"Frontend text (len {len(payload.selected_text)}): '{payload.selected_text[:100]}...'")
+            logger.debug(f"Backend content (len {original_selection_len_for_splicing}): '{content_to_reformat[:100]}...'")
+        
+        logger.info(f"Reformatting a selection of text (len: {len(content_to_reformat)}) for book {book_id}.")
+    else:
+        # 3. Calculate page boundaries to find the correct page content (whole page reformat)
+        boundaries = _calculate_page_boundaries(full_content, APPROX_CHARS_PER_PAGE_FOR_GUIDE)
+        if not (1 <= page_number <= len(boundaries)):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid page number. Must be between 1 and {len(boundaries)}.")
+
+        page_index = page_number - 1
+        page_boundary = boundaries[page_index]
+        start_offset, end_offset = page_boundary['start'], page_boundary['end']
+        
+        content_to_reformat = full_content[start_offset:end_offset]
+        logger.info(f"Reformatting whole page {page_number} content (len: {len(content_to_reformat)}) for book {book_id}.")
+
+    # 4. Call LLM service to reformat the content
+    reformatted_content = await llm_service.reformat_content(content_to_reformat)
+    if not reformatted_content or reformatted_content.startswith("Error:"):
+        logger.error(f"LLM service failed to reformat content for book {book_id}. Response: {reformatted_content}")
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"LLM service failed to reformat content. {reformatted_content}")
+    logger.info(f"Received reformatted content for book {book_id}. New length: {len(reformatted_content)}")
+
+    # 5. Splice the reformatted content back into the full markdown
+    if is_selection_reformat:
+        start_offset = payload.global_char_offset
+        # Use the length of the text we actually extracted from the original file.
+        end_offset = start_offset + original_selection_len_for_splicing
+        new_full_content = full_content[:start_offset] + reformatted_content + full_content[end_offset:]
+    else: # Whole page reformat
+        page_boundary = _calculate_page_boundaries(full_content, APPROX_CHARS_PER_PAGE_FOR_GUIDE)[page_number - 1]
+        start_offset, end_offset = page_boundary['start'], page_boundary['end']
+        new_full_content = full_content[:start_offset] + reformatted_content + full_content[end_offset:]
+
+    new_full_content = _sign_app_image_urls_in_markdown(new_full_content)
+
+    # 6. Overwrite the markdown file with the new full content
+    try:
+        def write_file_sync(path, content):
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write(content)
+        await run_in_threadpool(write_file_sync, markdown_file_path, new_full_content)
+        logger.info(f"Successfully overwrote markdown file at {markdown_file_path} with reformatted content.")
+    except Exception as e:
+        logger.error(f"Failed to write reformatted content to {markdown_file_path}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to save reformatted content.")
+
+    # 7. Update timestamp and return book object with new full content
+    now = datetime.utcnow()
+    await update_book(book_id, current_user_id, {"updated_at": now})
+    
+    book.updated_at = now
+    book.markdown_content = new_full_content
+
+    return book
+
+
+@router.post("/{book_id}/pages/{page_number}/reading-guide", response_model=ReadingGuidePageInDB, response_model_by_alias=False)
+async def generate_page_reading_guide(
+    book_id: str,
+    page_number: int,
+    body: Optional[ReadingGuideGenerateBody] = Body(None),
+    current_user_id: str = Depends(get_current_user_id)
+):
+    guide_type = (body.guide_type if body else None) or "summary"
+    if guide_type not in ("summary", "comprehensive", "quick_reference"):
+        guide_type = "summary"
+    logger.info(f"Request to generate reading guide for book {book_id}, page {page_number}, guide_type={guide_type} by user {current_user_id}")
+    
+    book_data_doc = await get_book(book_id, current_user_id)
+    if not book_data_doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found or not owned by user")
+
+    try:
+        book = Book.model_validate(book_data_doc)
+    except Exception as validation_error:
+        logger.error(f"Generate Guide: Failed to validate book data from DB for ID {book_id}: {validation_error}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Invalid book data found in database.")
+
+    if book.status != 'completed' or not book.markdown_filename:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Book processing not complete or markdown not available")
+
+    if not CONTAINER_MARKDOWN_PATH:
+        logger.error("CONTAINER_MARKDOWN_PATH is not set. Cannot read markdown file for guide.")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Server configuration error: Markdown path not set.")
+
+    markdown_file_path = os.path.join(CONTAINER_MARKDOWN_PATH, book.markdown_filename)
+    
+    page_content_text = None
+    page_global_start_offset = 0
+    page_global_end_offset = 0
+    try:
+        def read_file_sync(path):
+            if not os.path.exists(path):
+                logger.error(f"Markdown file not found at {path} for reading guide generation.")
+                return None
+            with open(path, 'r', encoding='utf-8') as f:
+                return f.read()
+        
+        full_markdown_content = await run_in_threadpool(read_file_sync, markdown_file_path)
+
+        if not full_markdown_content:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Markdown content not found or empty.")
+
+        boundaries = _calculate_page_boundaries(full_markdown_content, APPROX_CHARS_PER_PAGE_FOR_GUIDE)
+        if not (1 <= page_number <= len(boundaries)):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid page number. Must be between 1 and {len(boundaries)}.")
+
+        page_boundary = boundaries[page_number - 1]
+        page_global_start_offset = page_boundary["start"]
+        page_global_end_offset = page_boundary["end"]
+        page_content_text = full_markdown_content[page_global_start_offset:page_global_end_offset]
+        total_pages = len(boundaries)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error reading or processing markdown for guide: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error processing book content for guide.")
+
+    # Heading-based segmentation: sections overlapping this page
+    heading_sections = _extract_heading_sections(full_markdown_content, page_global_start_offset, page_global_end_offset)
+    if heading_sections:
+        segments = [
+            {"section_title": h["text"], "content": full_markdown_content[h["start_offset"]:h["end_offset"]]}
+            for h in heading_sections
+        ]
+        segment_bounds = [(h["start_offset"], h["end_offset"]) for h in heading_sections]
+    else:
+        segments = [{"section_title": "Page content", "content": page_content_text}]
+        segment_bounds = [(page_global_start_offset, page_global_end_offset)]
+
+    try:
+        logger.info(f"Generating structured reading guide for book {book.id}, page {page_number} ({len(segments)} segments)")
+        structured_guide = await llm_service.generate_structured_reading_guide(
+            segments=segments,
+            book_title=book.title,
+            page_number=page_number,
+            total_pages=total_pages,
+            guide_type=guide_type,
+        )
+        
+        from backend.models.reading_guide import ReadingGuideSection, TextLink
+        
+        sections = []
+        llm_sections = structured_guide.get("sections") or []
+        for i, section_data in enumerate(llm_sections):
+            if i >= len(segment_bounds):
+                break
+            global_start_offset, global_end_offset = segment_bounds[i]
+            segment_content = full_markdown_content[global_start_offset:global_end_offset]
+            preview_length = min(200, len(segment_content))
+            original_text_preview = segment_content[:preview_length] if segment_content else ""
+            context_before = None
+            if global_start_offset > 0:
+                context_before = full_markdown_content[max(0, global_start_offset - 50):global_start_offset]
+            context_after = None
+            if global_end_offset < len(full_markdown_content):
+                context_after = full_markdown_content[global_end_offset:min(len(full_markdown_content), global_end_offset + 50)]
+            
+            primary_link = TextLink(
+                start_offset=global_start_offset,
+                end_offset=global_end_offset,
+                preview_text=original_text_preview,
+                context_before=context_before,
+                context_after=context_after,
+            )
+            key_takeaway = section_data.get("key_takeaway")
+            raw_rewritten = section_data.get("rewritten_content", "")
+            # LLM may return rewritten_content as a list (e.g. bullet points); normalize to string
+            if isinstance(raw_rewritten, list):
+                rewritten_content = "\n".join(str(item) for item in raw_rewritten)
+            else:
+                rewritten_content = str(raw_rewritten) if raw_rewritten is not None else ""
+            section = ReadingGuideSection(
+                section_title=section_data.get("section_title", ""),
+                rewritten_content=rewritten_content,
+                original_start_offset=global_start_offset,
+                original_end_offset=global_end_offset,
+                original_text_preview=original_text_preview,
+                primary_link=primary_link,
+                key_takeaway=key_takeaway,
+            )
+            sections.append(section)
+            logger.debug(f"Converted section '{section.section_title}': global [{global_start_offset}-{global_end_offset}]")
+        
+        simple_content = ""
+        if sections:
+            parts = []
+            for section in sections:
+                block = f"## {section.section_title}\n\n"
+                if section.key_takeaway:
+                    block += f"**Key idea:** {section.key_takeaway}\n\n"
+                block += section.rewritten_content
+                parts.append(block)
+            simple_content = "\n\n".join(parts)
+        else:
+            simple_content = "No guide sections were generated for this page."
+            logger.warning(f"No guide sections generated for book {book.id}, page {page_number}")
+        
+        db_guide_page = await upsert_reading_guide_page(
+            book_id=str(book.id),
+            user_id=current_user_id,
+            page_number=page_number,
+            content=simple_content,
+            sections=sections,
+            document_structure_map=structured_guide.get("document_structure_map", {}),
+        )
+        
+    except Exception as e:
+        logger.error(f"LLM service error for book {book.id}, page {page_number}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="LLM service unavailable or failed.")
+
+    if not db_guide_page:
+        logger.error(f"Failed to save reading guide for book {book.id}, page {page_number} to DB.")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to save reading guide.")
+    
+    logger.info(f"Successfully generated and saved reading guide for book {book.id}, page {page_number}")
+    return db_guide_page
+
+
+@router.get("/{book_id}/pages/{page_number}/reading-guide", response_model=Optional[ReadingGuidePageInDB], response_model_by_alias=False)
+async def get_page_reading_guide(
+    book_id: str,
+    page_number: int,
+    current_user_id: str = Depends(get_current_user_id)
+):
+    logger.info(f"Request to get reading guide for book {book_id}, page {page_number} by user {current_user_id}")
+    
+    if not ObjectId.is_valid(book_id):
+        logger.warning(f"Get Page Guide: Invalid book_id format: {book_id}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid book ID format.")
+
+    db_guide_page = await get_reading_guide_page(
+        book_id=book_id, user_id=current_user_id, page_number=page_number
+    )
+    if not db_guide_page:
+        logger.info(f"No reading guide found for book {book_id}, page {page_number}")
+        return None 
+    
+    logger.info(f"Successfully retrieved reading guide for book {book_id}, page {page_number}")
+    return db_guide_page
+
+
+# --- Whole-book reading guides (multi-guide + legacy aliases) ---
+
+
+@router.get("/{book_id}/reading-guides", response_model=List[ReadingGuideSummary])
+async def list_book_reading_guides(
+    book_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+):
+    if not ObjectId.is_valid(book_id):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid book ID format.")
+    summaries = await list_reading_guides(book_id=book_id, user_id=current_user_id)
+    return summaries
+
+
+@router.post("/{book_id}/reading-guides", response_model=ReadingGuideInDB, response_model_by_alias=False)
+async def create_book_reading_guide(
+    book_id: str,
+    body: Optional[ReadingGuideCreateBody] = Body(None),
+    current_user_id: str = Depends(get_current_user_id),
+):
+    """Create a new reading guide (max 5 per book)."""
+    book = await _load_book_for_roadmap(book_id, current_user_id)
+    existing = await count_reading_guides(book_id, current_user_id)
+    if existing >= MAX_READING_GUIDES_PER_BOOK:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Maximum of {MAX_READING_GUIDES_PER_BOOK} reading guides per book.",
+        )
+
+    custom_requirements = _sanitize_custom_requirements(
+        body.custom_requirements if body else None
+    )
+    prompt_depth = body.prompt_depth if body else None
+    prompt_emphasis = body.prompt_emphasis if body else None
+    name = (body.name.strip() if body and body.name and body.name.strip() else None) or _default_guide_name(existing)
+    full_markdown = await _load_book_markdown(book)
+    items = await _generate_roadmap_items(
+        full_markdown,
+        custom_requirements=custom_requirements,
+        prompt_depth=prompt_depth,
+        prompt_emphasis=prompt_emphasis,
+        user_id=current_user_id,
+    )
+
+    guide_id = str(uuid.uuid4())
+    db_guide = await create_reading_guide(
+        book_id=book_id,
+        user_id=current_user_id,
+        guide_id=guide_id,
+        name=name,
+        items=items,
+        custom_requirements=custom_requirements,
+        prompt_depth=prompt_depth,
+        prompt_emphasis=prompt_emphasis,
+    )
+    if not db_guide:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to save reading roadmap.")
+    return _guide_to_response_dict(db_guide)
+
+
+@router.get("/{book_id}/reading-guides/{guide_id}", response_model=Optional[ReadingGuideInDB], response_model_by_alias=False)
+async def get_book_reading_guide(
+    book_id: str,
+    guide_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+):
+    if not ObjectId.is_valid(book_id):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid book ID format.")
+    guide = await get_reading_guide_by_id(book_id=book_id, user_id=current_user_id, guide_id=guide_id)
+    if not guide:
+        return None
+    return _guide_to_response_dict(guide)
+
+
+@router.delete("/{book_id}/reading-guides/{guide_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_book_reading_guide(
+    book_id: str,
+    guide_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+):
+    if not ObjectId.is_valid(book_id):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid book ID format.")
+    deleted = await delete_reading_guide(book_id=book_id, user_id=current_user_id, guide_id=guide_id)
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reading roadmap not found.")
+    return None
+
+
+@router.post("/{book_id}/reading-guides/{guide_id}/generate", response_model=ReadingGuideInDB, response_model_by_alias=False)
+async def regenerate_book_reading_guide(
+    book_id: str,
+    guide_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+):
+    """Regenerate roadmap items for an existing guide; clears card chats for that guide."""
+    guide = await _get_guide_or_404(book_id, current_user_id, guide_id)
+    book = await _load_book_for_roadmap(book_id, current_user_id)
+    full_markdown = await _load_book_markdown(book)
+    items = await _generate_roadmap_items(
+        full_markdown,
+        custom_requirements=guide.custom_requirements,
+        prompt_depth=guide.prompt_depth,
+        prompt_emphasis=guide.prompt_emphasis,
+        user_id=current_user_id,
+    )
+    await delete_all_card_chats_for_guide(book_id, current_user_id, guide_id)
+    updated = await update_reading_guide_metadata(
+        book_id, current_user_id, guide_id, items=items
+    )
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to save reading roadmap.")
+    return _guide_to_response_dict(updated)
+
+
+@router.get("/{book_id}/reading-guides/{guide_id}/progress")
+async def get_book_reading_guide_progress(
+    book_id: str,
+    guide_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+):
+    if not ObjectId.is_valid(book_id):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid book ID format.")
+    completed_ids = await get_reading_guide_progress(
+        book_id=book_id, user_id=current_user_id, guide_id=guide_id
+    )
+    return {"completed_ids": completed_ids}
+
+
+@router.post("/{book_id}/reading-guides/{guide_id}/progress")
+async def update_book_reading_guide_progress(
+    book_id: str,
+    guide_id: str,
+    payload: ReadingGuideProgressUpdate = Body(...),
+    current_user_id: str = Depends(get_current_user_id),
+):
+    if not ObjectId.is_valid(book_id):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid book ID format.")
+    completed_ids = await update_reading_guide_progress(
+        book_id=book_id,
+        user_id=current_user_id,
+        item_id=payload.item_id,
+        completed=payload.completed,
+        guide_id=guide_id,
+    )
+    return {"completed_ids": completed_ids}
+
+
+@router.post("/{book_id}/reading-guides/{guide_id}/cards/{card_id}/graph")
+async def generate_roadmap_card_graph_v2(
+    book_id: str,
+    guide_id: str,
+    card_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+):
+    return await _generate_roadmap_card_graph_impl(book_id, guide_id, card_id, current_user_id)
+
+
+@router.post("/{book_id}/reading-guides/{guide_id}/cards/{card_id}/alternative-reading")
+async def generate_roadmap_card_alternative_reading_v2(
+    book_id: str,
+    guide_id: str,
+    card_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+):
+    return await _generate_roadmap_card_alternative_reading_impl(
+        book_id, guide_id, card_id, current_user_id
+    )
+
+
+@router.post("/{book_id}/reading-guides/{guide_id}/cards/{card_id}/outsider-guide")
+async def generate_roadmap_card_outsider_guide_v2(
+    book_id: str,
+    guide_id: str,
+    card_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+):
+    return await _generate_roadmap_card_outsider_guide_impl(
+        book_id, guide_id, card_id, current_user_id
+    )
+
+
+@router.get("/{book_id}/reading-guides/{guide_id}/cards/{card_id}/chat", response_model=GuideCardChatResponse)
+async def get_roadmap_card_chat(
+    book_id: str,
+    guide_id: str,
+    card_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+):
+    if not ObjectId.is_valid(book_id):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid book ID format.")
+    await _get_guide_or_404(book_id, current_user_id, guide_id)
+    raw = await get_card_chat_messages(book_id, current_user_id, guide_id, card_id)
+    messages = [GuideChatMessage.model_validate(m) for m in raw]
+    return GuideCardChatResponse(messages=messages)
+
+
+@router.post("/{book_id}/reading-guides/{guide_id}/cards/{card_id}/chat", response_model=GuideCardChatResponse)
+async def post_roadmap_card_chat(
+    book_id: str,
+    guide_id: str,
+    card_id: str,
+    body: GuideCardChatPostBody = Body(...),
+    current_user_id: str = Depends(get_current_user_id),
+):
+    if not ObjectId.is_valid(book_id):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid book ID format.")
+    guide = await _get_guide_or_404(book_id, current_user_id, guide_id)
+    item = _find_roadmap_item([i.model_dump() for i in guide.items], card_id)
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Card not found in roadmap.")
+
+    book = await _load_book_for_roadmap(book_id, current_user_id)
+    full_markdown = await _load_book_markdown(book)
+    start = int(item.get("start_offset", 0))
+    end = int(item.get("end_offset", len(full_markdown)))
+    source_excerpt = full_markdown[max(0, start):min(len(full_markdown), end)][:10000]
+
+    user_message = body.message.strip()
+    history = await get_card_chat_messages(book_id, current_user_id, guide_id, card_id)
+    reply = await llm_service.chat_roadmap_card(
+        book_title=book.title,
+        card=item,
+        source_excerpt=source_excerpt,
+        history=history,
+        user_message=user_message,
+        guide_custom_requirements=guide.custom_requirements,
+    )
+    if not reply:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Chat generation failed.")
+
+    now = datetime.utcnow()
+    history.append({"role": "user", "content": user_message, "created_at": now})
+    history.append({"role": "assistant", "content": reply, "created_at": now})
+    saved = await save_card_chat_messages(book_id, current_user_id, guide_id, card_id, history)
+    messages = [GuideChatMessage.model_validate(m) for m in saved]
+    return GuideCardChatResponse(messages=messages)
+
+
+@router.delete("/{book_id}/reading-guides/{guide_id}/cards/{card_id}/chat", response_model=GuideCardChatResponse)
+async def delete_roadmap_card_chat(
+    book_id: str,
+    guide_id: str,
+    card_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+):
+    if not ObjectId.is_valid(book_id):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid book ID format.")
+    await _get_guide_or_404(book_id, current_user_id, guide_id)
+    await clear_card_chat(book_id, current_user_id, guide_id, card_id)
+    return GuideCardChatResponse(messages=[])
+
+
+async def _generate_roadmap_card_graph_impl(
+    book_id: str, guide_id: str, card_id: str, current_user_id: str
+):
+    guide = await _get_guide_or_404(book_id, current_user_id, guide_id)
+    item = _find_roadmap_item([i.model_dump() for i in guide.items], card_id)
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Card not found in roadmap.")
+
+    book = await _load_book_for_roadmap(book_id, current_user_id)
+    full_markdown = await _load_book_markdown(book)
+    start = int(item.get("start_offset", 0))
+    end = int(item.get("end_offset", min(len(full_markdown), start + 1200)))
+    source_excerpt = full_markdown[max(0, start):min(len(full_markdown), end)]
+    image_bytes = await llm_service.generate_graph_image_bytes(
+        card_title=item.get("title", "Concept"),
+        key_idea=item.get("takeaway", "") or item.get("reading_summary", "") or "",
+        source_excerpt=source_excerpt,
+    )
+    if not image_bytes:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Graph generation failed.")
+
+    app_images_path = os.path.join(CONTAINER_IMAGES_PATH, "app")
+    relative_dir = os.path.join("guides", book_id)
+    output_dir = os.path.join(app_images_path, relative_dir)
+    os.makedirs(output_dir, exist_ok=True)
+    safe_card = re.sub(r"[^a-zA-Z0-9_.-]+", "_", card_id)
+    filename = f"{safe_card}_{int(time.time())}.png"
+    full_path = os.path.join(output_dir, filename)
+    with open(full_path, "wb") as f:
+        f.write(image_bytes)
+
+    relative_file = os.path.join(relative_dir, filename).replace("\\", "/")
+    stable_graph_path = f"/images/app/{relative_file}"
+    signed_url = generate_signed_image_url(relative_file)
+
+    items = [i.model_dump() for i in guide.items]
+    _set_roadmap_item_graph(items, card_id, stable_graph_path)
+    await upsert_reading_guide(
+        book_id=book_id, user_id=current_user_id, items=items, guide_id=guide_id
+    )
+    return {"card_id": card_id, "graph_image_url": signed_url}
+
+
+async def _generate_roadmap_card_alternative_reading_impl(
+    book_id: str, guide_id: str, card_id: str, current_user_id: str
+):
+    guide = await _get_guide_or_404(book_id, current_user_id, guide_id)
+    item = _find_roadmap_item([i.model_dump() for i in guide.items], card_id)
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Card not found in roadmap.")
+
+    book = await _load_book_for_roadmap(book_id, current_user_id)
+    full_markdown = await _load_book_markdown(book)
+    start = int(item.get("start_offset", 0))
+    end = int(item.get("end_offset", min(len(full_markdown), start + 1800)))
+    if end <= start:
+        end = min(len(full_markdown), start + 1800)
+    source_excerpt = full_markdown[max(0, start):min(len(full_markdown), end)]
+    source_word_count = len(source_excerpt.split())
+    alternative_reading = await llm_service.generate_alternative_reading(
+        card_title=item.get("title", "Section"),
+        source_excerpt=source_excerpt,
+    )
+    if not alternative_reading:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Alternative reading generation failed.",
+        )
+    shortcut_word_count = len(alternative_reading.split())
+
+    items = [i.model_dump() for i in guide.items]
+    _set_roadmap_item_alternative_reading(
+        items,
+        card_id,
+        alternative_reading,
+        source_word_count=source_word_count,
+        shortcut_word_count=shortcut_word_count,
+    )
+    saved_guide = await upsert_reading_guide(
+        book_id=book_id, user_id=current_user_id, items=items, guide_id=guide_id
+    )
+    if not saved_guide:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to persist alternative reading.",
+        )
+    return {
+        "card_id": card_id,
+        "alternative_reading": alternative_reading,
+        "source_word_count": source_word_count,
+        "shortcut_word_count": shortcut_word_count,
+    }
+
+
+async def _generate_roadmap_card_outsider_guide_impl(
+    book_id: str, guide_id: str, card_id: str, current_user_id: str
+):
+    guide = await _get_guide_or_404(book_id, current_user_id, guide_id)
+    item = _find_roadmap_item([i.model_dump() for i in guide.items], card_id)
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Card not found in roadmap.")
+
+    book = await _load_book_for_roadmap(book_id, current_user_id)
+    full_markdown = await _load_book_markdown(book)
+    start = int(item.get("start_offset", 0))
+    end = int(item.get("end_offset", min(len(full_markdown), start + 1800)))
+    if end <= start:
+        end = min(len(full_markdown), start + 1800)
+    source_excerpt = full_markdown[max(0, start):min(len(full_markdown), end)]
+    source_word_count = len(source_excerpt.split())
+    outsider_guide = await llm_service.generate_outsider_guide(
+        card_title=item.get("title", "Section"),
+        source_excerpt=source_excerpt,
+    )
+    if not outsider_guide:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Outsider guide generation failed.",
+        )
+    outsider_word_count = len(outsider_guide.split())
+
+    items = [i.model_dump() for i in guide.items]
+    _set_roadmap_item_outsider_guide(
+        items,
+        card_id,
+        outsider_guide,
+        source_word_count=source_word_count,
+        outsider_word_count=outsider_word_count,
+    )
+    saved_guide = await upsert_reading_guide(
+        book_id=book_id, user_id=current_user_id, items=items, guide_id=guide_id
+    )
+    if not saved_guide:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to persist outsider guide.",
+        )
+    return {
+        "card_id": card_id,
+        "outsider_guide": outsider_guide,
+        "source_word_count": source_word_count,
+        "outsider_word_count": outsider_word_count,
+    }
+
+
+# Legacy aliases (default guide)
+
+
+@router.post("/{book_id}/reading-guide", response_model=ReadingGuideInDB, response_model_by_alias=False)
+async def generate_whole_book_reading_guide(
+    book_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+):
+    """Legacy: regenerate default guide or create it if missing."""
+    existing = await get_reading_guide_by_id(book_id, current_user_id, LEGACY_GUIDE_ID)
+    if existing:
+        return await regenerate_book_reading_guide(book_id, LEGACY_GUIDE_ID, current_user_id)
+
+    book = await _load_book_for_roadmap(book_id, current_user_id)
+    full_markdown = await _load_book_markdown(book)
+    items = await _generate_roadmap_items(
+        full_markdown, custom_requirements=None, user_id=current_user_id
+    )
+    db_guide = await create_reading_guide(
+        book_id=book_id,
+        user_id=current_user_id,
+        guide_id=LEGACY_GUIDE_ID,
+        name="Reading Roadmap",
+        items=items,
+        custom_requirements=None,
+    )
+    if not db_guide:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to save reading roadmap.")
+    return _guide_to_response_dict(db_guide)
+
+
+@router.get("/{book_id}/reading-guide", response_model=Optional[ReadingGuideInDB], response_model_by_alias=False)
+async def get_whole_book_reading_guide(
+    book_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+):
+    return await get_book_reading_guide(book_id, LEGACY_GUIDE_ID, current_user_id)
+
+
+@router.get("/{book_id}/reading-guide/progress")
+async def get_whole_book_reading_guide_progress(
+    book_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+):
+    return await get_book_reading_guide_progress(book_id, LEGACY_GUIDE_ID, current_user_id)
+
+
+@router.post("/{book_id}/reading-guide/progress")
+async def update_whole_book_reading_guide_progress(
+    book_id: str,
+    payload: ReadingGuideProgressUpdate = Body(...),
+    current_user_id: str = Depends(get_current_user_id),
+):
+    return await update_book_reading_guide_progress(
+        book_id, LEGACY_GUIDE_ID, payload, current_user_id
+    )
+
+
+@router.post("/{book_id}/reading-guide/cards/{card_id}/graph")
+async def generate_roadmap_card_graph(
+    book_id: str,
+    card_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+):
+    return await _generate_roadmap_card_graph_impl(
+        book_id, LEGACY_GUIDE_ID, card_id, current_user_id
+    )
+
+
+@router.post("/{book_id}/reading-guide/cards/{card_id}/alternative-reading")
+async def generate_roadmap_card_alternative_reading(
+    book_id: str,
+    card_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+):
+    return await _generate_roadmap_card_alternative_reading_impl(
+        book_id, LEGACY_GUIDE_ID, card_id, current_user_id
+    )
+
+
+@router.post("/{book_id}/reading-guide/cards/{card_id}/outsider-guide")
+async def generate_roadmap_card_outsider_guide(
+    book_id: str,
+    card_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+):
+    return await _generate_roadmap_card_outsider_guide_impl(
+        book_id, LEGACY_GUIDE_ID, card_id, current_user_id
+    )
+
+
+# Shared secret for app image HMAC signing (<img> cannot send Bearer). Set in .env for production.
+APP_IMAGE_SECRET = os.getenv("APP_IMAGE_SECRET", "")
+logger.info(
+    f"App image secret configured: {bool(APP_IMAGE_SECRET)} "
+    f"(length: {len(APP_IMAGE_SECRET) if APP_IMAGE_SECRET else 0}); "
+    "without it, signed URLs in markdown cannot be verified."
+)
+
+# Signed URL TTL for embedded book images (refreshed on page navigation via refresh-image-urls).
+SIGNED_URL_EXPIRATION = 3600  # seconds (1 hour)
+
+def generate_signed_image_url(filepath: str) -> str:
+    """
+    Generate a signed URL for an app image that expires after SIGNED_URL_EXPIRATION seconds.
+    The signature is based on filepath + timestamp + secret.
+    """
+    if not APP_IMAGE_SECRET:
+        # Fallback to simple secret if signing not configured
+        return f"/api/books/images/app/{filepath}?secret={urllib.parse.quote(APP_IMAGE_SECRET)}"
+    
+    # Generate expiration timestamp
+    expires = int(time.time()) + SIGNED_URL_EXPIRATION
+    
+    # Create message to sign: filepath + expiration timestamp
+    message = f"{filepath}:{expires}"
+    
+    # Generate HMAC signature
+    signature = hmac.new(
+        APP_IMAGE_SECRET.encode('utf-8'),
+        message.encode('utf-8'),
+        hashlib.sha256
+    ).hexdigest()
+    
+    # Return signed URL
+    return f"/api/books/images/app/{filepath}?expires={expires}&signature={signature}"
+
+def verify_signed_url(filepath: str, expires: Optional[str], signature: Optional[str]) -> bool:
+    """
+    Verify that a signed URL is valid and not expired.
+    """
+    if not APP_IMAGE_SECRET or not expires or not signature:
+        return False
+    
+    try:
+        expires_int = int(expires)
+        # Check if URL has expired
+        if time.time() > expires_int:
+            logger.debug(f"Signed URL expired: {filepath} (expired at {expires_int}, current time {int(time.time())})")
+            return False
+        
+        # Recreate the message
+        message = f"{filepath}:{expires_int}"
+        
+        # Recompute the signature
+        expected_signature = hmac.new(
+            APP_IMAGE_SECRET.encode('utf-8'),
+            message.encode('utf-8'),
+            hashlib.sha256
+        ).hexdigest()
+        
+        # Compare signatures (use constant-time comparison to prevent timing attacks)
+        return hmac.compare_digest(signature, expected_signature)
+    except (ValueError, TypeError):
+        return False
+
+
+def _extract_app_image_relative_path(image_path_raw: str) -> Optional[str]:
+    """Normalize markdown/HTML image URL to filepath under app images (basename path, no leading slash)."""
+    if not image_path_raw or not isinstance(image_path_raw, str):
+        return None
+    s = image_path_raw.strip()
+    if not s:
+        return None
+    if s.startswith("<") and s.endswith(">"):
+        s = s[1:-1].strip()
+    parsed = urllib.parse.urlparse(s)
+    path = (parsed.path or "").strip()
+    if not path:
+        path = s.split("?", 1)[0].strip()
+    if not path:
+        return None
+    api_prefix = "/api/books/images/app/"
+    img_prefix = "/images/app/"
+    if path.startswith(api_prefix):
+        rel = path[len(api_prefix) :].lstrip("/")
+        return rel or None
+    if path.startswith(img_prefix):
+        rel = path[len(img_prefix) :].lstrip("/")
+        return rel or None
+    return None
+
+
+def _sign_app_image_urls_in_markdown(markdown: str) -> str:
+    """Replace /images/app/... and /api/books/images/app/... image references with freshly signed URLs."""
+
+    def replace_md_image(match):
+        full_match = match.group(0)
+        image_path_raw = match.group(2)
+        filename = _extract_app_image_relative_path(image_path_raw)
+        if not filename:
+            return full_match
+        signed_url = generate_signed_image_url(filename)
+        return full_match.replace(image_path_raw, signed_url)
+
+    def replace_html_image(match):
+        full_match = match.group(0)
+        image_path_raw = match.group(2)
+        filename = _extract_app_image_relative_path(image_path_raw)
+        if not filename:
+            return full_match
+        signed_url = generate_signed_image_url(filename)
+        return full_match.replace(image_path_raw, signed_url)
+
+    out = re.sub(r"!\[([^\]]*)\]\(([^)]+)\)", replace_md_image, markdown)
+    out = re.sub(r"<img ([^>]*src\s*=\s*['\"])([^'\"]+)(['\"][^>]*)>", replace_html_image, out)
+    return out
+
+
+@router.get("/images/app/{filepath:path}")
+async def serve_app_image(
+    filepath: str,
+    request: Request,
+    expires: Optional[str] = Query(None),
+    signature: Optional[str] = Query(None),
+    secret: Optional[str] = Query(None)  # Legacy support
+):
+    """
+    Serves an app image file (from PDF processing).
+    These images are only accessible through the reading_pal app.
+    Accepts either:
+    - Bearer token authentication (via Authorization header)
+    - Signed URL with expiration (expires + signature query parameters)
+    - Legacy: Shared secret key (via secret query parameter, deprecated)
+    """
+    logger.debug(f"App image request received - filepath: '{filepath}', has_signed_url: {bool(expires and signature)}, has_legacy_secret: {bool(secret)}")
+    
+    # Try to get user_id from token first (optional - won't raise if missing)
+    current_user_id = None
+    try:
+        current_user_id = await get_current_user_id(request)
+    except HTTPException:
+        # No valid token, will check signed URL or legacy secret instead
+        pass
+    
+    # Check authentication: Bearer token OR signed URL OR legacy secret
+    is_authenticated = False
+    
+    if current_user_id:
+        # User authenticated via Bearer token
+        is_authenticated = True
+        logger.debug(f"Serving app image: {filepath} for authenticated user: {current_user_id}")
+    elif expires and signature:
+        # Verify signed URL
+        if verify_signed_url(filepath, expires, signature):
+            is_authenticated = True
+            logger.debug(f"Serving app image: {filepath} with valid signed URL")
+        else:
+            logger.warning(f"App image request denied - invalid or expired signed URL: {filepath}")
+    elif APP_IMAGE_SECRET and secret == APP_IMAGE_SECRET:
+        # Legacy: Valid secret key provided (deprecated, but kept for backward compatibility)
+        is_authenticated = True
+        logger.debug(f"Serving app image: {filepath} with legacy secret key")
+    
+    if not is_authenticated:
+        logger.warning(f"App image request denied - no valid authentication: {filepath} (has_signed_url: {bool(expires and signature)}, has_legacy_secret: {bool(secret)}, current_user_id: {current_user_id})")
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied. App images require authentication or a valid signed URL.",
+        )
+    
+    try:
+        # Construct the full path to the app image file
+        app_images_path = os.path.join(CONTAINER_IMAGES_PATH, "app")
+        image_file_path = Path(app_images_path) / filepath
+
+        logger.debug(f"App image request - filepath: {filepath}, full_path: {image_file_path}")
+
+        if not image_file_path.exists() or not image_file_path.is_file():
+            logger.warning(f"App image not found: {image_file_path} (exists: {image_file_path.exists()}, is_file: {image_file_path.is_file() if image_file_path.exists() else 'N/A'})")
+            raise HTTPException(status_code=404, detail="Image not found")
+
+        # Security check: ensure the resolved path is still within the app directory
+        app_images_path_resolved = Path(app_images_path).resolve()
+        if not image_file_path.resolve().is_relative_to(app_images_path_resolved):
+            logger.error(f"Path traversal attempt detected: {filepath} resolved outside {app_images_path_resolved}")
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        return FileResponse(image_file_path)
+
+    except HTTPException as http_exc:
+        raise http_exc
+    except Exception as e:
+        logger.error(f"Error serving app image {filepath}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")

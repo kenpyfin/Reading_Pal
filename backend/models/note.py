@@ -23,6 +23,7 @@ class NoteBase(BaseModel):
     source_text: Optional[str] = None # Add field to store the source text from book
     scroll_percentage: Optional[float] = None 
     global_character_offset: Optional[int] = None # ADD THIS LINE
+    page_number: Optional[int] = None # ADD THIS LINE for page-specific notes
 
 class NoteCreate(NoteBase):
     # created_at and updated_at will be set by the backend
@@ -34,6 +35,7 @@ class NoteUpdate(BaseModel):
     source_text: Optional[str] = None 
     scroll_percentage: Optional[float] = None 
     global_character_offset: Optional[int] = None # ADD THIS LINE
+    page_number: Optional[int] = None # ADD THIS LINE
 
 class Note(NoteBase):
     # Use Annotated with BeforeValidator to handle ObjectId parsing from various inputs (like strings)
@@ -60,6 +62,7 @@ class Note(NoteBase):
                 "source_text": "This is the text that was selected in the book.",
                 "scroll_percentage": 0.15,
                 "global_character_offset": 1234, # ADD THIS LINE
+                "page_number": 5, # ADD THIS LINE
                 "created_at": "2023-10-27T10:00:00.000Z",
                 "updated_at": "2023-10-27T10:00:00.000Z"
             }

@@ -1,14 +1,21 @@
 import os
 import logging
+import re
 from motor.motor_asyncio import AsyncIOMotorClient
 from dotenv import load_dotenv
 from bson import ObjectId # Ensure ObjectId is imported
 from bson.errors import InvalidId # Import InvalidId for specific error handling
-from typing import Optional, List, Dict, Any # Import types
+from typing import Optional, List, Dict, Any, TYPE_CHECKING # Import types, Import TYPE_CHECKING
 from datetime import datetime # Import datetime
+from pymongo.errors import DuplicateKeyError
 
 # Import UserCreate for type hinting
-from backend.models.user import UserCreate 
+from backend.models.user import UserCreate
+
+if TYPE_CHECKING:
+    from backend.models.reading_guide import ReadingGuidePageInDB, ReadingGuideInDB
+
+from backend.models.reading_guide import LEGACY_GUIDE_ID
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -25,9 +32,10 @@ async def connect_to_mongo():
         try:
             client = AsyncIOMotorClient(MONGO_URI)
             db = client[DATABASE_NAME]
-            # The ismaster command is cheap and does not require auth.
-            await client.admin.command('ismaster')
+            # Use ping for broad MongoDB compatibility.
+            await client.admin.command('ping')
             logger.info("MongoDB connection successful")
+            await ensure_reading_guide_indexes()
         except Exception as e:
             logger.error(f"MongoDB connection failed: {e}")
             # Depending on requirements, you might want to raise the exception
@@ -96,20 +104,65 @@ async def get_book(book_id: str, user_id: Optional[str] = None):
         logger.error(f"Error fetching book {book_id} with user_id {user_id}: {e}", exc_info=True)
         return None
 
-async def get_books(filter: Optional[dict] = None, projection: Optional[dict] = None):
-    """Retrieves all books with optional filter and projection."""
+async def get_books(filter: Optional[dict] = None, projection: Optional[dict] = None, skip: int = 0, limit: int = 100):
+    """Retrieves books with optional filter, projection, and pagination."""
     database = get_database()
     if database is None:
         logger.error("Database not initialized for get_books.")
         return [] # Return empty list on error
     try:
         # Use the provided filter, or an empty dictionary if no filter is provided
-        books_cursor = database.books.find(filter or {}, projection)
-        books_list = await books_cursor.to_list(length=1000) # Adjust length as needed
+        cursor = database.books.find(filter or {}, projection)
+        if skip > 0:
+            cursor = cursor.skip(skip)
+        if limit > 0:
+            cursor = cursor.limit(limit)
+        
+        books_list = await cursor.to_list(length=limit if limit > 0 else 1000)
         return books_list # Returns list of dicts
     except Exception as e:
         logger.error(f"Error fetching all books: {e}", exc_info=True)
         return []
+
+async def count_books(filter: Optional[dict] = None) -> int:
+    """Returns the number of books matching the optional filter."""
+    database = get_database()
+    if database is None:
+        logger.error("Database not initialized for count_books.")
+        return 0
+    try:
+        return await database.books.count_documents(filter or {})
+    except Exception as e:
+        logger.error(f"Error counting books: {e}", exc_info=True)
+        return 0
+
+async def find_active_book_by_user_and_sanitized_title(
+    user_id: str, sanitized_title: str
+) -> Optional[Dict[str, Any]]:
+    """Returns a book owned by user with matching sanitized_title and active status."""
+    database = get_database()
+    if database is None:
+        logger.error(
+            "Database not initialized for find_active_book_by_user_and_sanitized_title."
+        )
+        return None
+    if not user_id or not sanitized_title:
+        return None
+    try:
+        return await database.books.find_one(
+            {
+                "user_id": user_id,
+                "sanitized_title": sanitized_title,
+                "status": {"$in": ["pending", "processing", "completed"]},
+            }
+        )
+    except Exception as e:
+        logger.error(
+            f"Error finding book for user {user_id} sanitized_title {sanitized_title}: {e}",
+            exc_info=True,
+        )
+        return None
+
 
 async def get_book_by_job_id(job_id: str):
     """Finds a book document by its processing job_id."""
@@ -157,6 +210,34 @@ async def update_book(book_id: str, user_id: str, update_data: dict) -> bool:
         return True 
     except Exception as e:
         logger.error(f"Error updating book {book_id} for user {user_id}: {e}", exc_info=True)
+        return False
+
+
+async def update_book_by_system(book_id: str, update_data: dict) -> bool:
+    """Updates a book document by its _id string, without a user check. For system processes."""
+    database = get_database()
+    if database is None:
+        logger.error(f"Database not initialized for system update on book {book_id}.")
+        return False
+    try:
+        obj_id = ObjectId(book_id)
+        update_data["updated_at"] = datetime.utcnow()
+
+        result = await database.books.update_one(
+            {"_id": obj_id},
+            {"$set": update_data}
+        )
+        if result.matched_count > 0:
+            logger.info(f"System updated book {book_id}. Matched: {result.matched_count}, Modified: {result.modified_count}")
+            return True
+        else:
+            logger.warning(f"No book found with ID {book_id} for system update.")
+            return False
+    except InvalidId:
+        logger.warning(f"Invalid book ID format for system update: {book_id}")
+        return False
+    except Exception as e:
+        logger.error(f"Error during system update for book {book_id}: {e}", exc_info=True)
         return False
 
 
@@ -213,6 +294,67 @@ async def get_user_by_id(user_id: str) -> Optional[Dict[str, Any]]:
         logger.error(f"Error fetching user by ID {user_id}: {e}", exc_info=True)
         return None
 
+async def get_user_prompt_overrides(user_id: str) -> Dict[str, Optional[str]]:
+    """Per-user reading-guide prompt overrides. Missing fields mean the built-in default."""
+    user_doc = await get_user_by_id(user_id)
+    if not user_doc:
+        return {"generation_prompt": None, "format_prompt": None}
+    generation = user_doc.get("guide_generation_prompt")
+    formatting = user_doc.get("guide_format_prompt")
+    return {
+        "generation_prompt": str(generation).strip() if isinstance(generation, str) and generation.strip() else None,
+        "format_prompt": str(formatting).strip() if isinstance(formatting, str) and formatting.strip() else None,
+    }
+
+
+async def save_user_prompt_overrides(
+    user_id: str,
+    generation_prompt: Optional[str],
+    format_prompt: Optional[str],
+) -> bool:
+    """Persist prompt overrides. None unsets the field so the built-in default is used."""
+    database = get_database()
+    if database is None or not ObjectId.is_valid(user_id):
+        return False
+    set_fields: Dict[str, Any] = {"updated_at": datetime.utcnow()}
+    unset_fields: Dict[str, str] = {}
+    if generation_prompt:
+        set_fields["guide_generation_prompt"] = generation_prompt
+    else:
+        unset_fields["guide_generation_prompt"] = ""
+    if format_prompt:
+        set_fields["guide_format_prompt"] = format_prompt
+    else:
+        unset_fields["guide_format_prompt"] = ""
+    update: Dict[str, Any] = {"$set": set_fields}
+    if unset_fields:
+        update["$unset"] = unset_fields
+    try:
+        result = await database.users.update_one({"_id": ObjectId(user_id)}, update)
+        return result.matched_count == 1
+    except Exception as e:
+        logger.error(f"Error saving prompt overrides for user {user_id}: {e}", exc_info=True)
+        return False
+
+
+async def get_user_by_email(email: str) -> Optional[Dict[str, Any]]:
+    """Retrieves a user by email, case-insensitive. Does not create or modify the user."""
+    database = get_database()
+    if database is None:
+        logger.error("Database not initialized for get_user_by_email.")
+        return None
+    normalized = str(email or "").strip().lower()
+    if not normalized or "@" not in normalized:
+        return None
+    try:
+        return await database.users.find_one(
+            {"email": {"$regex": f"^{re.escape(normalized)}$", "$options": "i"}}
+        )
+    except Exception as e:
+        logger.error(f"Error fetching user by email: {e}", exc_info=True)
+        return None
+
+
 async def get_user_by_google_id(google_id: str) -> Optional[Dict[str, Any]]:
     """Retrieves a user by their Google ID."""
     database = get_database()
@@ -238,80 +380,225 @@ async def create_or_update_user_from_google(user_data: 'UserCreate') -> Optional
         return None
 
     now = datetime.utcnow()
-    
-    # 1. Try to find user by google_id
-    user_doc = await database.users.find_one({"google_id": user_data.google_id})
+    google_id = str(user_data.google_id).strip()
+    email = str(user_data.email).strip().lower()
+    picture = str(user_data.picture) if user_data.picture else None
 
-    if user_doc:
-        # User found by google_id, update their information
-        update_fields = {
-            "email": user_data.email, # Google is source of truth for email if linked
-            "full_name": user_data.full_name,
-            "picture": str(user_data.picture) if user_data.picture else None, # Convert HttpUrl to string
-            "updated_at": now
-        }
-        update_fields = {k: v for k, v in update_fields.items() if v is not None} # Remove fields that are None in user_data
-
-        # Ensure 'updated_at' is always part of the update if other fields are present
-        if update_fields: # If there's anything to update (besides potentially just updated_at)
-            await database.users.update_one(
-                {"_id": user_doc["_id"]},
-                {"$set": update_fields}
-            )
-            logger.info(f"Updated user (found by google_id {user_data.google_id}): {user_data.email}. Modified count: {await database.users.count_documents({'_id': user_doc['_id']})}") # Log modified count or similar
-        else: # Only updated_at needs to be set (e.g. if all other fields from Google were None or matched)
-             await database.users.update_one(
-                {"_id": user_doc["_id"]},
-                {"$set": {"updated_at": now}}
-            )
-        logger.info(f"User {user_data.email} (Google ID: {user_data.google_id}) processed. DB ID: {user_doc['_id']}.")
-        return str(user_doc["_id"])
-    else:
-        # No user found by google_id. Try to find by email.
-        logger.info(f"User not found by google_id {user_data.google_id}. Checking by email: {user_data.email}")
-        user_doc_by_email = await database.users.find_one({"email": user_data.email})
-
-        if user_doc_by_email:
-            # User found by email. Link Google ID and update info.
-            logger.info(f"User found by email {user_data.email}. Linking google_id {user_data.google_id}.")
+    try:
+        # 1) Prefer exact google_id match.
+        user_doc = await database.users.find_one({"google_id": google_id})
+        if user_doc:
             update_fields = {
-                "google_id": user_data.google_id, # Add/update google_id
-                "full_name": user_data.full_name, # Update name from Google
-                "picture": str(user_data.picture) if user_data.picture else None,     # Convert HttpUrl to string
-                "updated_at": now
+                "email": email,
+                "full_name": user_data.full_name,
+                "picture": picture,
+                "updated_at": now,
             }
-            # Ensure email isn't accidentally set to None if user_data.email was None (UserCreate model should enforce email presence)
-            if user_data.email:
-                 update_fields["email"] = user_data.email # This should be redundant if UserCreate enforces email
-            
             update_fields = {k: v for k, v in update_fields.items() if v is not None}
+            await database.users.update_one({"_id": user_doc["_id"]}, {"$set": update_fields})
+            logger.info(
+                f"Updated user (google_id match) {email}. DB ID: {user_doc['_id']}."
+            )
+            return str(user_doc["_id"])
 
+        # 2) Fallback to email match (case-insensitive), then link google_id.
+        logger.info(f"User not found by google_id {google_id}. Checking by email: {email}")
+        user_doc_by_email = await database.users.find_one(
+            {"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}}
+        )
+        if user_doc_by_email:
+            update_fields = {
+                "google_id": google_id,
+                "email": email,
+                "full_name": user_data.full_name,
+                "picture": picture,
+                "updated_at": now,
+            }
+            update_fields = {k: v for k, v in update_fields.items() if v is not None}
             await database.users.update_one(
                 {"_id": user_doc_by_email["_id"]},
-                {"$set": update_fields}
+                {"$set": update_fields},
             )
-            logger.info(f"Linked google_id to existing user (found by email {user_data.email}). DB ID: {user_doc_by_email['_id']}.")
+            logger.info(
+                f"Linked google_id to existing email user {email}. DB ID: {user_doc_by_email['_id']}."
+            )
             return str(user_doc_by_email["_id"])
-        else:
-            # No user found by google_id or email. Create a new user.
-            logger.info(f"No user found by email {user_data.email} either. Creating new user.")
-            new_user_doc_data = {
-                "google_id": user_data.google_id,
-                "email": user_data.email,
-                "full_name": user_data.full_name,
-                "picture": str(user_data.picture) if user_data.picture else None, # Convert HttpUrl to string
-                "is_active": True,
-                "is_superuser": False,
-                "created_at": now,
-                "updated_at": now
+
+        # 3) Create new user.
+        logger.info(f"No user found by google_id/email for {email}. Creating new user.")
+        new_user_doc_data = {
+            "google_id": google_id,
+            "email": email,
+            "full_name": user_data.full_name,
+            "picture": picture,
+            "is_active": True,
+            "is_superuser": False,
+            "created_at": now,
+            "updated_at": now,
+        }
+        result = await database.users.insert_one(new_user_doc_data)
+        logger.info(f"Created new user {email} (Google ID: {google_id}) with DB ID: {result.inserted_id}")
+        return str(result.inserted_id)
+    except DuplicateKeyError:
+        # Handle login race / pre-existing unique index conflicts by refetching and updating.
+        logger.warning(
+            f"DuplicateKeyError while processing Google user {email} ({google_id}); retrying lookup.",
+            exc_info=True,
+        )
+        existing_doc = await database.users.find_one(
+            {
+                "$or": [
+                    {"google_id": google_id},
+                    {"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}},
+                ]
             }
-            try:
-                result = await database.users.insert_one(new_user_doc_data)
-                logger.info(f"Created new user {user_data.email} (Google ID: {user_data.google_id}) with DB ID: {result.inserted_id}")
-                return str(result.inserted_id)
-            except Exception as e: # This could still be a different DB error (e.g. connection, other constraint)
-                logger.error(f"Error creating new user {user_data.email} even after checks: {e}", exc_info=True)
-                return None
+        )
+        if not existing_doc:
+            return None
+        await database.users.update_one(
+            {"_id": existing_doc["_id"]},
+            {
+                "$set": {
+                    "google_id": google_id,
+                    "email": email,
+                    "full_name": user_data.full_name,
+                    "picture": picture,
+                    "updated_at": now,
+                }
+            },
+        )
+        return str(existing_doc["_id"])
+    except Exception as e:
+        logger.error(
+            f"Error creating/updating Google user {email} ({google_id}): {e}",
+            exc_info=True,
+        )
+        return None
+
+async def get_all_users() -> List[Dict[str, Any]]:
+    """Retrieves all users from the database."""
+    database = get_database()
+    if database is None:
+        logger.error("Database not initialized for get_all_users.")
+        return []
+    try:
+        users_cursor = database.users.find({})
+        users_list = await users_cursor.to_list(length=None) # Get all users
+        logger.info(f"Retrieved {len(users_list)} users from the database.")
+        return users_list
+    except Exception as e:
+        logger.error(f"Error fetching all users: {e}", exc_info=True)
+        return []
+
+async def delete_user_by_google_id(google_id_to_delete: str) -> bool:
+    """Deletes a user from the database by their google_id string."""
+    database = get_database()
+    if database is None:
+        logger.error("Database not initialized for delete_user_by_google_id.")
+        return False
+    if not google_id_to_delete: # Ensure google_id is not empty or None
+        logger.warning("Attempted to delete user with empty or null google_id.")
+        return False
+    try:
+        # google_id is a string, no ObjectId conversion needed.
+        # Optional: Check if the user being deleted is the admin user from .env
+        # This might be complex if admin is not stored as a regular user.
+        # For now, we allow deletion of any user by google_id if the requester is admin.
+
+        result = await database.users.delete_one({"google_id": google_id_to_delete})
+        if result.deleted_count > 0:
+            logger.info(f"User with google_id {google_id_to_delete} deleted successfully.")
+            return True
+        else:
+            logger.warning(f"User with google_id {google_id_to_delete} not found for deletion.")
+            return False
+    except Exception as e:
+        logger.error(f"Error deleting user with google_id {google_id_to_delete}: {e}", exc_info=True)
+        return False
+
+async def update_user_active_status(google_id: str, is_active: bool) -> bool:
+    """Updates the is_active status of a user by their google_id."""
+    database = get_database()
+    if database is None:
+        logger.error(f"Database not initialized for update_user_active_status (google_id: {google_id}).")
+        return False
+    if not google_id:
+        logger.warning("Attempted to update active status for user with empty or null google_id.")
+        return False
+    try:
+        result = await database.users.update_one(
+            {"google_id": google_id},
+            {"$set": {"is_active": is_active, "updated_at": datetime.utcnow()}}
+        )
+        if result.matched_count == 0:
+            logger.warning(f"User with google_id {google_id} not found for updating active status.")
+            return False
+        logger.info(f"User with google_id {google_id} active status set to {is_active}. Matched: {result.matched_count}, Modified: {result.modified_count}")
+        # Return True if a document was matched (even if is_active status didn't change, modified_count could be 0 but matched_count would be 1)
+        return True 
+    except Exception as e:
+        logger.error(f"Error updating active status for user with google_id {google_id}: {e}", exc_info=True)
+        return False
+
+async def get_total_books_count() -> int:
+    """Counts all documents in the books collection."""
+    database = get_database()
+    if database is None:
+        logger.error("Database not initialized for get_total_books_count.")
+        return 0
+    try:
+        count = await database.books.count_documents({})
+        logger.info(f"Total books count: {count}")
+        return count
+    except Exception as e:
+        logger.error(f"Error counting books: {e}", exc_info=True)
+        return 0
+
+async def get_total_notes_count() -> int:
+    """Counts all documents in the notes collection."""
+    database = get_database()
+    if database is None:
+        logger.error("Database not initialized for get_total_notes_count.")
+        return 0
+    try:
+        count = await database.notes.count_documents({})
+        logger.info(f"Total notes count: {count}")
+        return count
+    except Exception as e:
+        logger.error(f"Error counting notes: {e}", exc_info=True)
+        return 0
+
+async def get_book_count_for_user(user_id: str) -> int:
+    """Counts books for a specific user_id."""
+    database = get_database()
+    if database is None:
+        logger.error(f"Database not initialized for get_book_count_for_user (user_id: {user_id}).")
+        return 0
+    try:
+        # Ensure user_id is a string, as it's stored that way in the books collection.
+        # The user_id in the books collection corresponds to the string representation 
+        # of the User's _id (ObjectId).
+        count = await database.books.count_documents({"user_id": str(user_id)})
+        logger.debug(f"Book count for user {user_id}: {count}")
+        return count
+    except Exception as e:
+        logger.error(f"Error counting books for user {user_id}: {e}", exc_info=True)
+        return 0
+
+async def get_note_count_for_user(user_id: str) -> int:
+    """Counts notes for a specific user_id."""
+    database = get_database()
+    if database is None:
+        logger.error(f"Database not initialized for get_note_count_for_user (user_id: {user_id}).")
+        return 0
+    try:
+        # Ensure user_id is a string. Notes store user_id as string.
+        count = await database.notes.count_documents({"user_id": str(user_id)})
+        logger.debug(f"Note count for user {user_id}: {count}")
+        return count
+    except Exception as e:
+        logger.error(f"Error counting notes for user {user_id}: {e}", exc_info=True)
+        return 0
 
 # --- Keep Note Database Operations ---
 # ... (rest of the note functions remain unchanged)
@@ -323,6 +610,11 @@ async def save_note(note_data: dict):
         return None
     # The input note_data dict should contain fields like 'book_id', 'content', etc.
     # MongoDB will automatically add the _id field as an ObjectId upon insertion.
+    # Ensure note timestamps exist so offline/online reconciliation can compare records reliably.
+    now = datetime.utcnow()
+    note_data.setdefault("created_at", now)
+    note_data.setdefault("updated_at", now)
+
     try:
         result = await database.notes.insert_one(note_data)
         # Return the inserted document's _id (which is an ObjectId)
@@ -527,3 +819,716 @@ async def update_bookmark_name(bookmark_id: str, name: str) -> Optional[Dict[str
     except Exception as e:
         logger.error(f"Error updating bookmark name for {bookmark_id}: {e}", exc_info=True)
         return None
+
+# --- Reading Guide Page Database Operations ---
+def get_reading_guides_collection():
+    database = get_database()
+    if database is None:
+        logger.error("Database not initialized for get_reading_guides_collection.")
+        # This situation should ideally be handled by connect_to_mongo ensuring db is set,
+        # or by raising an exception if db is None when get_database() is called.
+        # For robustness, we can check here too.
+        raise ConnectionError("Database not initialized for reading guide operations.")
+    return database["reading_guide_pages"]
+
+async def upsert_reading_guide_page(
+    book_id: str, user_id: str, page_number: int, content: str,
+    sections: Optional[List[Dict]] = None, document_structure_map: Optional[Dict] = None
+) -> Optional['ReadingGuidePageInDB']: # Forward reference for type hint
+    collection = get_reading_guides_collection()
+    now = datetime.utcnow()
+    
+    try:
+        book_obj_id = ObjectId(book_id)
+    except Exception:
+        logger.error(f"Invalid book_id format for ObjectId in upsert_reading_guide_page: {book_id}")
+        return None
+
+    query = {"book_id": book_obj_id, "user_id": user_id, "page_number": page_number}
+    
+    # Build update document with backward compatibility
+    update_set = {"content": content, "updated_at": now}
+    
+    # Add structured guide fields if provided
+    if sections is not None:
+        # Convert Pydantic models to dicts if needed
+        sections_dicts = []
+        for section in sections:
+            if hasattr(section, 'model_dump'):
+                sections_dicts.append(section.model_dump())
+            elif isinstance(section, dict):
+                sections_dicts.append(section)
+            else:
+                # Try to convert to dict
+                sections_dicts.append({
+                    "section_title": getattr(section, "section_title", ""),
+                    "rewritten_content": getattr(section, "rewritten_content", ""),
+                    "key_takeaway": getattr(section, "key_takeaway", None),
+                    "original_start_offset": getattr(section, "original_start_offset", 0),
+                    "original_end_offset": getattr(section, "original_end_offset", 0),
+                    "original_text_preview": getattr(section, "original_text_preview", None),
+                    "primary_link": getattr(section, "primary_link", None),
+                })
+        update_set["sections"] = sections_dicts
+    
+    if document_structure_map is not None:
+        update_set["document_structure_map"] = document_structure_map
+    
+    update = {
+        "$set": update_set,
+        "$setOnInsert": {"book_id": book_obj_id, "user_id": user_id, "page_number": page_number, "created_at": now}
+    }
+    
+    try:
+        result_doc = await collection.find_one_and_update(
+            query,
+            update,
+            upsert=True,
+            return_document=True # Motor typically returns the updated document with True
+        )
+        if result_doc:
+            # Import locally to avoid circular dependency if ReadingGuidePageInDB imports PyObjectId from this module
+            from backend.models.reading_guide import ReadingGuidePageInDB
+            return ReadingGuidePageInDB.model_validate(result_doc)
+        else:
+            logger.error(f"Upsert for reading guide page for book {book_id}, page {page_number} did not return a document.")
+            return None
+    except Exception as e:
+        logger.error(f"Error in upsert_reading_guide_page for book {book_id}, page {page_number}: {e}", exc_info=True)
+        return None
+
+
+async def get_reading_guide_page(
+    book_id: str, user_id: str, page_number: int
+) -> Optional['ReadingGuidePageInDB']: # Forward reference
+    collection = get_reading_guides_collection()
+    try:
+        book_obj_id = ObjectId(book_id)
+    except Exception:
+        logger.error(f"Invalid book_id format for ObjectId in get_reading_guide_page: {book_id}")
+        return None
+           
+    query = {"book_id": book_obj_id, "user_id": user_id, "page_number": page_number}
+    try:
+        document = await collection.find_one(query)
+        if document:
+            from backend.models.reading_guide import ReadingGuidePageInDB
+            return ReadingGuidePageInDB.model_validate(document)
+        return None
+    except Exception as e:
+        logger.error(f"Error in get_reading_guide_page for book {book_id}, page {page_number}: {e}", exc_info=True)
+        return None
+
+async def get_reading_guides_for_book( 
+    book_id: str, user_id: str
+) -> List['ReadingGuidePageInDB']: # Forward reference
+    collection = get_reading_guides_collection()
+    guides = []
+    try:
+        book_obj_id = ObjectId(book_id)
+    except Exception:
+        logger.error(f"Invalid book_id format for ObjectId in get_reading_guides_for_book: {book_id}")
+        return guides
+
+    query = {"book_id": book_obj_id, "user_id": user_id}
+    try:
+        from backend.models.reading_guide import ReadingGuidePageInDB
+        cursor = collection.find(query).sort("page_number", 1) 
+        async for document in cursor:
+            guides.append(ReadingGuidePageInDB.model_validate(document))
+        return guides
+    except Exception as e:
+        logger.error(f"Error in get_reading_guides_for_book for book {book_id}: {e}", exc_info=True)
+        return guides
+
+
+# --- Reading Guide (Whole-Book Roadmap) Database Operations ---
+
+
+def get_reading_guides_roadmap_collection():
+    """Collection for whole-book reading roadmaps (one doc per book/user/guide)."""
+    database = get_database()
+    if database is None:
+        logger.error("Database not initialized for reading_guides.")
+        raise ConnectionError("Database not initialized for reading guide roadmap operations.")
+    return database["reading_guides"]
+
+
+def get_reading_guide_progress_collection():
+    """Collection for per-user progress on roadmap items."""
+    database = get_database()
+    if database is None:
+        logger.error("Database not initialized for reading_guide_progress.")
+        raise ConnectionError("Database not initialized for reading guide progress operations.")
+    return database["reading_guide_progress"]
+
+
+def get_reading_guide_card_chats_collection():
+    """Collection for per-card LLM chat threads."""
+    database = get_database()
+    if database is None:
+        logger.error("Database not initialized for reading_guide_card_chats.")
+        raise ConnectionError("Database not initialized for reading guide card chat operations.")
+    return database["reading_guide_card_chats"]
+
+
+async def ensure_reading_guide_indexes():
+    """Create indexes for multi-guide and card chat collections (idempotent)."""
+    try:
+        guides = get_reading_guides_roadmap_collection()
+        await guides.create_index(
+            [("book_id", 1), ("user_id", 1), ("guide_id", 1)],
+            unique=True,
+            name="book_user_guide_unique",
+        )
+        progress = get_reading_guide_progress_collection()
+        await progress.create_index(
+            [("book_id", 1), ("user_id", 1), ("guide_id", 1)],
+            unique=True,
+            name="book_user_guide_progress_unique",
+        )
+        chats = get_reading_guide_card_chats_collection()
+        await chats.create_index(
+            [("book_id", 1), ("user_id", 1), ("guide_id", 1), ("card_id", 1)],
+            unique=True,
+            name="book_user_guide_card_chat_unique",
+        )
+    except Exception as e:
+        logger.warning(f"Reading guide index setup skipped or partial: {e}")
+
+
+def _count_roadmap_items(items: List[Dict]) -> int:
+    total = 0
+    for item in items or []:
+        total += 1
+        total += _count_roadmap_items(item.get("children") or [])
+    return total
+
+
+def _normalize_guide_document(doc: Dict[str, Any]) -> Dict[str, Any]:
+    """Apply defaults for legacy docs missing guide_id/name."""
+    if not doc:
+        return doc
+    normalized = dict(doc)
+    if not normalized.get("guide_id"):
+        normalized["guide_id"] = LEGACY_GUIDE_ID
+    if not normalized.get("name"):
+        normalized["name"] = "Reading Roadmap"
+    if "custom_requirements" not in normalized:
+        normalized["custom_requirements"] = None
+    if "prompt_depth" not in normalized:
+        normalized["prompt_depth"] = None
+    if "prompt_emphasis" not in normalized:
+        normalized["prompt_emphasis"] = None
+    return normalized
+
+
+async def _migrate_legacy_reading_guide_doc(
+    collection, book_obj_id: ObjectId, user_id: str, doc: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Rewrite legacy single-guide docs to include guide_id."""
+    if doc.get("guide_id"):
+        return _normalize_guide_document(doc)
+    guide_id = LEGACY_GUIDE_ID
+    now = datetime.utcnow()
+    migrated = {
+        **doc,
+        "guide_id": guide_id,
+        "name": doc.get("name") or "Reading Roadmap",
+        "custom_requirements": doc.get("custom_requirements"),
+        "updated_at": now,
+    }
+    await collection.delete_one({"_id": doc["_id"]})
+    await collection.insert_one(migrated)
+    return _normalize_guide_document(migrated)
+
+
+def _book_obj_id_or_none(book_id: str) -> Optional[ObjectId]:
+    try:
+        return ObjectId(book_id)
+    except Exception:
+        logger.error(f"Invalid book_id format for ObjectId: {book_id}")
+        return None
+
+
+async def count_reading_guides(book_id: str, user_id: str) -> int:
+    collection = get_reading_guides_roadmap_collection()
+    book_obj_id = _book_obj_id_or_none(book_id)
+    if not book_obj_id:
+        return 0
+    try:
+        await _migrate_legacy_reading_guide_on_list(collection, book_obj_id, user_id)
+        return await collection.count_documents({"book_id": book_obj_id, "user_id": user_id})
+    except Exception as e:
+        logger.error(f"Error in count_reading_guides for book {book_id}: {e}", exc_info=True)
+        return 0
+
+
+async def _migrate_legacy_reading_guide_on_list(collection, book_obj_id: ObjectId, user_id: str) -> None:
+    """If a legacy doc exists (no guide_id), migrate it before list/count."""
+    legacy = await collection.find_one(
+        {"book_id": book_obj_id, "user_id": user_id, "guide_id": {"$exists": False}}
+    )
+    if legacy:
+        await _migrate_legacy_reading_guide_doc(collection, book_obj_id, user_id, legacy)
+    legacy_progress = get_reading_guide_progress_collection()
+    prog = await legacy_progress.find_one(
+        {"book_id": book_obj_id, "user_id": user_id, "guide_id": {"$exists": False}}
+    )
+    if prog:
+        now = datetime.utcnow()
+        await legacy_progress.delete_one({"_id": prog["_id"]})
+        await legacy_progress.insert_one({
+            **prog,
+            "guide_id": LEGACY_GUIDE_ID,
+            "updated_at": now,
+        })
+
+
+async def list_reading_guides(book_id: str, user_id: str) -> List[Dict[str, Any]]:
+    """Return guide summaries for a book and user."""
+    from backend.models.reading_guide import ReadingGuideSummary
+
+    collection = get_reading_guides_roadmap_collection()
+    book_obj_id = _book_obj_id_or_none(book_id)
+    if not book_obj_id:
+        return []
+
+    try:
+        await _migrate_legacy_reading_guide_on_list(collection, book_obj_id, user_id)
+        summaries = []
+        cursor = collection.find({"book_id": book_obj_id, "user_id": user_id}).sort("created_at", 1)
+        async for doc in cursor:
+            doc = _normalize_guide_document(doc)
+            items = doc.get("items") or []
+            summary = ReadingGuideSummary(
+                guide_id=doc["guide_id"],
+                name=doc.get("name") or "Reading Roadmap",
+                custom_requirements=doc.get("custom_requirements"),
+                prompt_depth=doc.get("prompt_depth"),
+                prompt_emphasis=doc.get("prompt_emphasis"),
+                created_at=doc.get("created_at") or datetime.utcnow(),
+                updated_at=doc.get("updated_at") or datetime.utcnow(),
+                item_count=_count_roadmap_items(items),
+            )
+            summaries.append(summary.model_dump())
+        return summaries
+    except Exception as e:
+        logger.error(f"Error in list_reading_guides for book {book_id}: {e}", exc_info=True)
+        return []
+
+
+async def get_reading_guide_by_id(
+    book_id: str, user_id: str, guide_id: str
+) -> Optional['ReadingGuideInDB']:
+    collection = get_reading_guides_roadmap_collection()
+    book_obj_id = _book_obj_id_or_none(book_id)
+    if not book_obj_id:
+        return None
+
+    try:
+        await _migrate_legacy_reading_guide_on_list(collection, book_obj_id, user_id)
+        if guide_id == LEGACY_GUIDE_ID:
+            doc = await collection.find_one(
+                {"book_id": book_obj_id, "user_id": user_id, "guide_id": LEGACY_GUIDE_ID}
+            )
+            if not doc:
+                doc = await collection.find_one(
+                    {"book_id": book_obj_id, "user_id": user_id, "guide_id": {"$exists": False}}
+                )
+                if doc:
+                    doc = await _migrate_legacy_reading_guide_doc(collection, book_obj_id, user_id, doc)
+        else:
+            doc = await collection.find_one(
+                {"book_id": book_obj_id, "user_id": user_id, "guide_id": guide_id}
+            )
+        if doc:
+            from backend.models.reading_guide import ReadingGuideInDB
+            return ReadingGuideInDB.model_validate(_normalize_guide_document(doc))
+        return None
+    except Exception as e:
+        logger.error(
+            f"Error in get_reading_guide_by_id for book {book_id} guide {guide_id}: {e}",
+            exc_info=True,
+        )
+        return None
+
+
+async def create_reading_guide(
+    book_id: str,
+    user_id: str,
+    guide_id: str,
+    name: str,
+    items: List[Dict],
+    custom_requirements: Optional[str] = None,
+    prompt_depth: Optional[str] = None,
+    prompt_emphasis: Optional[str] = None,
+    enriched: bool = False,
+) -> Optional['ReadingGuideInDB']:
+    collection = get_reading_guides_roadmap_collection()
+    book_obj_id = _book_obj_id_or_none(book_id)
+    if not book_obj_id:
+        return None
+
+    now = datetime.utcnow()
+    doc = {
+        "book_id": book_obj_id,
+        "user_id": user_id,
+        "guide_id": guide_id,
+        "name": name,
+        "custom_requirements": custom_requirements,
+        "prompt_depth": prompt_depth,
+        "prompt_emphasis": prompt_emphasis,
+        "items": items,
+        "enriched": enriched,
+        "created_at": now,
+        "updated_at": now,
+    }
+    try:
+        await collection.insert_one(doc)
+        from backend.models.reading_guide import ReadingGuideInDB
+        return ReadingGuideInDB.model_validate(_normalize_guide_document(doc))
+    except DuplicateKeyError:
+        logger.error(f"Duplicate reading guide {guide_id} for book {book_id}")
+        return None
+    except Exception as e:
+        logger.error(f"Error in create_reading_guide for book {book_id}: {e}", exc_info=True)
+        return None
+
+
+async def upsert_reading_guide(
+    book_id: str,
+    user_id: str,
+    items: List[Dict],
+    guide_id: str = LEGACY_GUIDE_ID,
+) -> Optional['ReadingGuideInDB']:
+    """Update items for an existing guide (does not create a new guide_id)."""
+    collection = get_reading_guides_roadmap_collection()
+    book_obj_id = _book_obj_id_or_none(book_id)
+    if not book_obj_id:
+        return None
+
+    now = datetime.utcnow()
+    query = {"book_id": book_obj_id, "user_id": user_id, "guide_id": guide_id}
+    update = {
+        "$set": {
+            "items": items,
+            "updated_at": now,
+        },
+    }
+    try:
+        result_doc = await collection.find_one_and_update(
+            query, update, return_document=True
+        )
+        if not result_doc and guide_id == LEGACY_GUIDE_ID:
+            legacy = await collection.find_one(
+                {"book_id": book_obj_id, "user_id": user_id, "guide_id": {"$exists": False}}
+            )
+            if legacy:
+                legacy = await _migrate_legacy_reading_guide_doc(collection, book_obj_id, user_id, legacy)
+                result_doc = await collection.find_one_and_update(
+                    {"book_id": book_obj_id, "user_id": user_id, "guide_id": LEGACY_GUIDE_ID},
+                    update,
+                    return_document=True,
+                )
+        if result_doc:
+            from backend.models.reading_guide import ReadingGuideInDB
+            return ReadingGuideInDB.model_validate(_normalize_guide_document(result_doc))
+        return None
+    except Exception as e:
+        logger.error(f"Error in upsert_reading_guide for book {book_id}: {e}", exc_info=True)
+        return None
+
+
+async def update_reading_guide_metadata(
+    book_id: str,
+    user_id: str,
+    guide_id: str,
+    *,
+    items: Optional[List[Dict]] = None,
+    name: Optional[str] = None,
+    enriched: Optional[bool] = None,
+) -> Optional['ReadingGuideInDB']:
+    collection = get_reading_guides_roadmap_collection()
+    book_obj_id = _book_obj_id_or_none(book_id)
+    if not book_obj_id:
+        return None
+
+    set_fields: Dict[str, Any] = {"updated_at": datetime.utcnow()}
+    if items is not None:
+        set_fields["items"] = items
+    if name is not None:
+        set_fields["name"] = name
+    if enriched is not None:
+        set_fields["enriched"] = enriched
+
+    try:
+        result_doc = await collection.find_one_and_update(
+            {"book_id": book_obj_id, "user_id": user_id, "guide_id": guide_id},
+            {"$set": set_fields},
+            return_document=True,
+        )
+        if result_doc:
+            from backend.models.reading_guide import ReadingGuideInDB
+            return ReadingGuideInDB.model_validate(_normalize_guide_document(result_doc))
+        return None
+    except Exception as e:
+        logger.error(f"Error in update_reading_guide_metadata: {e}", exc_info=True)
+        return None
+
+
+async def delete_reading_guide(book_id: str, user_id: str, guide_id: str) -> bool:
+    collection = get_reading_guides_roadmap_collection()
+    book_obj_id = _book_obj_id_or_none(book_id)
+    if not book_obj_id:
+        return False
+
+    try:
+        result = await collection.delete_one(
+            {"book_id": book_obj_id, "user_id": user_id, "guide_id": guide_id}
+        )
+        if result.deleted_count > 0:
+            await delete_reading_guide_progress(book_id, user_id, guide_id)
+            await delete_all_card_chats_for_guide(book_id, user_id, guide_id)
+            return True
+        return False
+    except Exception as e:
+        logger.error(f"Error in delete_reading_guide: {e}", exc_info=True)
+        return False
+
+
+async def get_reading_guide(book_id: str, user_id: str) -> Optional['ReadingGuideInDB']:
+    """Legacy: get default guide."""
+    return await get_reading_guide_by_id(book_id, user_id, LEGACY_GUIDE_ID)
+
+
+async def get_reading_guide_progress(
+    book_id: str, user_id: str, guide_id: str = LEGACY_GUIDE_ID
+) -> List[str]:
+    collection = get_reading_guide_progress_collection()
+    book_obj_id = _book_obj_id_or_none(book_id)
+    if not book_obj_id:
+        return []
+
+    try:
+        doc = await collection.find_one(
+            {"book_id": book_obj_id, "user_id": user_id, "guide_id": guide_id}
+        )
+        if not doc and guide_id == LEGACY_GUIDE_ID:
+            doc = await collection.find_one(
+                {"book_id": book_obj_id, "user_id": user_id, "guide_id": {"$exists": False}}
+            )
+            if doc:
+                now = datetime.utcnow()
+                await collection.delete_one({"_id": doc["_id"]})
+                doc = {**doc, "guide_id": LEGACY_GUIDE_ID, "updated_at": now}
+                await collection.insert_one(doc)
+        if doc and "completed_ids" in doc:
+            return list(doc["completed_ids"]) if doc["completed_ids"] else []
+        return []
+    except Exception as e:
+        logger.error(f"Error in get_reading_guide_progress: {e}", exc_info=True)
+        return []
+
+
+async def delete_reading_guide_progress(book_id: str, user_id: str, guide_id: str) -> None:
+    collection = get_reading_guide_progress_collection()
+    book_obj_id = _book_obj_id_or_none(book_id)
+    if not book_obj_id:
+        return
+    try:
+        await collection.delete_one(
+            {"book_id": book_obj_id, "user_id": user_id, "guide_id": guide_id}
+        )
+    except Exception as e:
+        logger.error(f"Error in delete_reading_guide_progress: {e}", exc_info=True)
+
+
+async def update_reading_guide_progress(
+    book_id: str,
+    user_id: str,
+    item_id: str,
+    completed: bool,
+    guide_id: str = LEGACY_GUIDE_ID,
+) -> List[str]:
+    collection = get_reading_guide_progress_collection()
+    now = datetime.utcnow()
+    book_obj_id = _book_obj_id_or_none(book_id)
+    if not book_obj_id:
+        return []
+
+    query = {"book_id": book_obj_id, "user_id": user_id, "guide_id": guide_id}
+    if completed:
+        update = {
+            "$addToSet": {"completed_ids": item_id},
+            "$set": {"updated_at": now},
+            "$setOnInsert": {
+                "book_id": book_obj_id,
+                "user_id": user_id,
+                "guide_id": guide_id,
+                "created_at": now,
+            },
+        }
+    else:
+        update = {
+            "$pull": {"completed_ids": item_id},
+            "$set": {"updated_at": now},
+            "$setOnInsert": {
+                "book_id": book_obj_id,
+                "user_id": user_id,
+                "guide_id": guide_id,
+                "created_at": now,
+            },
+        }
+
+    try:
+        result_doc = await collection.find_one_and_update(
+            query, update, upsert=True, return_document=True
+        )
+        if result_doc and "completed_ids" in result_doc:
+            return list(result_doc["completed_ids"]) if result_doc["completed_ids"] else []
+        return []
+    except Exception as e:
+        logger.error(f"Error in update_reading_guide_progress: {e}", exc_info=True)
+        return []
+
+
+async def update_reading_guide_items(
+    book_id: str,
+    user_id: str,
+    items: List[Dict],
+    enriched: bool,
+    guide_id: str = LEGACY_GUIDE_ID,
+) -> bool:
+    collection = get_reading_guides_roadmap_collection()
+    book_obj_id = _book_obj_id_or_none(book_id)
+    if not book_obj_id:
+        return False
+
+    query = {"book_id": book_obj_id, "user_id": user_id, "guide_id": guide_id}
+    update = {
+        "$set": {
+            "items": items,
+            "enriched": enriched,
+            "updated_at": datetime.utcnow(),
+        }
+    }
+
+    try:
+        result = await collection.update_one(query, update)
+        if result.matched_count > 0:
+            return True
+        logger.warning(f"No reading guide found to update for book {book_id} guide {guide_id}")
+        return False
+    except Exception as e:
+        logger.error(f"Error in update_reading_guide_items: {e}", exc_info=True)
+        return False
+
+
+# --- Card chat persistence ---
+
+def _serialize_chat_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    out = []
+    for msg in messages or []:
+        out.append({
+            "role": msg.get("role"),
+            "content": msg.get("content"),
+            "created_at": msg.get("created_at") or datetime.utcnow(),
+        })
+    return out
+
+
+async def get_card_chat_messages(
+    book_id: str, user_id: str, guide_id: str, card_id: str
+) -> List[Dict[str, Any]]:
+    collection = get_reading_guide_card_chats_collection()
+    book_obj_id = _book_obj_id_or_none(book_id)
+    if not book_obj_id:
+        return []
+
+    try:
+        doc = await collection.find_one(
+            {
+                "book_id": book_obj_id,
+                "user_id": user_id,
+                "guide_id": guide_id,
+                "card_id": card_id,
+            }
+        )
+        if doc and doc.get("messages"):
+            return _serialize_chat_messages(doc["messages"])
+        return []
+    except Exception as e:
+        logger.error(f"Error in get_card_chat_messages: {e}", exc_info=True)
+        return []
+
+
+async def save_card_chat_messages(
+    book_id: str,
+    user_id: str,
+    guide_id: str,
+    card_id: str,
+    messages: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    collection = get_reading_guide_card_chats_collection()
+    book_obj_id = _book_obj_id_or_none(book_id)
+    if not book_obj_id:
+        return []
+
+    now = datetime.utcnow()
+    serialized = _serialize_chat_messages(messages)
+    query = {
+        "book_id": book_obj_id,
+        "user_id": user_id,
+        "guide_id": guide_id,
+        "card_id": card_id,
+    }
+    update = {
+        "$set": {"messages": serialized, "updated_at": now},
+        "$setOnInsert": {**query, "created_at": now},
+    }
+    try:
+        await collection.update_one(query, update, upsert=True)
+        return serialized
+    except Exception as e:
+        logger.error(f"Error in save_card_chat_messages: {e}", exc_info=True)
+        return []
+
+
+async def clear_card_chat(
+    book_id: str, user_id: str, guide_id: str, card_id: str
+) -> bool:
+    collection = get_reading_guide_card_chats_collection()
+    book_obj_id = _book_obj_id_or_none(book_id)
+    if not book_obj_id:
+        return False
+    try:
+        result = await collection.delete_one(
+            {
+                "book_id": book_obj_id,
+                "user_id": user_id,
+                "guide_id": guide_id,
+                "card_id": card_id,
+            }
+        )
+        return result.deleted_count > 0
+    except Exception as e:
+        logger.error(f"Error in clear_card_chat: {e}", exc_info=True)
+        return False
+
+
+async def delete_all_card_chats_for_guide(
+    book_id: str, user_id: str, guide_id: str
+) -> int:
+    collection = get_reading_guide_card_chats_collection()
+    book_obj_id = _book_obj_id_or_none(book_id)
+    if not book_obj_id:
+        return 0
+    try:
+        result = await collection.delete_many(
+            {"book_id": book_obj_id, "user_id": user_id, "guide_id": guide_id}
+        )
+        return result.deleted_count
+    except Exception as e:
+        logger.error(f"Error in delete_all_card_chats_for_guide: {e}", exc_info=True)
+        return 0
