@@ -1,8 +1,10 @@
 # Reading Pal
 
-Reading Pal is an ebook/document reading application with LLM-assisted study workflows.
-The stack is split across multiple services: React frontend, FastAPI backend,
-FastAPI document-processing worker, and FastAPI image server.
+AI reading tools often flatten a long PDF or EPUB into a generic summary and lose the author’s thought process. Reading Pal is a lens-based reading roadmap that mentors you through the author’s ideas—speeding up reading with custom guides tailored to your angle while keeping the original text and figures side by side for one-tap passage jumps, notes, and Q&A.
+
+You choose the angle. The guide stays with the author’s moves in that lens: why a stretch matters, the sequence of ideas, and what to carry forward. The book itself stays open beside the guide. A jump lands on the passage, where you can take a note or ask a question.
+
+Under that reading experience, the stack is a React frontend, a FastAPI backend, a FastAPI document-processing worker, and a FastAPI image server.
 
 ## System At A Glance
 
